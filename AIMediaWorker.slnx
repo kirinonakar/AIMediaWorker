@@ -1,0 +1,10 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="AIMediaWorker/AIMediaWorker.csproj">
+    <BuildType Project="Release" />
+    <Platform Project="x64" />
+    <Deploy />
+  </Project>
+</Solution>

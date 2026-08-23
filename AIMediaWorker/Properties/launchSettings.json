@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "AIMediaWorker (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "AIMediaWorker (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
