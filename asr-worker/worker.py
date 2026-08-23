@@ -24,6 +24,9 @@ from protocol.messages import SubtitleSegment, WordTimestamp, require_string
 from subtitle.segmenter import SegmentationOptions, SubtitleSegmenter
 
 
+MAX_SAFE_ALIGNED_CHUNK_SECONDS = 29.0
+
+
 class JobCancelled(RuntimeError):
     pass
 
@@ -169,6 +172,8 @@ class AsrWorker:
         language = str(request.get("language", "auto"))
         timestamps = bool(request.get("timestamps", True))
         chunk_duration = min(180.0, max(5.0, float(request.get("chunk_duration", 30.0))))
+        if timestamps:
+            chunk_duration = min(chunk_duration, MAX_SAFE_ALIGNED_CHUNK_SECONDS)
         use_vad = bool(request.get("vad", True))
         options = request.get("segmentation") or {}
         segmenter = SubtitleSegmenter(SegmentationOptions(

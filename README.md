@@ -4,7 +4,7 @@ AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation b
 
 It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; edits SRT/WebVTT/ASS subtitles on a timeline; generates bounded-memory waveforms; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
-Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. Local files are submitted to libmpv asynchronously so history persistence, waveform work, and Explorer synchronization do not delay the initial open response. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs. Drag the divider beside the side panel or above the timeline to resize either panel. The bottom playback toolbar provides previous/next media, seek, play/pause, stop, progress, time, volume, speed, and repeat controls. Window size, position, maximized state, panel visibility, and panel dimensions are restored on the next launch.
+Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs. Drag the divider beside the side panel or above the timeline to resize either panel. The bottom playback toolbar provides previous/next media, seek, play/pause, stop, progress, time, volume, speed, and repeat controls. Window size, position, maximized state, panel visibility, and panel dimensions are restored on the next launch.
 
 ## Requirements
 
@@ -77,20 +77,21 @@ FFmpeg is used as a streaming PCM source for waveforms and as the audio extracto
 
 ## Python and Qwen setup
 
-Create an isolated environment, then install the worker dependencies. The requirements select the official PyTorch CUDA 13.0 build used by this Windows application:
+Create an isolated environment. Install a PyTorch build appropriate for your CUDA driver first, then the worker dependencies:
 
 ```powershell
 py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
+# Install the CUDA or CPU PyTorch build appropriate for this machine first.
 python -m pip install -r asr-worker/requirements.txt
 ```
 
 In **Settings → Automatic speech recognition**, configure:
 
 - Python executable, for example `D:\path\to\.venv\Scripts\python.exe`.
-- Qwen3-ASR-1.7B local directory or model identifier. The official `Qwen/Qwen3-ASR-1.7B` model is downloaded to `asr-worker/models` automatically by default.
-- Qwen3-ForcedAligner-0.6B directory or model identifier. The official `Qwen/Qwen3-ForcedAligner-0.6B` model is downloaded to `asr-worker/models` automatically by default.
+- Qwen3-ASR-1.7B local directory or model identifier.
+- Optional Qwen3-ForcedAligner-0.6B directory or model identifier.
 - Device (`Auto`, `Cpu`, `Cuda`), precision, VAD, language, and chunk duration.
 
 Offline processing extracts bounded chunks, optionally applies Silero VAD, restores global microsecond timestamps, uses forced alignment when configured, and emits subtitles before the complete file finishes. The live path uses a bounded rolling 30-second PCM window because transformer Qwen streaming does not expose the same official low-latency vLLM path.
@@ -109,7 +110,7 @@ The subtitle encoding setting supports UTF-8 and installed Windows code pages. E
 
 ## WebDAV and remote media
 
-Open the **WebDAV** side-panel tab (or **Tools → WebDAV**) to add a server. Saved servers appear directly below the add button; select one to connect and browse it in the same tab. Server metadata is stored in settings, while passwords are stored separately in Windows Credential Manager. Supported operations include directory listing, parent navigation, refresh, and direct remote playback.
+Open **Tools → WebDAV browser** to add, edit, or remove servers. Server metadata is stored in settings; passwords are stored separately in Windows Credential Manager. Supported operations include directory listing, parent navigation, refresh, direct remote playback, and saving the current WebDAV folder as a favorite. Connected directory results are also mirrored into the main window's WebDAV side-panel tab.
 
 Local folders, media items, WebDAV folders, and remote URLs can be opened or removed from the Favorites menu. Recent items retain source type and playback position. Missing local paths or removed servers do not prevent startup.
 
@@ -129,12 +130,10 @@ Microphone audio is captured through WASAPI, resampled to 16 kHz mono PCM, and p
 
 Supported provider profiles:
 
-- **Unsloth Studio**: local OpenAI-compatible endpoint at `http://127.0.0.1:8000/v1/`; API key optional.
-- **Google Gemini**: Google Generative Language API, including model-aware [thinking levels/budgets](https://ai.google.dev/gemini-api/docs/generate-content/thinking).
-- **Ollama Cloud**: OpenAI-compatible Ollama cloud API.
-- **OpenCode Go** and **OpenCode Zen**: OpenAI-compatible provider profiles.
+- **Local**: Unsloth Studio
+- **Cloud**: Google Gemini, Ollama Cloud, OpenCode Go, and OpenCode Zen
 
-Select a provider in Preferences, store its API key, synchronize the real model list, or enter a model ID manually. Successful model lists are cached for offline fallback. API keys are stored in Windows Credential Manager and are never included in diagnostics. Translation uses stable cue IDs and preserves timing; summarization uses hierarchical chunks so long transcripts do not need to fit in one model request.
+API keys are stored in Windows Credential Manager.
 
 ## Keyboard shortcuts
 
