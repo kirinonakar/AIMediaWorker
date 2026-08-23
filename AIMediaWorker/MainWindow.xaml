@@ -31,7 +31,7 @@
                 <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="SetAPoint" Text="Set A point" Click="OnSetAbStartClick" /><MenuFlyoutItem x:Uid="SetBPoint" Text="Set B point" Click="OnSetAbEndClick" /><MenuFlyoutItem x:Uid="ClearAb" Text="Clear A/B repeat" Click="OnClearAbClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SubtitleMenu" Title="Subtitle">
-                <ToggleMenuFlyoutItem x:Name="SubtitleVisibilityMenuItem" Text="Show subtitles" IsChecked="True" Click="OnToggleSubtitleVisibilityClick" />
+                <ToggleMenuFlyoutItem x:Uid="SubtitleVisibility" x:Name="SubtitleVisibilityMenuItem" Text="Show subtitles" IsChecked="True" Click="OnToggleSubtitleVisibilityClick" />
                 <MenuFlyoutSeparator />
                 <MenuFlyoutItem x:Uid="AddCue" Text="Add at playhead" Click="OnAddCueClick" /><MenuFlyoutItem x:Uid="SplitCue" Text="Split" Click="OnSplitCueClick" />
                 <MenuFlyoutItem x:Uid="MergeCue" Text="Merge with next" Click="OnMergeCueClick" /><MenuFlyoutItem x:Uid="DeleteCue" x:Name="DeleteCueMenuItem" Text="Delete" Click="OnDeleteCueClick" />

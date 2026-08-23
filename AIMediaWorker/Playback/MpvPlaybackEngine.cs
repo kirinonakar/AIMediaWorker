@@ -125,19 +125,16 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             Position = TimeSpan.Zero;
             Duration = TimeSpan.Zero;
             _editorSubtitlePath = null;
-            await Task.Run(() =>
+            cancellationToken.ThrowIfCancellationRequested();
+            if (httpHeaders is null || httpHeaders.Count == 0) SetProperty("http-header-fields", string.Empty);
+            else
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (httpHeaders is null || httpHeaders.Count == 0) SetProperty("http-header-fields", string.Empty);
-                else
-                {
-                    foreach (var header in httpHeaders)
-                        if (header.Key.Any(c => c is '\r' or '\n' or ':' or ',') || header.Value.Any(c => c is '\r' or '\n' or ',')) throw new ArgumentException("Invalid HTTP header.", nameof(httpHeaders));
-                    SetProperty("http-header-fields", string.Join(',', httpHeaders.Select(header => $"{header.Key}: {header.Value}")));
-                }
-                MpvInterop.CommandAsync(_context, unchecked((ulong)Interlocked.Increment(ref _nextCommandId)), "loadfile", source, "replace");
-                SetProperty("pause", "no");
-            }, cancellationToken).ConfigureAwait(false);
+                foreach (var header in httpHeaders)
+                    if (header.Key.Any(c => c is '\r' or '\n' or ':' or ',') || header.Value.Any(c => c is '\r' or '\n' or ',')) throw new ArgumentException("Invalid HTTP header.", nameof(httpHeaders));
+                SetProperty("http-header-fields", string.Join(',', httpHeaders.Select(header => $"{header.Key}: {header.Value}")));
+            }
+            MpvInterop.CommandAsync(_context, unchecked((ulong)Interlocked.Increment(ref _nextCommandId)), "loadfile", source, "replace");
+            SetProperty("pause", "no");
         }
         finally { _openLock.Release(); }
     }

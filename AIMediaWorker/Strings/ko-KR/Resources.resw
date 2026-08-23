@@ -36,5 +36,5 @@
   <data name="ClearApiKeyButton.Content"><value>저장된 키 삭제</value></data><data name="CredentialRemovedTitle"><value>자격 증명 삭제됨</value></data><data name="CredentialRemovedMessage"><value>{0}의 저장된 키를 삭제했습니다.</value></data>
   <data name="ShowRightPanel.Text"><value>사이드 패널 표시</value></data>
   <data name="ShowBottomPanel.Text"><value>타임라인 패널 표시</value></data>
-  <data name="SubtitleVisibilityText"><value>자막 표시</value></data>
+  <data name="SubtitleVisibility.Text"><value>자막 표시</value></data>
 </root>

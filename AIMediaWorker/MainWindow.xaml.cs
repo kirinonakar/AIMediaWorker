@@ -94,12 +94,17 @@ public sealed partial class MainWindow : Window
     private DateTimeOffset _showFullscreenRightPanelUntil;
     private string? _pendingLaunchSource;
     private string[]? _pendingDroppedFiles;
+    private PendingPostOpenWork? _pendingPostOpenWork;
+    private CancellationTokenSource? _postOpenCancellation;
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
 
-    public MainWindow() : this(null) { }
+    public MainWindow() : this(null, new AppSettings()) { }
 
-    public MainWindow(string? initialSource)
+    public MainWindow(string? initialSource) : this(initialSource, new AppSettings()) { }
+
+    public MainWindow(string? initialSource, AppSettings settings)
     {
+        _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         InitializeComponent();
         _pendingLaunchSource = initialSource;
         var handle = WindowNative.GetWindowHandle(this);
@@ -176,20 +181,21 @@ public sealed partial class MainWindow : Window
         _initialized = true;
         try
         {
-            _settings = await SettingsService.CreateDefault().LoadAsync();
             _rightPanelVisible = _settings.Window.IsRightPanelVisible;
             _bottomPanelVisible = _settings.Window.IsBottomPanelVisible;
             _rightPanelWidth = Math.Clamp(_settings.Window.RightPanelWidth, 240, 1200);
             _bottomPanelHeight = Math.Clamp(_settings.Window.BottomPanelHeight, 100, 800);
             ClampPanelSizesToAvailable();
             ApplyPanelVisibility();
-            await _historyService.LoadAsync();
+            var historyLoad = _historyService.LoadAsync();
+            _videoHost = new NativeVideoHost(this, VideoPlaceholder);
+            _videoHost.FilesDropped += OnNativeVideoFilesDropped;
+            _videoHost.Clicked += OnNativeVideoClicked;
+            var playbackInitialization = _playback.InitializeAsync(_videoHost.Create(), _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
+            await Task.WhenAll(historyLoad, playbackInitialization);
             RebuildRecentMenu();
             RebuildFavoritesMenu();
             ApplyTheme(_settings.General.Theme);
-            _videoHost = new NativeVideoHost(this, VideoPlaceholder);
-            _videoHost.FilesDropped += OnNativeVideoFilesDropped;
-            await _playback.InitializeAsync(_videoHost.Create(), _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
             if (_playback.IsAvailable)
             {
                 _playback.SetVolume(_settings.Playback.DefaultVolume); _playback.SetRate(_settings.Playback.PlaybackRate);
@@ -204,7 +210,6 @@ public sealed partial class MainWindow : Window
             SeekBackButton.Content = $"−{_settings.Playback.SeekIntervalSeconds:0.#}s";
             SeekForwardButton.Content = $"+{_settings.Playback.SeekIntervalSeconds:0.#}s";
             UpdateShortcutHints();
-            await RefreshBrowserAsync(_browserDirectory);
             UpdatePlaylistButtons();
             StatusText.Text = _playback.IsAvailable ? L("StatusLibmpvReady") : L("StatusPlaybackUnavailable");
             if (_playback.IsAvailable && _pendingDroppedFiles is { Length: > 0 } droppedFiles)
@@ -218,6 +223,7 @@ public sealed partial class MainWindow : Window
                 _pendingLaunchSource = null;
                 await OpenMediaAsync(launchSource);
             }
+            else _ = RefreshBrowserAsync(_browserDirectory);
         }
         catch (Exception exception) { StatusText.Text = exception.Message; }
     }
@@ -301,6 +307,11 @@ public sealed partial class MainWindow : Window
         });
     }
 
+    private void OnNativeVideoClicked(object? sender, EventArgs e)
+    {
+        if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) TryPlayback(_playback.TogglePause);
+    }
+
     private async Task HandleDroppedFilesAsync(IEnumerable<string> paths)
     {
         var files = paths.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -335,15 +346,8 @@ public sealed partial class MainWindow : Window
             var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
             StatusText.Text = source;
             VideoStatusText.Visibility = Visibility.Collapsed;
-            if (File.Exists(source))
-            {
-                var fullPath = Path.GetFullPath(source);
-                _ = RefreshBrowserForOpenedFileAsync(fullPath);
-            }
-            if (httpHeaders is null || httpHeaders.Count == 0) _ = GenerateWaveformAsync(source);
-            else { _waveform = WaveformData.Empty; DrawWaveform(); }
+            QueuePostOpenWork(source, httpHeaders is null || httpHeaders.Count == 0, !preservePlaylist);
             UpdatePlaylistButtons();
-            if (!preservePlaylist && File.Exists(source)) _ = PopulateSiblingPlaylistAsync(source);
         }
         catch (Exception exception)
         {
@@ -356,6 +360,49 @@ public sealed partial class MainWindow : Window
     {
         try { await _historyService.SaveAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "history", "HISTORY_SAVE_AFTER_OPEN_ERROR", exception.Message, exception); }
+    }
+
+    private void QueuePostOpenWork(string source, bool generateWaveform, bool populateSiblingPlaylist)
+    {
+        _waveformCancellation?.Cancel();
+        _postOpenCancellation?.Cancel();
+        _postOpenCancellation?.Dispose();
+        _postOpenCancellation = new CancellationTokenSource();
+        _pendingPostOpenWork = new PendingPostOpenWork(source, generateWaveform, populateSiblingPlaylist, _postOpenCancellation.Token);
+        if (!generateWaveform) { _waveform = WaveformData.Empty; DrawWaveform(); }
+        if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) StartPostOpenWorkIfReady();
+    }
+
+    private void StartPostOpenWorkIfReady()
+    {
+        if (_pendingPostOpenWork is not { } work ||
+            !string.Equals(_playback.CurrentSource, work.Source, StringComparison.OrdinalIgnoreCase)) return;
+        _pendingPostOpenWork = null;
+        _ = RunPostOpenWorkAsync(work);
+    }
+
+    private async Task RunPostOpenWorkAsync(PendingPostOpenWork work)
+    {
+        try
+        {
+            // Let mpv present its first frames before FFmpeg and folder enumeration compete for I/O and CPU.
+            await Task.Delay(750, work.CancellationToken);
+            if (!string.Equals(_playback.CurrentSource, work.Source, StringComparison.OrdinalIgnoreCase)) return;
+            var tasks = new List<Task>();
+            if (File.Exists(work.Source))
+            {
+                var fullPath = Path.GetFullPath(work.Source);
+                tasks.Add(RefreshBrowserForOpenedFileAsync(fullPath));
+                if (work.PopulateSiblingPlaylist) tasks.Add(PopulateSiblingPlaylistAsync(fullPath));
+            }
+            if (work.GenerateWaveform) tasks.Add(GenerateWaveformAsync(work.Source));
+            await Task.WhenAll(tasks);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "post-open", "POST_OPEN_WORK_ERROR", exception.Message, exception);
+        }
     }
 
     private async Task RefreshBrowserForOpenedFileAsync(string fullPath)
@@ -860,6 +907,7 @@ public sealed partial class MainWindow : Window
     private void OnPlaybackStateChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
         PlayPauseButton.Content = _playback.State == PlaybackState.Playing ? "⏸" : "▶"; StatusText.Text = _playback.State.ToString();
+        if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) StartPostOpenWorkIfReady();
     });
     private void OnPlaybackPositionChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
@@ -952,7 +1000,6 @@ public sealed partial class MainWindow : Window
         NextSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.NextSubtitle);
         UndoMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.Undo);
         RedoMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.Redo);
-        SubtitleVisibilityMenuItem.Text = L("SubtitleVisibilityText");
         SubtitleVisibilityMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSubtitles);
         FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F")} · Esc";
 
@@ -1714,13 +1761,19 @@ public sealed partial class MainWindow : Window
         try { await SettingsService.CreateDefault().SaveAsync(_settings); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "SETTINGS_SAVE_ERROR", exception.Message, exception); }
         _waveformCancellation?.Cancel(); _waveformCancellation?.Dispose();
+        _postOpenCancellation?.Cancel(); _postOpenCancellation?.Dispose();
         _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose();
         _aiOperationCancellation?.Cancel(); _aiOperationCancellation?.Dispose();
         try { await _asrEngine.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "ASR_DISPOSE_ERROR", exception.Message, exception); }
         try { await _playback.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "PLAYBACK_DISPOSE_ERROR", exception.Message, exception); }
-        _videoHost?.Dispose();
+        if (_videoHost is not null)
+        {
+            _videoHost.FilesDropped -= OnNativeVideoFilesDropped;
+            _videoHost.Clicked -= OnNativeVideoClicked;
+            _videoHost.Dispose();
+        }
         try { File.Delete(_editorOverlayPath); } catch (IOException) { }
     }
 
@@ -1728,6 +1781,8 @@ public sealed partial class MainWindow : Window
     {
         public string DisplayName => System.IO.Path.GetFileName(Path);
     }
+
+    private sealed record PendingPostOpenWork(string Source, bool GenerateWaveform, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
 
     private sealed class ThrottledProgress(Action<double> callback, int intervalMilliseconds = 200) : IProgress<double>
     {

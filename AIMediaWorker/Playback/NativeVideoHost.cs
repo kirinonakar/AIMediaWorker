@@ -10,6 +10,7 @@ public sealed class NativeVideoHost : IDisposable
 {
     private const uint WmDropFiles = 0x0233;
     private const uint WmSetCursor = 0x0020;
+    private const uint WmLeftButtonUp = 0x0202;
     private const int IdcArrow = 32512;
     private const int GwlpWndProc = -4;
     private const int WsChild = 0x40000000;
@@ -34,6 +35,7 @@ public sealed class NativeVideoHost : IDisposable
 
     public nint Handle => _handle;
     public event EventHandler<FilesDroppedEventArgs>? FilesDropped;
+    public event EventHandler? Clicked;
 
     public nint Create()
     {
@@ -87,6 +89,7 @@ public sealed class NativeVideoHost : IDisposable
             if (paths.Count > 0) FilesDropped?.Invoke(this, new FilesDroppedEventArgs(paths));
             return 0;
         }
+        if (message == WmLeftButtonUp) Clicked?.Invoke(this, EventArgs.Empty);
         return _originalWindowProcedure == 0 ? DefWindowProc(window, message, wParam, lParam) : CallWindowProc(_originalWindowProcedure, window, message, wParam, lParam);
     }
 

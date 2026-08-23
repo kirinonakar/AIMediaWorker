@@ -36,5 +36,5 @@
   <data name="ClearApiKeyButton.Content"><value>保存済みキーを削除</value></data><data name="CredentialRemovedTitle"><value>資格情報を削除しました</value></data><data name="CredentialRemovedMessage"><value>{0}の保存済みキーを削除しました。</value></data>
   <data name="ShowRightPanel.Text"><value>サイドパネルを表示</value></data>
   <data name="ShowBottomPanel.Text"><value>タイムラインパネルを表示</value></data>
-  <data name="SubtitleVisibilityText"><value>字幕を表示</value></data>
+  <data name="SubtitleVisibility.Text"><value>字幕を表示</value></data>
 </root>

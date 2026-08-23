@@ -16,6 +16,31 @@ public sealed class LocalizationTests
         Assert.Equal(keySets[0].ToArray(), keySets[2].ToArray());
     }
 
+    [Fact]
+    public void SubtitleVisibilityMenuUsesLocalizedTextResource()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = XDocument.Load(Path.Combine(root, "AIMediaWorker", "MainWindow.xaml"));
+        var menu = xaml.Descendants().Single(element =>
+            element.Attributes().Any(attribute => attribute.Name.LocalName == "Name" && attribute.Value == "SubtitleVisibilityMenuItem"));
+        Assert.Equal("SubtitleVisibility", menu.Attributes().Single(attribute => attribute.Name.LocalName == "Uid").Value);
+
+        var expected = new Dictionary<string, string>
+        {
+            ["en-US"] = "Show subtitles",
+            ["ko-KR"] = "자막 표시",
+            ["ja-JP"] = "字幕を表示"
+        };
+        foreach (var (culture, value) in expected)
+        {
+            var resources = XDocument.Load(Path.Combine(root, "AIMediaWorker", "Strings", culture, "Resources.resw"));
+            var text = resources.Root!.Elements("data")
+                .Single(element => (string?)element.Attribute("name") == "SubtitleVisibility.Text")
+                .Element("value")!.Value;
+            Assert.Equal(value, text);
+        }
+    }
+
     private static SortedSet<string> ReadKeys(string path)
     {
         var keys = XDocument.Load(path).Root!.Elements("data").Select(element => (string?)element.Attribute("name")).Where(name => name is not null).Cast<string>().ToArray();
