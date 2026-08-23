@@ -34,22 +34,25 @@ public sealed class AsrWorkerClient : IAsrEngine
         if (!File.Exists(_workerScript)) throw new FileNotFoundException("The ASR worker script was not found.", _workerScript);
         _pythonExecutable = PythonEnvironment.ResolveExecutable(pythonExecutable, _workerScript);
         SetState(AsrWorkerState.Starting);
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = _pythonExecutable,
+            ArgumentList = { "-u", _workerScript },
+            WorkingDirectory = Path.GetDirectoryName(_workerScript)!,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            StandardInputEncoding = new UTF8Encoding(false),
+            StandardOutputEncoding = new UTF8Encoding(false),
+            StandardErrorEncoding = new UTF8Encoding(false)
+        };
+        startInfo.Environment["PYTHONUTF8"] = "1";
+        startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
         var process = new Process
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = _pythonExecutable,
-                ArgumentList = { "-u", _workerScript },
-                WorkingDirectory = Path.GetDirectoryName(_workerScript)!,
-                UseShellExecute = false,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                StandardInputEncoding = new UTF8Encoding(false),
-                StandardOutputEncoding = new UTF8Encoding(false),
-                StandardErrorEncoding = new UTF8Encoding(false)
-            },
+            StartInfo = startInfo,
             EnableRaisingEvents = true
         };
         process.Exited += OnProcessExited;

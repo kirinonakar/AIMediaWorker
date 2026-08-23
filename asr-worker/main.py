@@ -11,6 +11,10 @@ import sys
 # on CUDA, so one OpenBLAS thread is sufficient for the worker's CPU helpers.
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
+for stream in (sys.stdin, sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="strict")
+
 from worker import AsrWorker
 
 

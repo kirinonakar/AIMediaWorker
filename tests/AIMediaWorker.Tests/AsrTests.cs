@@ -37,6 +37,14 @@ public sealed class AsrTests
     }
 
     [Fact]
+    public void ProtocolPreservesKoreanSubtitleText()
+    {
+        var result = AsrJson.DeserializeEvent("{\"id\":\"job-utf8\",\"event\":\"segment\",\"segment\":{\"start_us\":0,\"end_us\":1000000,\"text\":\"안녕하세요, 한글 자막입니다.\"}}");
+
+        Assert.Equal("안녕하세요, 한글 자막입니다.", result.Segment!.Text);
+    }
+
+    [Fact]
     public void ProtocolReadsModelDownloadProgress()
     {
         var result = AsrJson.DeserializeEvent("{\"id\":\"job-1\",\"event\":\"progress\",\"stage\":\"download\",\"progress\":0.42,\"model_progress\":0.6,\"message\":\"Qwen3-ASR-1.7B\",\"downloaded_bytes\":420,\"total_bytes\":1000}");

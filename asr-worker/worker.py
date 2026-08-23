@@ -107,7 +107,7 @@ class AsrWorker:
         self.engine.unload()
 
     def emit(self, message: dict[str, Any]) -> None:
-        payload = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
+        payload = json.dumps(message, ensure_ascii=True, separators=(",", ":"))
         with self.stdout_lock:
             sys.stdout.write(payload + "\n")
             sys.stdout.flush()

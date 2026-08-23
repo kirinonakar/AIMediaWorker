@@ -2,6 +2,7 @@ using AIMediaWorker.Subtitle;
 using AIMediaWorker.Subtitle.Editing;
 using AIMediaWorker.Subtitle.Parsing;
 using AIMediaWorker.Subtitle.Writing;
+using System.Text;
 
 namespace AIMediaWorker.Tests;
 
@@ -17,6 +18,27 @@ public sealed class SubtitleTests
         Assert.Equal("Hello\nworld", document.ActiveTrack.Cues[0].Text);
         var reparsed = SrtParser.Parse(SrtWriter.Write(document.ActiveTrack));
         Assert.Equal(document.ActiveTrack.Cues.Select(c => (c.StartMicroseconds, c.EndMicroseconds, c.Text)), reparsed.ActiveTrack!.Cues.Select(c => (c.StartMicroseconds, c.EndMicroseconds, c.Text)));
+    }
+
+    [Fact]
+    public async Task SrtFileUsesUtf8AndPreservesKoreanText()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"aimw-utf8-{Guid.NewGuid():N}.srt");
+        var track = new SubtitleTrack { Format = "srt" };
+        track.Cues.Add(new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "안녕하세요, 한글 자막입니다." });
+        try
+        {
+            await SrtWriter.WriteFileAsync(track, path);
+            var bytes = await File.ReadAllBytesAsync(path);
+            var text = new UTF8Encoding(false, true).GetString(bytes);
+
+            Assert.False(bytes.AsSpan().StartsWith(new byte[] { 0xEF, 0xBB, 0xBF }));
+            Assert.Contains("안녕하세요, 한글 자막입니다.", text);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]
