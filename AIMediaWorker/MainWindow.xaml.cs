@@ -85,6 +85,7 @@ public sealed partial class MainWindow : Window
     private IMediaSource? _currentMediaSource;
     private IReadOnlyDictionary<string, string>? _currentHttpHeaders;
     private SubtitleCue? _dragCue;
+    private Guid? _playbackLinkedCueId;
     private TimelineDragMode _dragMode;
     private double _dragStartX;
     private long _dragOldStart;
@@ -853,6 +854,20 @@ public sealed partial class MainWindow : Window
                 Canvas.SetLeft(border, left); Canvas.SetTop(border, 8); TimelineCanvas.Children.Add(border);
             }
         }
+        var playheadX = _timelineTransform.TimeToX(Math.Max(0, _playback.Position.Ticks / 10));
+        if (playheadX >= 0 && playheadX <= TimelineCanvas.ActualWidth)
+        {
+            var playhead = new Rectangle
+            {
+                Width = 2,
+                Height = TimelineCanvas.ActualHeight,
+                Fill = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 255, 69, 0)),
+                IsHitTestVisible = false
+            };
+            Canvas.SetLeft(playhead, playheadX);
+            Canvas.SetTop(playhead, 0);
+            TimelineCanvas.Children.Add(playhead);
+        }
         UpdateWaveformPlayhead();
     }
 
@@ -932,6 +947,7 @@ public sealed partial class MainWindow : Window
     private void BindDocument(SubtitleDocument document)
     {
         _document = document;
+        _playbackLinkedCueId = null;
         _renderedOverlayContent = null;
         _renderedOverlayFontFamily = null;
         _renderedOverlayCues = [];
@@ -950,8 +966,20 @@ public sealed partial class MainWindow : Window
     {
         _updatingPosition = true; PositionSlider.Maximum = Math.Max(1, _playback.Duration.TotalSeconds); if (!_positionSliderDragging) PositionSlider.Value = Math.Clamp(_playback.Position.TotalSeconds, 0, PositionSlider.Maximum); _updatingPosition = false;
         PositionText.Text = $"{FormatTime(_playback.Position)} / {FormatTime(_playback.Duration)}"; DecoderText.Text = _playback.DecoderDescription ?? string.Empty;
-        var cue = _document.FindActiveCue((long)(_playback.Position.TotalMilliseconds * 1000));
-        if (!_subtitleEditorHasFocus && cue is not null && !SubtitleList.SelectedItems.Contains(cue)) SubtitleList.SelectedItem = cue;
+        var positionMicroseconds = Math.Max(0, _playback.Position.Ticks / 10);
+        var visualizationWidth = Math.Max(TimelineCanvas.ActualWidth, WaveformCanvas.ActualWidth);
+        if (visualizationWidth > 0 && _timelineTransform.EnsureVisible(positionMicroseconds, visualizationWidth)) DrawWaveform();
+        var cue = _document.FindActiveCue(positionMicroseconds);
+        if (!_subtitleEditorHasFocus)
+        {
+            var cueChanged = cue?.Id != _playbackLinkedCueId;
+            _playbackLinkedCueId = cue?.Id;
+            if (cue is not null)
+            {
+                if (!SubtitleList.SelectedItems.Contains(cue)) SubtitleList.SelectedItem = cue;
+                if (cueChanged) SubtitleList.ScrollIntoView(cue, ScrollIntoViewAlignment.Leading);
+            }
+        }
         DrawTimeline();
     });
     private void OnMediaEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(async () =>

@@ -22,4 +22,23 @@ public sealed class TimelineTests
         transform.ZoomAt(2, 400);
         Assert.Equal(before, transform.XToTime(400));
     }
+
+    [Fact]
+    public void EnsureVisiblePansWhenPlaybackLeavesViewportMargin()
+    {
+        var transform = new TimelineTransform();
+
+        Assert.True(transform.EnsureVisible(9_500_000, 1_000));
+        Assert.Equal(4_500_000, transform.ViewStartMicroseconds);
+        Assert.Equal(500, transform.TimeToX(9_500_000), 6);
+    }
+
+    [Fact]
+    public void EnsureVisibleKeepsViewportStableWhilePlaybackIsVisible()
+    {
+        var transform = new TimelineTransform();
+
+        Assert.False(transform.EnsureVisible(5_000_000, 1_000));
+        Assert.Equal(0, transform.ViewStartMicroseconds);
+    }
 }
