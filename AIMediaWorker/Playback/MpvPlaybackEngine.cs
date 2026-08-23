@@ -13,6 +13,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private CancellationTokenSource? _eventLoopCancellation;
     private Task? _eventLoop;
     private Task? _initializationTask;
+    private long _nextCommandId;
     private PlaybackState _state = PlaybackState.Uninitialized;
     private string? _editorSubtitlePath;
     private bool _disposed;
@@ -134,7 +135,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                         if (header.Key.Any(c => c is '\r' or '\n' or ':' or ',') || header.Value.Any(c => c is '\r' or '\n' or ',')) throw new ArgumentException("Invalid HTTP header.", nameof(httpHeaders));
                     SetProperty("http-header-fields", string.Join(',', httpHeaders.Select(header => $"{header.Key}: {header.Value}")));
                 }
-                Command("loadfile", source, "replace");
+                MpvInterop.CommandAsync(_context, unchecked((ulong)Interlocked.Increment(ref _nextCommandId)), "loadfile", source, "replace");
                 SetProperty("pause", "no");
             }, cancellationToken).ConfigureAwait(false);
         }
@@ -251,6 +252,9 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     {
         switch (mpvEvent.EventId)
         {
+            case MpvInterop.MpvEventId.CommandReply:
+                if (mpvEvent.Error < 0) RaiseError("PLAYBACK_ERROR", MpvInterop.ErrorString(mpvEvent.Error));
+                break;
             case MpvInterop.MpvEventId.FileLoaded:
                 ReadTracks();
                 SetState(GetBool("pause") ? PlaybackState.Paused : PlaybackState.Playing);

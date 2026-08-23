@@ -29,6 +29,7 @@ public sealed class ServicesTests : IDisposable
         var settings = new AppSettings();
         settings.Asr.Language = "ko";
         settings.Playback.DefaultVolume = 77;
+        settings.Playback.ShowSubtitles = false;
         settings.Window.HasPlacement = true;
         settings.Window.X = 120;
         settings.Window.Y = 80;
@@ -41,6 +42,7 @@ public sealed class ServicesTests : IDisposable
         var loaded = await service.LoadAsync();
         Assert.Equal("ko", loaded.Asr.Language);
         Assert.Equal(77, loaded.Playback.DefaultVolume);
+        Assert.False(loaded.Playback.ShowSubtitles);
         Assert.True(loaded.Window.HasPlacement);
         Assert.Equal((120, 80, 1440, 900, true), (loaded.Window.X, loaded.Window.Y, loaded.Window.Width, loaded.Window.Height, loaded.Window.IsMaximized));
         Assert.Equal((440, 220), (loaded.Window.RightPanelWidth, loaded.Window.BottomPanelHeight));
@@ -60,6 +62,7 @@ public sealed class ServicesTests : IDisposable
         var loaded = await new SettingsService(path).LoadAsync();
 
         Assert.NotNull(loaded.Playback);
+        Assert.True(loaded.Playback.ShowSubtitles);
         Assert.NotNull(loaded.Network);
         Assert.NotNull(loaded.Window);
         Assert.Equal(1280, loaded.Window.Width);

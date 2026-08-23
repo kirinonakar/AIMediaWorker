@@ -105,6 +105,11 @@ public sealed partial class MainWindow : Window
         var handle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
         _appWindow?.Resize(new SizeInt32(1280, 820));
+        if (_appWindow is not null)
+        {
+            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
+            if (File.Exists(iconPath)) _appWindow.SetIcon(iconPath);
+        }
         if (_appWindow is not null) { _appWindow.Closing += OnAppWindowClosing; _appWindow.Changed += OnAppWindowChanged; }
         Closed += OnWindowClosed;
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnRootKeyDown), true);
@@ -191,7 +196,9 @@ public sealed partial class MainWindow : Window
                 _playback.ConfigureNetwork(TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds), _settings.Network.Proxy);
                 _playback.ConfigurePreferredLanguages(_settings.Playback.DefaultAudioLanguage, _settings.Playback.DefaultSubtitleLanguage);
                 _playback.ConfigureSubtitleStyle(_settings.Subtitle.FontFamily, _settings.Subtitle.FontSize, _settings.Subtitle.Color, _settings.Subtitle.Background, _settings.Subtitle.Outline, _settings.Subtitle.BottomMargin);
+                _playback.SetSubtitleVisibility(_settings.Playback.ShowSubtitles);
             }
+            SubtitleVisibilityMenuItem.IsChecked = _settings.Playback.ShowSubtitles;
             RateCombo.ItemsSource = new[] { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0 };
             RateCombo.SelectedItem = RateCombo.Items.Cast<double>().OrderBy(value => Math.Abs(value - _settings.Playback.PlaybackRate)).First();
             SeekBackButton.Content = $"−{_settings.Playback.SeekIntervalSeconds:0.#}s";
@@ -223,7 +230,7 @@ public sealed partial class MainWindow : Window
             picker.FileTypeFilter.Add("*");
             InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
             var files = await picker.PickMultipleFilesAsync();
-            if (files.Count > 0) await OpenFilesAsPlaylistAsync(files.Select(file => file.Path));
+            if (files.Count > 0) await HandleDroppedFilesAsync(files.Select(file => file.Path));
         }
         catch (Exception exception)
         {
@@ -323,7 +330,7 @@ public sealed partial class MainWindow : Window
             _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
             _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
             _historyService.AddRecent(_currentMediaSource, 0, _settings.General.RecentMediaCount);
-            await _historyService.SaveAsync();
+            _ = SaveHistoryAfterOpenAsync();
             RebuildRecentMenu();
             var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
             StatusText.Text = source;
@@ -331,14 +338,55 @@ public sealed partial class MainWindow : Window
             if (File.Exists(source))
             {
                 var fullPath = Path.GetFullPath(source);
-                if (Path.GetDirectoryName(fullPath) is { } directory) await RefreshBrowserAsync(directory, fullPath);
+                _ = RefreshBrowserForOpenedFileAsync(fullPath);
             }
             if (httpHeaders is null || httpHeaders.Count == 0) _ = GenerateWaveformAsync(source);
             else { _waveform = WaveformData.Empty; DrawWaveform(); }
             UpdatePlaylistButtons();
             if (!preservePlaylist && File.Exists(source)) _ = PopulateSiblingPlaylistAsync(source);
         }
-        catch (Exception exception) { await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message); }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "playback", "OPEN_MEDIA_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
+        }
+    }
+
+    private async Task SaveHistoryAfterOpenAsync()
+    {
+        try { await _historyService.SaveAsync(); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "history", "HISTORY_SAVE_AFTER_OPEN_ERROR", exception.Message, exception); }
+    }
+
+    private async Task RefreshBrowserForOpenedFileAsync(string fullPath)
+    {
+        try
+        {
+            if (Path.GetDirectoryName(fullPath) is not { } directory) return;
+            if (AreSameDirectory(directory, _browserDirectory))
+            {
+                SelectBrowserEntry(fullPath);
+                return;
+            }
+            await RefreshBrowserAsync(directory, fullPath);
+        }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "browser", "BROWSER_SYNC_AFTER_OPEN_ERROR", exception.Message, exception); }
+    }
+
+    private static bool AreSameDirectory(string first, string second) =>
+        string.Equals(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(first)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(second)),
+            StringComparison.OrdinalIgnoreCase);
+
+    private void SelectBrowserEntry(string path)
+    {
+        if (FolderEntryList.ItemsSource is not IEnumerable<BrowserEntry> entries) return;
+        var fullPath = Path.GetFullPath(path);
+        var selectedEntry = entries.FirstOrDefault(item => item.Path.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
+        if (selectedEntry is null) return;
+        FolderEntryList.SelectedItem = selectedEntry;
+        FolderEntryList.ScrollIntoView(selectedEntry);
     }
 
     private async Task OpenFilesAsPlaylistAsync(IEnumerable<string> paths)
@@ -384,6 +432,7 @@ public sealed partial class MainWindow : Window
         var visible = SubtitleVisibilityMenuItem.IsChecked;
         TryPlayback(() => _playback.SetSubtitleVisibility(visible));
         SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
+        _settings.Playback.ShowSubtitles = SubtitleVisibilityMenuItem.IsChecked;
     }
     private void OnRateChanged(object sender, SelectionChangedEventArgs e) { if (RateCombo.SelectedItem is double rate && _playback.IsAvailable) TryPlayback(() => _playback.SetRate(rate)); }
     private void OnRepeatClick(object sender, RoutedEventArgs e)
@@ -741,7 +790,7 @@ public sealed partial class MainWindow : Window
             if (cached is not null) _waveform = cached;
             else
             {
-                var progress = new Progress<double>(value => StatusText.Text = F("StatusGeneratingWaveform", value));
+                var progress = new ThrottledProgress(value => DispatcherQueue.TryEnqueue(() => StatusText.Text = F("StatusGeneratingWaveform", value)));
                 _waveform = await _waveformGenerator.GenerateAsync(source, progress: progress, cancellationToken: token);
                 await _waveformCache.SaveAsync(source, _waveform, token);
             }
@@ -903,7 +952,7 @@ public sealed partial class MainWindow : Window
         NextSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.NextSubtitle);
         UndoMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.Undo);
         RedoMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.Redo);
-        SubtitleVisibilityMenuItem.Text = L("SubtitleVisibility.Text");
+        SubtitleVisibilityMenuItem.Text = L("SubtitleVisibilityText");
         SubtitleVisibilityMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSubtitles);
         FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F")} · Esc";
 
@@ -1432,30 +1481,27 @@ public sealed partial class MainWindow : Window
             }
             var entries = await Task.Run(() =>
             {
+                const int maximumEntries = 5000;
                 var result = new List<BrowserEntry>();
-                foreach (var path in Directory.EnumerateDirectories(directory).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase))
+                foreach (var path in Directory.EnumerateDirectories(directory).Take(maximumEntries).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase))
                 {
                     try { result.Add(BrowserEntry.FromDirectory(path)); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
                 }
-                foreach (var path in Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase))
+                var remaining = Math.Max(0, maximumEntries - result.Count);
+                foreach (var path in Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).Take(remaining).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase))
                 {
                     try { result.Add(BrowserEntry.FromFile(path)); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+                }
+                if (selectedPath is not null && File.Exists(selectedPath) && !result.Any(item => item.Path.Equals(selectedPath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    try { result.Add(BrowserEntry.FromFile(selectedPath)); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
                 }
                 return result.ToArray();
             });
             _browserDirectory = Path.GetFullPath(directory);
             BrowserPathBox.Text = _browserDirectory;
             FolderEntryList.ItemsSource = entries;
-            if (selectedPath is not null)
-            {
-                var fullSelectionPath = Path.GetFullPath(selectedPath);
-                var selectedEntry = entries.FirstOrDefault(item => item.Path.Equals(fullSelectionPath, StringComparison.OrdinalIgnoreCase));
-                if (selectedEntry is not null)
-                {
-                    FolderEntryList.SelectedItem = selectedEntry;
-                    FolderEntryList.ScrollIntoView(selectedEntry);
-                }
-            }
+            if (selectedPath is not null) SelectBrowserEntry(selectedPath);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -1681,6 +1727,23 @@ public sealed partial class MainWindow : Window
     private sealed record PlaylistEntry(string Path)
     {
         public string DisplayName => System.IO.Path.GetFileName(Path);
+    }
+
+    private sealed class ThrottledProgress(Action<double> callback, int intervalMilliseconds = 200) : IProgress<double>
+    {
+        private readonly object _sync = new();
+        private long _lastReport = Environment.TickCount64 - intervalMilliseconds;
+
+        public void Report(double value)
+        {
+            lock (_sync)
+            {
+                var now = Environment.TickCount64;
+                if (value < 1 && now - _lastReport < intervalMilliseconds) return;
+                _lastReport = now;
+            }
+            callback(value);
+        }
     }
 
     private sealed record BrowserEntry(string Path, bool IsDirectory, long? Length)

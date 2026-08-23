@@ -56,6 +56,7 @@ internal static class MpvInterop
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern nint mpv_wait_event(nint context, double timeout);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern nint mpv_error_string(int error);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] private static extern int mpv_command(nint context, nint args);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] private static extern int mpv_command_async(nint context, ulong replyUserdata, nint args);
 
     internal static string ErrorString(int error)
     {
@@ -77,6 +78,12 @@ internal static class MpvInterop
     }
 
     internal static void Command(nint context, params string[] arguments)
+        => InvokeCommand(context, 0, false, arguments);
+
+    internal static void CommandAsync(nint context, ulong replyUserdata, params string[] arguments)
+        => InvokeCommand(context, replyUserdata, true, arguments);
+
+    private static void InvokeCommand(nint context, ulong replyUserdata, bool asynchronous, params string[] arguments)
     {
         if (arguments.Length == 0) throw new ArgumentException("At least one mpv command argument is required.", nameof(arguments));
         var strings = new nint[arguments.Length];
@@ -87,7 +94,8 @@ internal static class MpvInterop
             array = Marshal.AllocHGlobal((arguments.Length + 1) * IntPtr.Size);
             for (var i = 0; i < strings.Length; i++) Marshal.WriteIntPtr(array, i * IntPtr.Size, strings[i]);
             Marshal.WriteIntPtr(array, arguments.Length * IntPtr.Size, nint.Zero);
-            EnsureSuccess(mpv_command(context, array), string.Join(' ', arguments));
+            var result = asynchronous ? mpv_command_async(context, replyUserdata, array) : mpv_command(context, array);
+            EnsureSuccess(result, string.Join(' ', arguments));
         }
         finally
         {

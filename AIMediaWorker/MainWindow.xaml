@@ -28,10 +28,11 @@
             <MenuBarItem x:Uid="PlaybackMenu" Title="Playback">
                 <MenuFlyoutItem x:Uid="PlayPause" x:Name="PlayPauseMenuItem" Text="Play / Pause" Click="OnPlayPauseClick" /><MenuFlyoutItem x:Uid="Stop" Text="Stop" Click="OnStopClick" />
                 <MenuFlyoutItem x:Uid="FrameStep" Text="Frame step" Click="OnFrameStepClick" />
-                <ToggleMenuFlyoutItem x:Uid="SubtitleVisibility" x:Name="SubtitleVisibilityMenuItem" Text="Show subtitles (V)" IsChecked="True" Click="OnToggleSubtitleVisibilityClick" />
                 <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="SetAPoint" Text="Set A point" Click="OnSetAbStartClick" /><MenuFlyoutItem x:Uid="SetBPoint" Text="Set B point" Click="OnSetAbEndClick" /><MenuFlyoutItem x:Uid="ClearAb" Text="Clear A/B repeat" Click="OnClearAbClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SubtitleMenu" Title="Subtitle">
+                <ToggleMenuFlyoutItem x:Name="SubtitleVisibilityMenuItem" Text="Show subtitles" IsChecked="True" Click="OnToggleSubtitleVisibilityClick" />
+                <MenuFlyoutSeparator />
                 <MenuFlyoutItem x:Uid="AddCue" Text="Add at playhead" Click="OnAddCueClick" /><MenuFlyoutItem x:Uid="SplitCue" Text="Split" Click="OnSplitCueClick" />
                 <MenuFlyoutItem x:Uid="MergeCue" Text="Merge with next" Click="OnMergeCueClick" /><MenuFlyoutItem x:Uid="DeleteCue" x:Name="DeleteCueMenuItem" Text="Delete" Click="OnDeleteCueClick" />
                 <MenuFlyoutItem x:Uid="DuplicateCue" Text="Duplicate" Click="OnDuplicateCueClick" /><MenuFlyoutItem x:Uid="ShiftCue" Text="Shift…" Click="OnShiftCueClick" />

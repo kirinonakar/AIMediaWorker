@@ -4,7 +4,7 @@ AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation b
 
 It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; edits SRT/WebVTT/ASS subtitles on a timeline; generates bounded-memory waveforms; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
-Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs. Drag the divider beside the side panel or above the timeline to resize either panel. The bottom playback toolbar provides previous/next media, seek, play/pause, stop, progress, time, volume, speed, and repeat controls. Window size, position, maximized state, panel visibility, and panel dimensions are restored on the next launch.
+Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. Local files are submitted to libmpv asynchronously so history persistence, waveform work, and Explorer synchronization do not delay the initial open response. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs. Drag the divider beside the side panel or above the timeline to resize either panel. The bottom playback toolbar provides previous/next media, seek, play/pause, stop, progress, time, volume, speed, and repeat controls. Window size, position, maximized state, panel visibility, and panel dimensions are restored on the next launch.
 
 ## Requirements
 
