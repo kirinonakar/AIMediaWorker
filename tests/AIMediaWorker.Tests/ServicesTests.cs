@@ -66,6 +66,7 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal("Ctrl+Shift+S", loaded.General.Shortcuts[ShortcutActions.SaveSubtitleAs]);
         Assert.Equal("Enter", loaded.General.Shortcuts[ShortcutActions.Fullscreen]);
         Assert.Equal("V", loaded.General.Shortcuts[ShortcutActions.ToggleSubtitles]);
+        Assert.Equal("Ctrl+W", loaded.General.Shortcuts[ShortcutActions.CloseWindow]);
     }
 
     [Fact]

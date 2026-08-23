@@ -12,7 +12,7 @@
     <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Loaded="OnRootLoaded" SizeChanged="OnRootSizeChanged" AllowDrop="True" DragOver="OnRootDragOver" Drop="OnRootDrop">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
-            <RowDefinition Height="6" /><RowDefinition x:Name="BottomPanelRow" Height="160" /><RowDefinition Height="Auto" />
+            <RowDefinition x:Name="BottomPanelSplitterRow" Height="6" /><RowDefinition x:Name="BottomPanelRow" Height="160" /><RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <MenuBar x:Name="MainMenuBar" Grid.Row="0">
             <MenuBarItem x:Uid="FileMenu" Title="File">
@@ -22,27 +22,29 @@
                 <MenuFlyoutItem x:Uid="AddFavorite" Text="Add current media to favorites" Click="OnAddFavoriteClick" />
                 <MenuFlyoutItem x:Uid="AddFavoriteFolder" Text="Add local folder to favorites…" Click="OnAddFavoriteFolderClick" />
                 <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="LoadSubtitle" Text="Load subtitle…" Click="OnLoadSubtitleClick" />
-                <MenuFlyoutItem x:Uid="SaveSubtitle" Text="Save subtitle" Click="OnSaveSubtitleClick" /><MenuFlyoutItem x:Uid="SaveAs" Text="Save subtitle as…" Click="OnSaveSubtitleAsClick" />
+                <MenuFlyoutItem x:Uid="SaveSubtitle" x:Name="SaveSubtitleMenuItem" Text="Save subtitle" Click="OnSaveSubtitleClick" /><MenuFlyoutItem x:Uid="SaveAs" x:Name="SaveSubtitleAsMenuItem" Text="Save subtitle as…" Click="OnSaveSubtitleAsClick" />
+                <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="Exit" x:Name="ExitMenuItem" Text="Exit" Click="OnExitClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="PlaybackMenu" Title="Playback">
-                <MenuFlyoutItem x:Uid="PlayPause" Text="Play / Pause" Click="OnPlayPauseClick" /><MenuFlyoutItem x:Uid="Stop" Text="Stop" Click="OnStopClick" />
+                <MenuFlyoutItem x:Uid="PlayPause" x:Name="PlayPauseMenuItem" Text="Play / Pause" Click="OnPlayPauseClick" /><MenuFlyoutItem x:Uid="Stop" Text="Stop" Click="OnStopClick" />
                 <MenuFlyoutItem x:Uid="FrameStep" Text="Frame step" Click="OnFrameStepClick" />
                 <ToggleMenuFlyoutItem x:Uid="SubtitleVisibility" x:Name="SubtitleVisibilityMenuItem" Text="Show subtitles (V)" IsChecked="True" Click="OnToggleSubtitleVisibilityClick" />
                 <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="SetAPoint" Text="Set A point" Click="OnSetAbStartClick" /><MenuFlyoutItem x:Uid="SetBPoint" Text="Set B point" Click="OnSetAbEndClick" /><MenuFlyoutItem x:Uid="ClearAb" Text="Clear A/B repeat" Click="OnClearAbClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SubtitleMenu" Title="Subtitle">
                 <MenuFlyoutItem x:Uid="AddCue" Text="Add at playhead" Click="OnAddCueClick" /><MenuFlyoutItem x:Uid="SplitCue" Text="Split" Click="OnSplitCueClick" />
-                <MenuFlyoutItem x:Uid="MergeCue" Text="Merge with next" Click="OnMergeCueClick" /><MenuFlyoutItem x:Uid="DeleteCue" Text="Delete" Click="OnDeleteCueClick" />
+                <MenuFlyoutItem x:Uid="MergeCue" Text="Merge with next" Click="OnMergeCueClick" /><MenuFlyoutItem x:Uid="DeleteCue" x:Name="DeleteCueMenuItem" Text="Delete" Click="OnDeleteCueClick" />
                 <MenuFlyoutItem x:Uid="DuplicateCue" Text="Duplicate" Click="OnDuplicateCueClick" /><MenuFlyoutItem x:Uid="ShiftCue" Text="Shift…" Click="OnShiftCueClick" />
+                <MenuFlyoutItem x:Uid="PreviousSubtitle" x:Name="PreviousSubtitleMenuItem" Text="Previous subtitle" Click="OnPreviousSubtitleClick" /><MenuFlyoutItem x:Uid="NextSubtitle" x:Name="NextSubtitleMenuItem" Text="Next subtitle" Click="OnNextSubtitleClick" />
                 <MenuFlyoutItem x:Uid="SelectAll" Text="Select all" Click="OnSelectAllCuesClick" /><MenuFlyoutItem x:Uid="Copy" Text="Copy" Click="OnCopyCuesClick" /><MenuFlyoutItem x:Uid="Paste" Text="Paste" Click="OnPasteCuesClick" />
-                <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="Undo" Text="Undo" Click="OnUndoClick" /><MenuFlyoutItem x:Uid="Redo" Text="Redo" Click="OnRedoClick" />
+                <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="Undo" x:Name="UndoMenuItem" Text="Undo" Click="OnUndoClick" /><MenuFlyoutItem x:Uid="Redo" x:Name="RedoMenuItem" Text="Redo" Click="OnRedoClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="AiMenu" Title="AI">
                 <MenuFlyoutItem x:Uid="GenerateSubtitles" Text="Generate subtitles…" Click="OnGenerateSubtitleClick" /><MenuFlyoutItem x:Uid="Translate" Text="Translate…" Click="OnTranslateClick" />
                 <MenuFlyoutItem x:Uid="Summarize" Text="Summarize…" Click="OnSummarizeClick" /><MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="CancelAi" Text="Cancel current AI operation" Click="OnCancelAiClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="ViewMenu" Title="View">
-                <MenuFlyoutItem x:Uid="Fullscreen" Text="Fullscreen" Click="OnFullscreenClick" />
+                <MenuFlyoutItem x:Uid="Fullscreen" x:Name="FullscreenMenuItem" Text="Fullscreen" Click="OnFullscreenClick" />
                 <MenuFlyoutSeparator />
                 <ToggleMenuFlyoutItem x:Uid="ShowRightPanel" x:Name="ShowRightPanelMenuItem" Text="Show side panel" IsChecked="True" Click="OnToggleRightPanelClick" />
                 <ToggleMenuFlyoutItem x:Uid="ShowBottomPanel" x:Name="ShowBottomPanelMenuItem" Text="Show timeline panel" IsChecked="True" Click="OnToggleBottomPanelClick" />

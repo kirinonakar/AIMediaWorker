@@ -150,12 +150,13 @@ Select a provider in Preferences, store its API key, synchronize the real model 
 | Ctrl+S / Ctrl+Shift+S | Save/Save As |
 | Ctrl+Z / Ctrl+Y | Undo/redo |
 | Delete | Delete selected cues |
+| Ctrl+W | Close the application |
 | Enter | Toggle fullscreen |
 | Esc | Leave fullscreen |
 | F | Toggle fullscreen |
 | Home / End | Seek to start/end |
 
-Text boxes retain ordinary editing shortcuts. Shortcut gestures are persisted as a declarative action-to-gesture map in `settings.json`, so custom configuration UI can be added without changing command routing.
+Text boxes retain ordinary editing shortcuts. Available shortcuts are shown beside their menu commands or in the related control tooltip. Shortcut gestures are persisted as a declarative action-to-gesture map in `settings.json`, so custom configuration UI can be added without changing command routing.
 
 In fullscreen mode the window frame and panels are hidden. Hover at the top, bottom, or right edge to reveal the menu, playback toolbar, or side panel respectively.
 

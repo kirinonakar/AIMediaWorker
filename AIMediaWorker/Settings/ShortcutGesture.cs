@@ -14,6 +14,7 @@ public static class ShortcutActions
     public const string DeleteCue = "DeleteCue";
     public const string Fullscreen = "Fullscreen";
     public const string ToggleSubtitles = "ToggleSubtitles";
+    public const string CloseWindow = "CloseWindow";
 
     public static Dictionary<string, string> CreateDefaults() => new(StringComparer.OrdinalIgnoreCase)
     {
@@ -28,7 +29,8 @@ public static class ShortcutActions
         [Redo] = "Ctrl+Y",
         [DeleteCue] = "Delete",
         [Fullscreen] = "Enter",
-        [ToggleSubtitles] = "V"
+        [ToggleSubtitles] = "V",
+        [CloseWindow] = "Ctrl+W"
     };
 }
 

@@ -179,6 +179,7 @@ public sealed partial class MainWindow : Window
             RateCombo.SelectedItem = RateCombo.Items.Cast<double>().OrderBy(value => Math.Abs(value - _settings.Playback.PlaybackRate)).First();
             SeekBackButton.Content = $"−{_settings.Playback.SeekIntervalSeconds:0.#}s";
             SeekForwardButton.Content = $"+{_settings.Playback.SeekIntervalSeconds:0.#}s";
+            UpdateShortcutHints();
             await RefreshBrowserAsync(_browserDirectory);
             UpdatePlaylistButtons();
             StatusText.Text = _playback.IsAvailable ? L("StatusLibmpvReady") : L("StatusPlaybackUnavailable");
@@ -780,8 +781,10 @@ public sealed partial class MainWindow : Window
         bool Is(string action) => _settings.General.Shortcuts.TryGetValue(action, out var gesture) && ShortcutGesture.Matches(gesture, key, ctrl, shift, alt);
         var save = Is(ShortcutActions.SaveSubtitle);
         var saveAs = Is(ShortcutActions.SaveSubtitleAs);
-        if (isTextInput && !save && !saveAs) return;
-        if (saveAs) OnSaveSubtitleAsClick(this, new RoutedEventArgs());
+        var close = Is(ShortcutActions.CloseWindow);
+        if (isTextInput && !save && !saveAs && !close) return;
+        if (close) OnExitClick(this, new RoutedEventArgs());
+        else if (saveAs) OnSaveSubtitleAsClick(this, new RoutedEventArgs());
         else if (save) OnSaveSubtitleClick(this, new RoutedEventArgs());
         else if (Is(ShortcutActions.PlayPause)) OnPlayPauseClick(this, new RoutedEventArgs());
         else if (Is(ShortcutActions.PreviousSubtitle)) SelectRelativeCue(-1);
@@ -801,6 +804,37 @@ public sealed partial class MainWindow : Window
         var cues = _document.ActiveTrack?.Cues; if (cues is null || cues.Count == 0) return;
         var index = SubtitleList.SelectedItem is SubtitleCue selected ? cues.IndexOf(selected) : 0; index = Math.Clamp(index + delta, 0, cues.Count - 1);
         SubtitleList.SelectedItem = cues[index]; SubtitleList.ScrollIntoView(cues[index]); TryPlayback(() => _playback.Seek(TimeSpan.FromTicks(cues[index].StartMicroseconds * 10), true));
+    }
+
+    private void OnPreviousSubtitleClick(object sender, RoutedEventArgs e) => SelectRelativeCue(-1);
+    private void OnNextSubtitleClick(object sender, RoutedEventArgs e) => SelectRelativeCue(1);
+    private void OnExitClick(object sender, RoutedEventArgs e) => Close();
+
+    private void UpdateShortcutHints()
+    {
+        string Shortcut(string action) => _settings.General.Shortcuts.TryGetValue(action, out var gesture) ? gesture : string.Empty;
+        static string Combine(params string[] gestures) => string.Join(" / ", gestures.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase));
+
+        SaveSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.SaveSubtitle);
+        SaveSubtitleAsMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.SaveSubtitleAs);
+        ExitMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.CloseWindow);
+        PlayPauseMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.PlayPause);
+        DeleteCueMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.DeleteCue);
+        PreviousSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.PreviousSubtitle);
+        NextSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.NextSubtitle);
+        UndoMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.Undo);
+        RedoMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.Redo);
+        SubtitleVisibilityMenuItem.Text = L("SubtitleVisibility.Text");
+        SubtitleVisibilityMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSubtitles);
+        FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F")} · Esc";
+
+        ToolTipService.SetToolTip(PlayPauseButton, $"{L("PlayPause.Text")} ({Shortcut(ShortcutActions.PlayPause)})");
+        ToolTipService.SetToolTip(SeekBackButton, $"Seek backward ({Shortcut(ShortcutActions.SeekBackward)})");
+        ToolTipService.SetToolTip(SeekForwardButton, $"Seek forward ({Shortcut(ShortcutActions.SeekForward)})");
+        ToolTipService.SetToolTip(MuteButton, "Mute (M)");
+        ToolTipService.SetToolTip(VolumeSlider, "Volume (↑ / ↓)");
+        ToolTipService.SetToolTip(PositionSlider, "Seek (Home / End)");
+        ToolTipService.SetToolTip(SubtitleList, $"Previous: {Shortcut(ShortcutActions.PreviousSubtitle)} · Next: {Shortcut(ShortcutActions.NextSubtitle)}");
     }
 
     private void OnFullscreenClick(object sender, RoutedEventArgs e) => ToggleFullscreen();
@@ -828,6 +862,7 @@ public sealed partial class MainWindow : Window
             RightPanelSplitterColumn.Width = new GridLength(0);
             RightPanelColumn.Width = new GridLength(0);
             BottomPanelSplitter.Visibility = Visibility.Collapsed;
+            BottomPanelSplitterRow.Height = new GridLength(0);
             BottomPanelRow.Height = new GridLength(0);
             VideoPlaceholder.Margin = new Thickness(0);
             _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
@@ -865,6 +900,7 @@ public sealed partial class MainWindow : Window
         RightPanelColumn.Width = _rightPanelVisible ? new GridLength(_rightPanelWidth) : new GridLength(0);
         VisualizationPanel.Visibility = _bottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
         BottomPanelSplitter.Visibility = _bottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
+        BottomPanelSplitterRow.Height = _bottomPanelVisible ? new GridLength(6) : new GridLength(0);
         BottomPanelRow.Height = _bottomPanelVisible ? new GridLength(_bottomPanelHeight) : new GridLength(0);
         StatusPanel.Visibility = _bottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
         ShowRightPanelMenuItem.IsChecked = _rightPanelVisible;
@@ -1142,6 +1178,7 @@ public sealed partial class MainWindow : Window
                 ApplyTheme(settings.General.Theme);
                 SeekBackButton.Content = $"−{settings.Playback.SeekIntervalSeconds:0.#}s";
                 SeekForwardButton.Content = $"+{settings.Playback.SeekIntervalSeconds:0.#}s";
+                UpdateShortcutHints();
                 if (!_playback.IsAvailable) return;
                 TryPlayback(() =>
                 {

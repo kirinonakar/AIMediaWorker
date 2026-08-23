@@ -45,6 +45,7 @@ Last updated: 2026-08-23
 - Self-contained Windows App SDK deployment so the unpackaged executable starts without a separately registered Windows App Runtime.
 - Drag-and-drop and multi-file playlist opening, sibling-folder playlists, previous/next, repeat modes, deferred exact seeking, subtitle visibility toggle, and command-line autoplay.
 - Enter fullscreen toggle, Escape restore, frame-free fullscreen, edge-hover menu/controls/side panel, and independently hideable timeline and side panels.
+- The fullscreen splitter rows collapse completely, shortcut hints are exposed in menus/tooltips, Ctrl+W follows the guarded close workflow, and Preferences are grouped into seven focused tabs.
 - Main side-panel Explorer, Playlist, WebDAV, and Subtitles tabs; connected WebDAV listings mirror into the main panel while server registration remains available in the WebDAV manager.
 - Persistent main-window position, size, maximized state, panel visibility, and user-resizable side/timeline panel dimensions with current-display bounds correction.
 - Unpackaged secondary-window localization crash fixed for WebDAV, Preferences, and Camera windows; all three activate together in the runtime smoke check without a new error log.
