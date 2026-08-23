@@ -328,6 +328,11 @@ public sealed partial class MainWindow : Window
             var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
             StatusText.Text = source;
             VideoStatusText.Visibility = Visibility.Collapsed;
+            if (File.Exists(source))
+            {
+                var fullPath = Path.GetFullPath(source);
+                if (Path.GetDirectoryName(fullPath) is { } directory) await RefreshBrowserAsync(directory, fullPath);
+            }
             if (httpHeaders is null || httpHeaders.Count == 0) _ = GenerateWaveformAsync(source);
             else { _waveform = WaveformData.Empty; DrawWaveform(); }
             UpdatePlaylistButtons();
@@ -1416,7 +1421,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnBrowserRefreshClick(object sender, RoutedEventArgs e) => await RefreshBrowserAsync(_browserDirectory);
 
-    private async Task RefreshBrowserAsync(string directory)
+    private async Task RefreshBrowserAsync(string directory, string? selectedPath = null)
     {
         try
         {
@@ -1441,6 +1446,16 @@ public sealed partial class MainWindow : Window
             _browserDirectory = Path.GetFullPath(directory);
             BrowserPathBox.Text = _browserDirectory;
             FolderEntryList.ItemsSource = entries;
+            if (selectedPath is not null)
+            {
+                var fullSelectionPath = Path.GetFullPath(selectedPath);
+                var selectedEntry = entries.FirstOrDefault(item => item.Path.Equals(fullSelectionPath, StringComparison.OrdinalIgnoreCase));
+                if (selectedEntry is not null)
+                {
+                    FolderEntryList.SelectedItem = selectedEntry;
+                    FolderEntryList.ScrollIntoView(selectedEntry);
+                }
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {

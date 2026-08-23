@@ -9,6 +9,8 @@ namespace AIMediaWorker.Playback;
 public sealed class NativeVideoHost : IDisposable
 {
     private const uint WmDropFiles = 0x0233;
+    private const uint WmSetCursor = 0x0020;
+    private const int IdcArrow = 32512;
     private const int GwlpWndProc = -4;
     private const int WsChild = 0x40000000;
     private const int WsVisible = 0x10000000;
@@ -74,6 +76,11 @@ public sealed class NativeVideoHost : IDisposable
 
     private nint OnWindowMessage(nint window, uint message, nint wParam, nint lParam)
     {
+        if (message == WmSetCursor)
+        {
+            SetCursor(LoadCursor(0, (nint)IdcArrow));
+            return 1;
+        }
         if (message == WmDropFiles)
         {
             var paths = ReadDroppedPaths(wParam);
@@ -122,6 +129,8 @@ public sealed class NativeVideoHost : IDisposable
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)] private static extern nint SetWindowLongPtr(nint window, int index, nint value);
     [DllImport("user32.dll", EntryPoint = "CallWindowProcW")] private static extern nint CallWindowProc(nint previousProcedure, nint window, uint message, nint wParam, nint lParam);
     [DllImport("user32.dll", EntryPoint = "DefWindowProcW")] private static extern nint DefWindowProc(nint window, uint message, nint wParam, nint lParam);
+    [DllImport("user32.dll", EntryPoint = "LoadCursorW")] private static extern nint LoadCursor(nint instance, nint cursorName);
+    [DllImport("user32.dll")] private static extern nint SetCursor(nint cursor);
     [DllImport("shell32.dll")] private static extern void DragAcceptFiles(nint window, [MarshalAs(UnmanagedType.Bool)] bool accept);
     [DllImport("shell32.dll", EntryPoint = "DragQueryFileW", CharSet = CharSet.Unicode)] private static extern uint DragQueryFile(nint dropHandle, uint fileIndex, StringBuilder? path, uint pathLength);
     [DllImport("shell32.dll")] private static extern void DragFinish(nint dropHandle);
