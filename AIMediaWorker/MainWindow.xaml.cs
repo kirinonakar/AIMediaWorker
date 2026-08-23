@@ -31,6 +31,7 @@ using WinRT.Interop;
 using Windows.ApplicationModel.DataTransfer;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Threading.Channels;
 using Microsoft.UI.Dispatching;
 
 namespace AIMediaWorker;
@@ -1329,9 +1330,8 @@ public sealed partial class MainWindow : Window
                     temporaryInput = await DownloadAsrInputAsync(source, _currentHttpHeaders, token);
                     source = temporaryInput;
                 }
-                await GenerateSubtitlesAsync(source, startMicroseconds, token);
+                _translationCompletedForCurrentMedia = await GenerateSubtitlesAsync(source, startMicroseconds, token);
                 _subtitleGenerationCompletedForCurrentMedia = true;
-                _translationCompletedForCurrentMedia = false;
             }
             if (TranslateMenuItem.IsChecked && !_translationCompletedForCurrentMedia)
             {
@@ -1359,7 +1359,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task GenerateSubtitlesAsync(string source, long startMicroseconds, CancellationToken token)
+    private async Task<bool> GenerateSubtitlesAsync(string source, long startMicroseconds, CancellationToken token)
     {
         StatusText.Text = L("StatusStartingAsr");
         var worker = System.IO.Path.Combine(AppContext.BaseDirectory, "asr-worker", "main.py");
@@ -1377,19 +1377,94 @@ public sealed partial class MainWindow : Window
         RightPanelTabs.SelectedIndex = 3;
         StatusText.Text = F("StatusGeneratingSubtitles", 0d);
         EnableGeneratedSubtitleOverlay();
+        var translationQueue = Channel.CreateUnbounded<SubtitleCue>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+        var translationTask = TranslateGeneratedCuesRealtimeAsync(translationQueue.Reader, track, token);
         var segmentation = _settings.Subtitle.Segmentation;
         var asrSegmentation = new AsrSegmentationOptions(segmentation.MinimumCueSeconds, segmentation.MaximumCueSeconds, segmentation.MaximumLines, segmentation.TargetCharactersPerLine, segmentation.SilenceSplitSeconds, segmentation.MaximumCharactersPerSecond);
-        await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, startMicroseconds, token))
+        try
         {
-            if (result.Event == "progress" && result.Progress is { } progress) StatusText.Text = F("StatusGeneratingSubtitles", progress);
-            if (result.Event == "segment" && result.Segment is { } segment)
+            await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, startMicroseconds, token))
             {
-                track.Cues.Add(new SubtitleCue { StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds, Text = segment.Text, Confidence = segment.Confidence, Source = SubtitleCueSource.AutomaticSpeechRecognition });
-                DrawTimeline();
-                ScheduleSubtitleOverlaySync();
+                if (result.Event == "progress" && result.Progress is { } progress) StatusText.Text = F("StatusGeneratingSubtitles", progress);
+                if (result.Event == "segment" && result.Segment is { } segment)
+                {
+                    var cue = new SubtitleCue { StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds, Text = segment.Text, Confidence = segment.Confidence, Source = SubtitleCueSource.AutomaticSpeechRecognition };
+                    track.Cues.Add(cue);
+                    translationQueue.Writer.TryWrite(cue);
+                    DrawTimeline();
+                    ScheduleSubtitleOverlaySync();
+                }
             }
         }
-        document.Sort(); document.MarkDirty(); ScheduleSubtitleOverlaySync(); StatusText.Text = F("StatusGeneratedSubtitles", track.Cues.Count);
+        finally { translationQueue.Writer.TryComplete(); }
+        var translatedCount = await translationTask;
+        document.Sort(); document.MarkDirty(); ScheduleSubtitleOverlaySync();
+        StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
+        return TranslateMenuItem.IsChecked && translatedCount == track.Cues.Count;
+    }
+
+    private async Task<int> TranslateGeneratedCuesRealtimeAsync(ChannelReader<SubtitleCue> reader, SubtitleTrack track, CancellationToken cancellationToken)
+    {
+        const int realtimeBatchSize = 4;
+        var pending = new List<SubtitleCue>(realtimeBatchSize);
+        DateTimeOffset? firstPendingAt = null;
+        ILlmProvider? provider = null;
+        IDisposable? disposable = null;
+        LlmService? service = null;
+        var translatedCount = 0;
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                while (reader.TryRead(out var cue))
+                {
+                    pending.Add(cue);
+                    firstPendingAt ??= DateTimeOffset.UtcNow;
+                }
+
+                if (pending.Count == 0)
+                {
+                    if (reader.Completion.IsCompleted) break;
+                    await Task.Delay(100, cancellationToken);
+                    continue;
+                }
+                if (!TranslateMenuItem.IsChecked)
+                {
+                    if (reader.Completion.IsCompleted) break;
+                    await Task.Delay(100, cancellationToken);
+                    continue;
+                }
+                if (string.IsNullOrWhiteSpace(_settings.Llm.Model)) throw new InvalidOperationException(L("LlmModelMissingMessage"));
+
+                var waitRemaining = TimeSpan.FromMilliseconds(750) - (DateTimeOffset.UtcNow - firstPendingAt!.Value);
+                if (pending.Count < realtimeBatchSize && !reader.Completion.IsCompleted && waitRemaining > TimeSpan.Zero)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(100, waitRemaining.TotalMilliseconds)), cancellationToken);
+                    continue;
+                }
+
+                provider ??= CreateLlmProvider();
+                disposable ??= provider as IDisposable;
+                service ??= new LlmService(provider, _settings.Llm.Model, _settings.Llm.ThinkingLevel);
+                var batch = pending.Take(realtimeBatchSize).ToArray();
+                pending.RemoveRange(0, batch.Length);
+                firstPendingAt = pending.Count > 0 ? DateTimeOffset.UtcNow : null;
+                var cuesById = batch.ToDictionary(cue => cue.Id);
+                var translatedBeforeBatch = translatedCount;
+                StatusText.Text = F("StatusTranslating", translatedCount, Math.Max(translatedCount + batch.Length, track.Cues.Count));
+                var translated = await service.TranslateAsync(batch, _settings.Llm.TranslationLanguage, batchCompleted: (result, token) =>
+                {
+                    var completed = translatedBeforeBatch + result.Completed;
+                    var total = Math.Max(completed, track.Cues.Count);
+                    return ApplyTranslationBatchAsync(new TranslationBatch(result.Items, completed, total), cuesById, token);
+                }, batchSize: realtimeBatchSize, cancellationToken: cancellationToken);
+                translatedCount += translated.Count;
+                await AppLog.WriteAsync("info", "translation", "TRANSLATION_BATCH_COMPLETED", $"Realtime translation completed {translatedCount} cues; {pending.Count} queued.");
+            }
+            return translatedCount;
+        }
+        finally { disposable?.Dispose(); }
     }
 
     private void UpdateAsrModelProgress(AsrEvent update)
