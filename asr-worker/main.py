@@ -3,7 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
+
+# SciPy/OpenBLAS can deadlock in its Windows DLL initializer when it creates a
+# large native thread pool while PyTorch is being imported. ASR inference runs
+# on CUDA, so one OpenBLAS thread is sufficient for the worker's CPU helpers.
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 from worker import AsrWorker
 

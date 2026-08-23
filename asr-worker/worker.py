@@ -80,6 +80,20 @@ class AsrWorker:
         if request_id in self.jobs:
             self.emit({"id": request_id, "event": "error", "code": "PROTOCOL_ERROR", "message": "Duplicate request id."})
             return
+        if command == "load_model":
+            try:
+                self.engine.prepare_runtime(lambda kind, name, value, downloaded, total: self.emit({
+                    "id": request_id,
+                    "event": "progress",
+                    "stage": "loading",
+                    "progress": 1.0,
+                    "elapsed_seconds": max(0, int(value)),
+                    "message": name,
+                }))
+            except Exception as exc:
+                logging.exception("ASR runtime initialization failed")
+                self._emit_error(request_id, exc)
+                return
         cancel_event = threading.Event()
         task = asyncio.create_task(self._run_background(request_id, request, handler, cancel_event))
         self.jobs[request_id] = (task, cancel_event)
