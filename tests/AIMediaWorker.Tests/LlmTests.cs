@@ -57,6 +57,24 @@ public sealed class LlmTests
     }
 
     [Fact]
+    public async Task TranslationPromptKeepsUnicodeCharactersInsteadOfEscapingThem()
+    {
+        string? capturedPrompt = null;
+        var cue = new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "あれからここに来て良かった" };
+        var provider = new FakeProvider(prompt =>
+        {
+            capturedPrompt = prompt;
+            return $"<think>번역을 확인합니다.</think>{{\"items\":[{{\"id\":\"{cue.Id}\",\"text\":\"여기에 오길 잘했다\"}}]}}";
+        });
+
+        var translated = await new LlmService(provider, "fake").TranslateAsync([cue], "한국어");
+
+        Assert.Contains("あれからここに来て良かった", capturedPrompt);
+        Assert.DoesNotContain("\\u3042", capturedPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("여기에 오길 잘했다", translated[cue.Id]);
+    }
+
+    [Fact]
     public async Task SummaryChunksLongTranscriptsAndRunsFinalPass()
     {
         var calls = 0;
@@ -99,6 +117,35 @@ public sealed class LlmTests
 
         Assert.Equal("Unsloth Desktop", provider.DisplayName);
         Assert.Equal("http://127.0.0.1:8888/v1/models", requestUri?.AbsoluteUri);
+    }
+
+    [Theory]
+    [InlineData(ThinkingLevel.Off, false, "none")]
+    [InlineData(ThinkingLevel.Low, true, "low")]
+    [InlineData(ThinkingLevel.Medium, true, "medium")]
+    [InlineData(ThinkingLevel.High, true, "high")]
+    [InlineData(ThinkingLevel.XHigh, true, "xhigh")]
+    [InlineData(ThinkingLevel.Max, true, "max")]
+    public async Task UnslothDesktopMapsThinkingSettings(ThinkingLevel level, bool enabled, string effort)
+    {
+        string? body = null;
+        using var http = new HttpClient(new CaptureHandler(async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"choices\":[{\"message\":{\"content\":\"완료\"}}]}") };
+        }));
+        using var provider = new UnslothProvider(httpClient: http);
+
+        await provider.GenerateAsync("local-model", "정확하게 답하세요", "日本語を韓国語に翻訳", new LlmGenerationOptions(level));
+
+        using var document = System.Text.Json.JsonDocument.Parse(body!);
+        var root = document.RootElement;
+        Assert.True(provider.Capabilities.SupportsThinkingLevel);
+        Assert.Equal(enabled, root.GetProperty("enable_thinking").GetBoolean());
+        Assert.Equal(enabled, root.GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean());
+        Assert.Equal(effort, root.GetProperty("reasoning_effort").GetString());
+        Assert.Contains("日本語を韓国語に翻訳", body);
+        Assert.DoesNotContain("\\u65e5", body, StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed class FakeProvider(Func<string, string> generate) : ILlmProvider

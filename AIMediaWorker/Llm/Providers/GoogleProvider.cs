@@ -43,7 +43,7 @@ public sealed class GoogleProvider : ILlmProvider, IDisposable
             ["contents"] = new JsonArray(new JsonObject { ["role"] = "user", ["parts"] = new JsonArray(new JsonObject { ["text"] = userPrompt }) }),
             ["generationConfig"] = generation
         };
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"models/{Uri.EscapeDataString(model)}:generateContent?key={Uri.EscapeDataString(_apiKey)}") { Content = JsonContent.Create(body) };
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"models/{Uri.EscapeDataString(model)}:generateContent?key={Uri.EscapeDataString(_apiKey)}") { Content = JsonContent.Create(body, options: LlmJson.Options) };
         using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
         var root = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: cancellationToken).ConfigureAwait(false);
         return root?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.GetValue<string>() ?? throw new LlmProviderException(Id, "Google Gemini returned no generated text.");

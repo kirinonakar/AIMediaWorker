@@ -47,16 +47,26 @@ public class OpenAiCompatibleProvider : ILlmProvider, IDisposable
         if (Capabilities.SupportsTemperature && options.Temperature is { } temperature) body["temperature"] = temperature;
         if (options.MaximumOutputTokens is { } maximum) body["max_tokens"] = maximum;
         if (Capabilities.SupportsStructuredOutput && options.StructuredOutput) body["response_format"] = new JsonObject { ["type"] = "json_object" };
-        if (Capabilities.SupportsThinkingLevel && options.ThinkingLevel != Settings.ThinkingLevel.Default)
-            body["reasoning_effort"] = options.ThinkingLevel switch { Settings.ThinkingLevel.Off => "none", Settings.ThinkingLevel.XHigh => "high", Settings.ThinkingLevel.Max => "high", _ => options.ThinkingLevel.ToString().ToLowerInvariant() };
+        ConfigureThinking(body, options);
         using var request = CreateRequest(HttpMethod.Post, "chat/completions");
-        request.Content = JsonContent.Create(body);
+        request.Content = JsonContent.Create(body, options: LlmJson.Options);
         using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
         var root = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: cancellationToken).ConfigureAwait(false) ?? throw new LlmProviderException(Id, "The provider returned an empty response.");
         return root["choices"]?[0]?["message"]?["content"]?.GetValue<string>() ?? throw new LlmProviderException(Id, "The provider response did not contain generated text.");
     }
 
     public void Dispose() { if (_ownsClient) _httpClient.Dispose(); GC.SuppressFinalize(this); }
+
+    protected virtual void ConfigureThinking(JsonObject body, LlmGenerationOptions options)
+    {
+        if (!Capabilities.SupportsThinkingLevel || options.ThinkingLevel == Settings.ThinkingLevel.Default) return;
+        body["reasoning_effort"] = options.ThinkingLevel switch
+        {
+            Settings.ThinkingLevel.Off => "none",
+            Settings.ThinkingLevel.XHigh or Settings.ThinkingLevel.Max => "high",
+            _ => options.ThinkingLevel.ToString().ToLowerInvariant()
+        };
+    }
 
     protected HttpRequestMessage CreateRequest(HttpMethod method, string relativePath)
     {
@@ -83,7 +93,26 @@ public class OpenAiCompatibleProvider : ILlmProvider, IDisposable
 
 public sealed class UnslothProvider(string? apiKey = null, Uri? baseUri = null, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
     "Unsloth Desktop", "Unsloth Desktop", baseUri ?? new Uri("http://127.0.0.1:8888/v1/"), apiKey,
-    new(true, true, false, true, true, true), httpClient);
+    new(true, true, true, true, true, true), httpClient)
+{
+    protected override void ConfigureThinking(JsonObject body, LlmGenerationOptions options)
+    {
+        if (options.ThinkingLevel == Settings.ThinkingLevel.Default) return;
+        var enabled = options.ThinkingLevel != Settings.ThinkingLevel.Off;
+        body["enable_thinking"] = enabled;
+        body["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = enabled };
+        body["reasoning_effort"] = options.ThinkingLevel switch
+        {
+            Settings.ThinkingLevel.Off => "none",
+            Settings.ThinkingLevel.Low => "low",
+            Settings.ThinkingLevel.Medium => "medium",
+            Settings.ThinkingLevel.High => "high",
+            Settings.ThinkingLevel.XHigh => "xhigh",
+            Settings.ThinkingLevel.Max => "max",
+            _ => throw new ArgumentOutOfRangeException(nameof(options))
+        };
+    }
+}
 
 public sealed class OllamaCloudProvider(string apiKey, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
     "OllamaCloud", "Ollama Cloud", new Uri("https://ollama.com/v1/"), apiKey,

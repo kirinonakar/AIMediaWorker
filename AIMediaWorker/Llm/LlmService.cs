@@ -27,7 +27,7 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
         {
             cancellationToken.ThrowIfCancellationRequested();
             var batch = input.Skip(offset).Take(batchSize).Select(cue => new TranslationItem(cue.Id, cue.Text)).ToArray();
-            var prompt = $"Translate every item to {targetLanguage}. Preserve meaning, speaker labels, line breaks where useful, and formatting tags. Return one JSON object with an 'items' array. Every array item must contain exactly the original 'id' and a 'text' string. Do not add, omit, merge, reorder, or change ids. Input:\n{JsonSerializer.Serialize(new { items = batch })}";
+            var prompt = $"Translate every item to {targetLanguage}. Preserve meaning, speaker labels, line breaks where useful, and formatting tags. Return one JSON object with an 'items' array. Every array item must contain exactly the original 'id' and a 'text' string. Do not add, omit, merge, reorder, or change ids. Input:\n{JsonSerializer.Serialize(new { items = batch }, LlmJson.Options)}";
             var response = await provider.GenerateAsync(model, "You are a precise subtitle translator. Timestamps are managed by the application and must never appear in your output.", prompt, new LlmGenerationOptions(thinkingLevel, 0.1, true), cancellationToken);
             var translations = ParseTranslations(response);
             var completedBatch = new Dictionary<Guid, string>();
@@ -88,6 +88,8 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
     private static string ExtractJson(string response)
     {
         var text = response.Trim();
+        var thinkingEnd = text.LastIndexOf("</think>", StringComparison.OrdinalIgnoreCase);
+        if (thinkingEnd >= 0) text = text[(thinkingEnd + "</think>".Length)..].Trim();
         if (text.StartsWith("```", StringComparison.Ordinal))
         {
             var firstLine = text.IndexOf('\n');

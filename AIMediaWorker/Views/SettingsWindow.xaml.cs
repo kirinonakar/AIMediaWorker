@@ -64,7 +64,7 @@ public sealed partial class SettingsWindow : Window
         ApiKeyBox.Password = provider is null ? string.Empty : _credentials.Read(CredentialIdentifier.ForLlm(provider))?.Secret
             ?? (provider == "Unsloth Desktop" ? _credentials.Read(CredentialIdentifier.ForLlm("Unsloth"))?.Secret : null)
             ?? string.Empty;
-        ThinkingCombo.IsEnabled = provider is "Google" or "OllamaCloud" or "OpenCodeGo" or "OpenCodeZen";
+        ThinkingCombo.IsEnabled = provider is "Unsloth Desktop" or "Google" or "OllamaCloud" or "OpenCodeGo" or "OpenCodeZen";
     }
 
     private async void OnSyncModelsClick(object sender, RoutedEventArgs e)
