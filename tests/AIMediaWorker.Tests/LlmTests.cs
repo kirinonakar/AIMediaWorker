@@ -23,6 +23,40 @@ public sealed class LlmTests
     }
 
     [Fact]
+    public async Task TranslationProcessesSmallBatchesAndReportsEachCompletedBatch()
+    {
+        var calls = 0;
+        var batchSizes = new List<int>();
+        var completed = new List<int>();
+        var provider = new FakeProvider(prompt =>
+        {
+            calls++;
+            var input = prompt[(prompt.IndexOf("Input:\n", StringComparison.Ordinal) + "Input:\n".Length)..];
+            using var document = System.Text.Json.JsonDocument.Parse(input);
+            var items = document.RootElement.GetProperty("items").EnumerateArray().Select(item => new
+            {
+                Id = item.GetProperty("id").GetGuid(),
+                Text = $"번역-{item.GetProperty("text").GetString()}"
+            }).ToArray();
+            batchSizes.Add(items.Length);
+            return System.Text.Json.JsonSerializer.Serialize(new { items = items.Select(item => new { id = item.Id, text = item.Text }) });
+        });
+        var cues = Enumerable.Range(1, 18).Select(index => new SubtitleCue { StartMicroseconds = index * 1_000_000L, EndMicroseconds = (index + 1) * 1_000_000L, Text = $"cue-{index}" }).ToArray();
+        var service = new LlmService(provider, "fake");
+
+        var result = await service.TranslateAsync(cues, "Korean", batchCompleted: (batch, _) =>
+        {
+            completed.Add(batch.Completed);
+            return Task.CompletedTask;
+        });
+
+        Assert.Equal(3, calls);
+        Assert.Equal([8, 8, 2], batchSizes);
+        Assert.Equal([8, 16, 18], completed);
+        Assert.Equal(18, result.Count);
+    }
+
+    [Fact]
     public async Task SummaryChunksLongTranscriptsAndRunsFinalPass()
     {
         var calls = 0;
@@ -48,6 +82,23 @@ public sealed class LlmTests
         await provider.GenerateAsync("gemini-3-flash", "system", "user", new LlmGenerationOptions(ThinkingLevel.Low), CancellationToken.None);
 
         Assert.Contains("\"thinkingLevel\":\"low\"", body);
+    }
+
+    [Fact]
+    public async Task UnslothDesktopUsesDesktopApiAddress()
+    {
+        Uri? requestUri = null;
+        using var http = new HttpClient(new CaptureHandler(request =>
+        {
+            requestUri = request.RequestUri;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"data\":[]}") });
+        }));
+        using var provider = new UnslothProvider(httpClient: http);
+
+        await provider.GetModelsAsync();
+
+        Assert.Equal("Unsloth Desktop", provider.DisplayName);
+        Assert.Equal("http://127.0.0.1:8888/v1/models", requestUri?.AbsoluteUri);
     }
 
     private sealed class FakeProvider(Func<string, string> generate) : ILlmProvider

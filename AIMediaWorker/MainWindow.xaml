@@ -54,7 +54,8 @@
                 <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="Undo" x:Name="UndoMenuItem" Text="Undo" Click="OnUndoClick" /><MenuFlyoutItem x:Uid="Redo" x:Name="RedoMenuItem" Text="Redo" Click="OnRedoClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="AiMenu" Title="AI">
-                <MenuFlyoutItem x:Uid="GenerateSubtitles" Text="Generate subtitles…" Click="OnGenerateSubtitleClick" /><MenuFlyoutItem x:Uid="Translate" Text="Translate…" Click="OnTranslateClick" />
+                <ToggleMenuFlyoutItem x:Uid="GenerateSubtitles" x:Name="GenerateSubtitlesMenuItem" Text="Generate subtitles" Click="OnGenerateSubtitleClick" />
+                <ToggleMenuFlyoutItem x:Uid="Translate" x:Name="TranslateMenuItem" Text="Translate" Click="OnTranslateClick" />
                 <MenuFlyoutItem x:Uid="Summarize" Text="Summarize…" Click="OnSummarizeClick" /><MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="CancelAi" Text="Cancel current AI operation" Click="OnCancelAiClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="ViewMenu" Title="View">

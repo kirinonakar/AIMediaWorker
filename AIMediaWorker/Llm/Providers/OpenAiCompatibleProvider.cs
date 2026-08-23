@@ -82,7 +82,7 @@ public class OpenAiCompatibleProvider : ILlmProvider, IDisposable
 }
 
 public sealed class UnslothProvider(string? apiKey = null, Uri? baseUri = null, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
-    "Unsloth", "Unsloth Studio", baseUri ?? new Uri("http://127.0.0.1:8000/v1/"), apiKey,
+    "Unsloth Desktop", "Unsloth Desktop", baseUri ?? new Uri("http://127.0.0.1:8888/v1/"), apiKey,
     new(true, true, false, true, true, true), httpClient);
 
 public sealed class OllamaCloudProvider(string apiKey, HttpClient? httpClient = null) : OpenAiCompatibleProvider(

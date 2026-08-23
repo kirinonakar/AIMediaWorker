@@ -180,8 +180,10 @@ class AsrWorker:
             maximum_characters_per_second=float(options.get("maximum_characters_per_second", 20.0)),
         ))
         duration = probe_duration(source)
-        offset = 0.0
-        emitted_end = 0
+        start_seconds = min(duration, max(0.0, int(request.get("start_us", 0)) / 1_000_000))
+        remaining_duration = max(0.0, duration - start_seconds)
+        offset = start_seconds
+        emitted_end = round(start_seconds * 1_000_000)
         while offset < duration:
             self._check_cancel(cancel)
             window_duration = min(chunk_duration, duration - offset)
@@ -190,7 +192,8 @@ class AsrWorker:
                 windows = self.vad.speech_windows(chunk_path) if use_vad else [SpeechWindow(0.0, window_duration)]
                 if not windows:
                     offset += window_duration
-                    self.emit({"id": request_id, "event": "progress", "progress": min(1.0, offset / duration)})
+                    completed = offset - start_seconds
+                    self.emit({"id": request_id, "event": "progress", "progress": min(1.0, completed / remaining_duration) if remaining_duration > 0 else 1.0})
                     continue
                 for speech in windows:
                     self._check_cancel(cancel)
@@ -220,7 +223,8 @@ class AsrWorker:
             finally:
                 Path(chunk_path).unlink(missing_ok=True)
             offset += window_duration
-            self.emit({"id": request_id, "event": "progress", "progress": min(1.0, offset / duration)})
+            completed = offset - start_seconds
+            self.emit({"id": request_id, "event": "progress", "progress": min(1.0, completed / remaining_duration) if remaining_duration > 0 else 1.0})
         self.emit({"id": request_id, "event": "completed"})
 
     def _transcribe_audio(self, request_id: str, request: dict[str, Any], cancel: threading.Event) -> None:

@@ -78,6 +78,7 @@ public sealed class SettingsService
         settings.Network.WebDavServers ??= [];
         settings.Capture ??= new CaptureSettings();
         settings.Llm ??= new LlmSettings();
+        if (string.Equals(settings.Llm.Provider, "Unsloth", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(settings.Llm.Provider)) settings.Llm.Provider = "Unsloth Desktop";
         settings.Llm.CachedModels ??= [];
         settings.General ??= new GeneralSettings();
         settings.Window ??= new WindowLayoutSettings();

@@ -1,11 +1,13 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AIMediaWorker.Subtitle;
 
 namespace AIMediaWorker.Llm;
 
 public enum SummaryKind { Short, Detailed, Chapters }
 public sealed record TranslationProgress(int Completed, int Total);
+public sealed record TranslationBatch(IReadOnlyDictionary<Guid, string> Items, int Completed, int Total);
 
 public sealed class LlmService(ILlmProvider provider, string model, Settings.ThinkingLevel thinkingLevel = Settings.ThinkingLevel.Default)
 {
@@ -13,7 +15,8 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
         IReadOnlyCollection<SubtitleCue> cues,
         string targetLanguage,
         IProgress<TranslationProgress>? progress = null,
-        int batchSize = 30,
+        Func<TranslationBatch, CancellationToken, Task>? batchCompleted = null,
+        int batchSize = 8,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(targetLanguage)) throw new ArgumentException("A target language is required.", nameof(targetLanguage));
@@ -25,14 +28,19 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
             cancellationToken.ThrowIfCancellationRequested();
             var batch = input.Skip(offset).Take(batchSize).Select(cue => new TranslationItem(cue.Id, cue.Text)).ToArray();
             var prompt = $"Translate every item to {targetLanguage}. Preserve meaning, speaker labels, line breaks where useful, and formatting tags. Return one JSON object with an 'items' array. Every array item must contain exactly the original 'id' and a 'text' string. Do not add, omit, merge, reorder, or change ids. Input:\n{JsonSerializer.Serialize(new { items = batch })}";
-            var response = await provider.GenerateAsync(model, "You are a precise subtitle translator. Timestamps are managed by the application and must never appear in your output.", prompt, new LlmGenerationOptions(thinkingLevel, 0.1, true), cancellationToken).ConfigureAwait(false);
+            var response = await provider.GenerateAsync(model, "You are a precise subtitle translator. Timestamps are managed by the application and must never appear in your output.", prompt, new LlmGenerationOptions(thinkingLevel, 0.1, true), cancellationToken);
             var translations = ParseTranslations(response);
+            var completedBatch = new Dictionary<Guid, string>();
             foreach (var item in batch)
             {
                 if (!translations.TryGetValue(item.Id, out var text)) throw new LlmProviderException(provider.Id, $"Translation response did not contain cue {item.Id}.");
                 result[item.Id] = text;
+                completedBatch[item.Id] = text;
             }
-            progress?.Report(new TranslationProgress(Math.Min(offset + batch.Length, input.Length), input.Length));
+            var completed = Math.Min(offset + batch.Length, input.Length);
+            if (batchCompleted is not null)
+                await batchCompleted(new TranslationBatch(completedBatch, completed, input.Length), cancellationToken);
+            progress?.Report(new TranslationProgress(completed, input.Length));
         }
         return result;
     }
@@ -106,5 +114,7 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
         return chunks;
     }
 
-    private sealed record TranslationItem(Guid Id, string Text);
+    private sealed record TranslationItem(
+        [property: JsonPropertyName("id")] Guid Id,
+        [property: JsonPropertyName("text")] string Text);
 }

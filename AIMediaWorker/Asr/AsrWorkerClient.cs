@@ -92,10 +92,11 @@ public sealed class AsrWorkerClient : IAsrEngine
         ThrowIfError(response);
     }
 
-    public async IAsyncEnumerable<AsrEvent> TranscribeFileAsync(string path, string language, double chunkDurationSeconds = 30, bool useVad = true, AsrSegmentationOptions? segmentation = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<AsrEvent> TranscribeFileAsync(string path, string language, double chunkDurationSeconds = 30, bool useVad = true, AsrSegmentationOptions? segmentation = null, long startMicroseconds = 0, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        if (startMicroseconds < 0) throw new ArgumentOutOfRangeException(nameof(startMicroseconds));
         var input = File.Exists(path) ? Path.GetFullPath(path) : Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri.AbsoluteUri : throw new FileNotFoundException("ASR input media was not found.", path);
-        var request = AsrRequest.Create("transcribe_file", new { input, language, timestamps = true, chunk_duration = chunkDurationSeconds, vad = useVad, segmentation });
+        var request = AsrRequest.Create("transcribe_file", new { input, language, timestamps = true, chunk_duration = chunkDurationSeconds, vad = useVad, segmentation, start_us = startMicroseconds });
         var channel = Register(request.Id);
         using var registration = cancellationToken.Register(() => _ = CancelAsync(request.Id, CancellationToken.None));
         SetState(AsrWorkerState.Busy);

@@ -9,7 +9,7 @@ public interface IAsrEngine : IAsyncDisposable
     Task StartAsync(string pythonExecutable, string workerScript, CancellationToken cancellationToken = default);
     Task RestartAsync(CancellationToken cancellationToken = default);
     Task LoadModelAsync(string modelPath, string? alignerPath, string device, string precision, IProgress<AsrEvent>? progress = null, CancellationToken cancellationToken = default);
-    IAsyncEnumerable<AsrEvent> TranscribeFileAsync(string path, string language, double chunkDurationSeconds = 30, bool useVad = true, AsrSegmentationOptions? segmentation = null, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<AsrEvent> TranscribeFileAsync(string path, string language, double chunkDurationSeconds = 30, bool useVad = true, AsrSegmentationOptions? segmentation = null, long startMicroseconds = 0, CancellationToken cancellationToken = default);
     Task CancelAsync(string requestId, CancellationToken cancellationToken = default);
     Task<string> StartStreamingAsync(string language, CancellationToken cancellationToken = default);
     Task PushAudioAsync(string streamId, ReadOnlyMemory<byte> pcm16, CancellationToken cancellationToken = default);

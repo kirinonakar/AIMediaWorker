@@ -73,6 +73,7 @@ public sealed class AsrSettings
     public string Language { get; set; } = "auto";
     public bool UseVad { get; set; } = true;
     public double ChunkDurationSeconds { get; set; } = 30;
+    public bool GenerateSubtitles { get; set; }
 }
 
 public sealed class NetworkSettings
@@ -115,10 +116,11 @@ public sealed class CaptureSettings
 
 public sealed class LlmSettings
 {
-    public string Provider { get; set; } = "Unsloth";
+    public string Provider { get; set; } = "Unsloth Desktop";
     public string? Model { get; set; }
     public ThinkingLevel ThinkingLevel { get; set; } = ThinkingLevel.Default;
     public string TranslationLanguage { get; set; } = "English";
+    public bool TranslateSubtitles { get; set; }
     public Dictionary<string, List<string>> CachedModels { get; set; } = [];
 }
 

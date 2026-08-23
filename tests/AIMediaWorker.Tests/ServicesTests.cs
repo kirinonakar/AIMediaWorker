@@ -109,6 +109,18 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsMigrateUnslothProviderName()
+    {
+        var path = Path.Combine(_folder, "settings-old-unsloth.json");
+        Directory.CreateDirectory(_folder);
+        await File.WriteAllTextAsync(path, "{\"Llm\":{\"Provider\":\"Unsloth\"}}");
+
+        var loaded = await new SettingsService(path).LoadAsync();
+
+        Assert.Equal("Unsloth Desktop", loaded.Llm.Provider);
+    }
+
+    [Fact]
     public async Task RecentMediaDeduplicatesAndPersists()
     {
         var path = Path.Combine(_folder, "history.json");
