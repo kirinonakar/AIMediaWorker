@@ -79,5 +79,5 @@ Last updated: 2026-08-23
 - Python syntax, protocol lifecycle, missing-model recovery, and 3 segmenter tests pass.
 - All 29 .NET unit/integration tests pass, including generated FFmpeg media and a WebDAV 207 fixture.
 - Debug and Release solution builds pass with zero warnings.
-- The self-contained unpackaged Release executable remains running during its launch smoke test; the exact smoke-test process is then stopped cleanly.
+- The self-contained unpackaged Release executable creates a visible top-level `AIMediaWorker` window during its launch smoke test; the exact smoke-test process is then stopped cleanly.
 - Real-hardware/service workflows remain listed above for the target deployment environment.

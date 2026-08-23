@@ -23,7 +23,8 @@ public static class AppLog
                 category,
                 code,
                 message = Sanitize(message),
-                exception = exception?.GetType().FullName
+                exceptionType = exception?.GetType().FullName,
+                exception = exception is null ? null : Sanitize(exception.ToString())
             });
             await File.AppendAllTextAsync(CurrentPath, entry + Environment.NewLine).ConfigureAwait(false);
         }

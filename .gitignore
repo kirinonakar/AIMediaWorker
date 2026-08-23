@@ -13,6 +13,7 @@
 .agents
 .codex
 AGENTS.md
+Libs/
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

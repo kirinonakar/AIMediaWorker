@@ -1,6 +1,5 @@
 using AIMediaWorker.Settings;
 using Windows.ApplicationModel.Resources.Core;
-using Windows.Globalization;
 
 namespace AIMediaWorker.Localization;
 
@@ -11,7 +10,6 @@ public static class LocalizationService
     public static void Apply(AppLanguage language)
     {
         var tag = ToLanguageTag(language);
-        ApplicationLanguages.PrimaryLanguageOverride = tag;
         ResourceContext.SetGlobalQualifierValue("Language", tag);
     }
 
