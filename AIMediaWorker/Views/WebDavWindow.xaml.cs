@@ -30,10 +30,11 @@ public sealed partial class WebDavWindow : Window
     public event EventHandler<RemoteFolderSelection>? FolderFavoriteRequested;
     public event EventHandler<RemoteDirectorySnapshot>? DirectoryListed;
 
-    public WebDavWindow(Guid? initialServerId = null, Uri? initialDirectory = null)
+    public WebDavWindow(Window owner, Guid? initialServerId = null, Uri? initialDirectory = null)
     {
         InitializeComponent();
         Title = L("WebDavWindow.Title");
+        WindowOwner.Attach(this, owner);
         _initialServerId = initialServerId;
         _initialDirectory = initialDirectory;
         _webDavCredentials = new WebDavCredentialStore(_credentials);
@@ -146,13 +147,13 @@ public sealed partial class WebDavWindow : Window
     private async Task<bool> EditServerAsync(WebDavServerSettings server, bool isNew)
     {
         var existing = isNew ? null : _webDavCredentials.Read(server.Id);
-        var name = new TextBox { Header = L("NameHeader"), Text = server.Name };
-        var address = new TextBox { Header = L("AddressHeader"), Text = existing?.Address ?? string.Empty, PlaceholderText = "https://server.example/dav/" };
-        var port = new NumberBox { Header = L("PortHeader"), Value = existing?.Port ?? 443, Minimum = 1, Maximum = 65535, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
-        var username = new TextBox { Header = L("UsernameHeader"), Text = existing?.Username ?? string.Empty };
+        var name = CreateUncorrectedTextBox(L("NameHeader"), server.Name);
+        var address = CreateUncorrectedTextBox(L("AddressHeader"), existing?.Address ?? string.Empty, "https://server.example/dav/");
+        var port = new NumberBox { Header = L("PortHeader"), Value = existing?.Port ?? 443, Minimum = 1, Maximum = 65535, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden };
+        var username = CreateUncorrectedTextBox(L("UsernameHeader"), existing?.Username ?? string.Empty);
         var password = new PasswordBox { Header = L("PasswordHeader"), Password = existing?.Password ?? string.Empty };
-        var panel = new StackPanel { Spacing = 8, MinWidth = 440, Children = { name, address, port, username, password } };
-        var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = isNew ? L("AddWebDavServerTitle") : L("EditWebDavServerTitle"), Content = panel, PrimaryButtonText = L("SaveButtonText"), CloseButtonText = L("CancelButtonText") };
+        var panel = new StackPanel { Spacing = 12, Width = 460, Children = { name, address, port, username, password } };
+        var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = isNew ? L("AddWebDavServerTitle") : L("EditWebDavServerTitle"), Content = panel, PrimaryButtonText = L("SaveButtonText"), CloseButtonText = L("CancelButtonText"), Width = 520, Height = 560, MinWidth = 520, MaxWidth = 520, MinHeight = 560, MaxHeight = 560 };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return false;
         if (!Uri.TryCreate(address.Text.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || double.IsNaN(port.Value) || port.Value % 1 != 0 || port.Value is < 1 or > 65535) { StatusBar.Title = L("InvalidUrlTitle"); StatusBar.Message = L("InvalidWebDavAddressMessage"); StatusBar.Severity = InfoBarSeverity.Error; return false; }
         server.Name = string.IsNullOrWhiteSpace(name.Text) ? uri.Host : name.Text.Trim();
@@ -161,6 +162,15 @@ public sealed partial class WebDavWindow : Window
         _webDavCredentials.Save(server.Id, new WebDavConnectionCredential(WebDavConnectionCredential.NormalizeAddress(uri), (int)port.Value, username.Text.Trim(), password.Password));
         return true;
     }
+
+    private static TextBox CreateUncorrectedTextBox(string header, string text, string? placeholder = null) => new()
+    {
+        Header = header,
+        Text = text,
+        PlaceholderText = placeholder ?? string.Empty,
+        IsSpellCheckEnabled = false,
+        IsTextPredictionEnabled = false
+    };
 
     private async Task MigrateLegacyCredentialsAsync()
     {

@@ -24,10 +24,11 @@ public sealed partial class CameraWindow : Window
     private AppSettings _settings = new();
     private bool _closing;
 
-    public CameraWindow()
+    public CameraWindow(Window owner)
     {
         InitializeComponent();
         Title = L("CameraWindow.Title");
+        WindowOwner.Attach(this, owner);
         _liveAsr = new LiveAsrController(_audio, _asr);
         _liveAsr.CaptionReceived += OnCaptionReceived;
         _liveAsr.Failed += OnLiveFailed;

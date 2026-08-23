@@ -950,6 +950,7 @@ public sealed partial class MainWindow : Window
         var key = e.Key.ToString();
         if (e.Key == Windows.System.VirtualKey.Escape && _isFullscreen) { ExitFullscreen(); e.Handled = true; return; }
         var isTextInput = e.OriginalSource is TextBox or PasswordBox;
+        if (ctrl && shift && !alt && e.Key == Windows.System.VirtualKey.N) { PlayFromBeginning(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Enter) { ToggleFullscreen(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.F) { ToggleFullscreen(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.M) { OnMuteClick(this, new RoutedEventArgs()); e.Handled = true; return; }
@@ -969,8 +970,8 @@ public sealed partial class MainWindow : Window
         if (close) OnExitClick(this, new RoutedEventArgs());
         else if (saveAs) OnSaveSubtitleAsClick(this, new RoutedEventArgs());
         else if (save) OnSaveSubtitleClick(this, new RoutedEventArgs());
-        else if (Is(ShortcutActions.PlayPause) || playPauseAlternate) OnPlayPauseClick(this, new RoutedEventArgs());
         else if (playFromBeginning) PlayFromBeginning();
+        else if (Is(ShortcutActions.PlayPause) || playPauseAlternate) OnPlayPauseClick(this, new RoutedEventArgs());
         else if (previousMedia) OnPreviousMediaClick(this, new RoutedEventArgs());
         else if (nextMedia) OnNextMediaClick(this, new RoutedEventArgs());
         else if (Is(ShortcutActions.PreviousSubtitle)) SelectRelativeCue(-1);
@@ -1400,7 +1401,7 @@ public sealed partial class MainWindow : Window
                 if (serverId is null) { _webDavWindow.Activate(); return; }
                 _webDavWindow.Close();
             }
-            _webDavWindow = new WebDavWindow(serverId, directory);
+            _webDavWindow = new WebDavWindow(this, serverId, directory);
             _webDavWindow.DirectoryListed += (_, snapshot) =>
             {
                 _webDavPanelServerId = snapshot.ServerId;
@@ -1430,7 +1431,7 @@ public sealed partial class MainWindow : Window
         try
         {
             if (_cameraWindow is not null) { _cameraWindow.Activate(); return; }
-            _cameraWindow = new CameraWindow();
+            _cameraWindow = new CameraWindow(this);
             _cameraWindow.Closed += (_, _) => _cameraWindow = null;
             _cameraWindow.Activate();
         }
@@ -1446,7 +1447,7 @@ public sealed partial class MainWindow : Window
         try
         {
             if (_settingsWindow is not null) { _settingsWindow.Activate(); return; }
-            _settingsWindow = new SettingsWindow();
+            _settingsWindow = new SettingsWindow(this);
             _settingsWindow.SettingsSaved += (_, settings) =>
             {
                 _settings = settings;

@@ -28,12 +28,19 @@ public sealed partial class SettingsWindow : Window
     public string[] Providers { get; } = ["Unsloth", "Google", "OllamaCloud", "OpenCodeGo", "OpenCodeZen"];
     public event EventHandler<AppSettings>? SettingsSaved;
 
-    public SettingsWindow()
+    public SettingsWindow(Window owner)
     {
         InitializeComponent();
         Title = L("SettingsWindow.Title");
+        WindowOwner.Attach(this, owner);
         var handle = WindowNative.GetWindowHandle(this);
-        AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle))?.Resize(new SizeInt32(760, 820));
+        var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
+        appWindow?.Resize(new SizeInt32(960, 900));
+        if (appWindow?.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.IsResizable = false;
+            presenter.IsMaximizable = false;
+        }
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
