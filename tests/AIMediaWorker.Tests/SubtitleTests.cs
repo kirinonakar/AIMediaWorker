@@ -60,6 +60,19 @@ public sealed class SubtitleTests
     }
 
     [Fact]
+    public void AssOverlayPreservesKoreanText()
+    {
+        var track = new SubtitleTrack { Format = "ass" };
+        track.Cues.Add(new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 2_000_000, Text = "자동 생성된 한글 자막입니다." });
+
+        var content = AssWriter.Write(track);
+        var parsed = AssParser.Parse(content);
+
+        Assert.Contains("자동 생성된 한글 자막입니다.", content);
+        Assert.Equal("자동 생성된 한글 자막입니다.", parsed.ActiveTrack!.Cues[0].Text);
+    }
+
+    [Fact]
     public void AssRoundTripPreservesNativeStyleDefinitions()
     {
         const string ass = "[Script Info]\nScriptType: v4.00+\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour\nStyle: Sign,Comic Sans MS,33,&H00ABCDEF\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:02.00,Sign,,0,0,0,,Hello";

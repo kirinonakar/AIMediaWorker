@@ -1305,6 +1305,7 @@ public sealed partial class MainWindow : Window
             ApplyPanelVisibility();
             RightPanelTabs.SelectedIndex = 3;
             StatusText.Text = F("StatusGeneratingSubtitles", 0d);
+            EnableGeneratedSubtitleOverlay();
             var segmentation = _settings.Subtitle.Segmentation;
             var asrSegmentation = new AsrSegmentationOptions(segmentation.MinimumCueSeconds, segmentation.MaximumCueSeconds, segmentation.MaximumLines, segmentation.TargetCharactersPerLine, segmentation.SilenceSplitSeconds, segmentation.MaximumCharactersPerSecond);
             await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, token))
@@ -1314,6 +1315,7 @@ public sealed partial class MainWindow : Window
                 {
                     track.Cues.Add(new SubtitleCue { StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds, Text = segment.Text, Confidence = segment.Confidence, Source = SubtitleCueSource.AutomaticSpeechRecognition });
                     DrawTimeline();
+                    ScheduleSubtitleOverlaySync();
                 }
             }
             document.Sort(); document.MarkDirty(); ScheduleSubtitleOverlaySync(); StatusText.Text = F("StatusGeneratedSubtitles", track.Cues.Count);
@@ -1930,6 +1932,14 @@ public sealed partial class MainWindow : Window
         _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = new CancellationTokenSource();
         var token = _overlaySyncCancellation.Token;
         _ = SyncSubtitleOverlayAsync(token);
+    }
+
+    private void EnableGeneratedSubtitleOverlay()
+    {
+        if (!_playback.IsAvailable) return;
+        TryPlayback(() => _playback.SetSubtitleVisibility(true));
+        SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
+        _settings.Playback.ShowSubtitles = _playback.AreSubtitlesVisible;
     }
 
     private async Task SyncSubtitleOverlayAsync(CancellationToken cancellationToken)
