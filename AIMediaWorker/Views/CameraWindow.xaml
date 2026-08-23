@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="AIMediaWorker.Views.CameraWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Uid="CameraWindow" Title="Camera and live captions">
+    <Grid x:Name="Root" Padding="12" RowSpacing="10" Loaded="OnLoaded">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <Grid ColumnSpacing="8" RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <TextBlock x:Uid="CameraLabel" Text="Camera" VerticalAlignment="Center" /><ComboBox x:Name="CameraCombo" Grid.Column="1" DisplayMemberPath="Name" MinWidth="220" />
+            <TextBlock x:Uid="MicrophoneLabel" Grid.Column="2" Text="Microphone" VerticalAlignment="Center" /><ComboBox x:Name="MicrophoneCombo" Grid.Column="3" DisplayMemberPath="Name" MinWidth="220" />
+            <Button x:Uid="RefreshButton" Grid.Column="4" Content="Refresh" Click="OnRefreshClick" />
+            <TextBlock x:Uid="FormatLabel" Grid.Row="1" Text="Format" VerticalAlignment="Center" /><ComboBox x:Name="FormatCombo" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" DisplayMemberPath="DisplayName" SelectionChanged="OnFormatChanged" />
+        </Grid>
+        <Grid Grid.Row="1" Background="Black">
+            <MediaPlayerElement x:Name="Preview" AreTransportControlsEnabled="False" Stretch="Uniform" />
+            <Border x:Name="CaptionBackground" Background="#A0000000" Padding="16,8" CornerRadius="6" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="28" MaxWidth="900" Visibility="Collapsed">
+                <TextBlock x:Name="CaptionText" Foreground="White" FontSize="32" TextAlignment="Center" TextWrapping="Wrap" MaxLines="2" />
+            </Border>
+        </Grid>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+            <Button x:Uid="StartPreview" x:Name="PreviewButton" Content="Start preview" Click="OnPreviewClick" />
+            <Button x:Uid="StartRecording" x:Name="RecordButton" Content="Start recording" Click="OnRecordClick" />
+            <Button x:Uid="StartCaptions" x:Name="CaptionButton" Content="Start live captions" Click="OnCaptionClick" />
+            <ComboBox x:Name="LanguageCombo" SelectedIndex="0" Width="140"><ComboBoxItem Content="Auto" Tag="auto" /><ComboBoxItem Content="한국어" Tag="ko" /><ComboBoxItem Content="English" Tag="en" /><ComboBoxItem Content="日本語" Tag="ja" /></ComboBox>
+        </StackPanel>
+        <InfoBar x:Uid="CameraInitialStatus" x:Name="StatusBar" Grid.Row="3" IsOpen="True" Severity="Informational" Title="Ready" Message="Select a camera and microphone." />
+    </Grid>
+</Window>

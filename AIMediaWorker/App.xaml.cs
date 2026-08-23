@@ -15,6 +15,9 @@ using Windows.ApplicationModel;
 using Windows.ApplicationModel.Activation;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
+using AIMediaWorker.Settings;
+using AIMediaWorker.Localization;
+using AIMediaWorker.Diagnostics;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -34,17 +37,29 @@ namespace AIMediaWorker
         /// </summary>
         public App()
         {
+            System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
             InitializeComponent();
+            UnhandledException += (_, eventArgs) => _ = AppLog.WriteAsync("critical", "application", "UNHANDLED_EXCEPTION", eventArgs.Message, eventArgs.Exception);
         }
 
         /// <summary>
         /// Invoked when the application is launched.
         /// </summary>
         /// <param name="args">Details about the launch request and process.</param>
-        protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
+        protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
         {
-            _window = new MainWindow();
-            _window.Activate();
+            try
+            {
+                var settings = await SettingsService.CreateDefault().LoadAsync();
+                LocalizationService.Apply(settings.General.Language);
+                _window = new MainWindow();
+                _window.Activate();
+            }
+            catch (Exception exception)
+            {
+                await AppLog.WriteAsync("critical", "startup", "STARTUP_ERROR", exception.Message, exception);
+                throw;
+            }
         }
     }
 }

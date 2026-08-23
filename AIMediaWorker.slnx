@@ -3,8 +3,9 @@
     <Platform Name="x64" />
   </Configurations>
   <Project Path="AIMediaWorker/AIMediaWorker.csproj">
-    <BuildType Project="Release" />
     <Platform Project="x64" />
     <Deploy />
   </Project>
+  <Project Path="AIMediaWorker.Core/AIMediaWorker.Core.csproj" />
+  <Project Path="tests/AIMediaWorker.Tests/AIMediaWorker.Tests.csproj" />
 </Solution>
