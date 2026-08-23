@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
+from engines.model_download import download_model
 from engines.model_defaults import DEFAULT_ASR_MODEL, DEFAULT_FORCED_ALIGNER_MODEL, resolve_model_reference
 from protocol.messages import WordTimestamp
 
@@ -25,9 +26,11 @@ class QwenAsrEngine:
         self.model_path: str | None = None
         self.aligner_path: str | None = None
 
-    def load(self, model_path: str | None = None, aligner_path: str | None = None, device: str = "auto", precision: str = "auto") -> None:
+    def load(self, model_path: str | None = None, aligner_path: str | None = None, device: str = "auto", precision: str = "auto", progress: Callable[[str, str, float, int, int], None] | None = None) -> None:
         model_reference = resolve_model_reference(model_path, DEFAULT_ASR_MODEL, "ASR model")
         aligner_reference = resolve_model_reference(aligner_path, DEFAULT_FORCED_ALIGNER_MODEL, "Forced aligner model")
+        model_local_path = download_model(model_reference, lambda value, downloaded, total: progress("asr", model_reference.rsplit("/", 1)[-1], value, downloaded, total)) if progress else model_reference
+        aligner_local_path = download_model(aligner_reference, lambda value, downloaded, total: progress("aligner", aligner_reference.rsplit("/", 1)[-1], value, downloaded, total)) if progress else aligner_reference
         try:
             import torch
             from qwen_asr import Qwen3ASRModel
@@ -45,9 +48,9 @@ class QwenAsrEngine:
         }
         dtype = dtype_map.get(precision.lower(), dtype_map["auto"])
         kwargs: dict[str, Any] = {"device_map": actual_device, "dtype": dtype, "max_inference_batch_size": 1}
-        kwargs["forced_aligner"] = aligner_reference
+        kwargs["forced_aligner"] = aligner_local_path
         kwargs["forced_aligner_kwargs"] = {"device_map": actual_device, "dtype": dtype}
-        self.model = Qwen3ASRModel.from_pretrained(model_reference, **kwargs)
+        self.model = Qwen3ASRModel.from_pretrained(model_local_path, **kwargs)
         self.model_path = model_reference
         self.aligner_path = aligner_reference
 

@@ -130,7 +130,8 @@ public sealed partial class CameraWindow : Window
             CaptionButton.IsEnabled = false;
             var worker = Path.Combine(AppContext.BaseDirectory, "asr-worker", "main.py");
             await _asr.StartAsync(_settings.Asr.PythonExecutable, worker);
-            await _asr.LoadModelAsync(_settings.Asr.ModelPath, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString());
+            var loadProgress = new Progress<AsrEvent>(UpdateAsrModelProgress);
+            await _asr.LoadModelAsync(_settings.Asr.ModelPath, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress);
             var language = (LanguageCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "auto";
             await _liveAsr.StartAsync((MicrophoneCombo.SelectedItem as CaptureDevice)?.Id, language);
             CaptionButton.Content = L("StopCaptionsText");
@@ -140,6 +141,24 @@ public sealed partial class CameraWindow : Window
         catch (UnauthorizedAccessException) { CaptionButton.IsEnabled = true; SetStatus(L("MicrophonePermissionTitle"), L("MicrophonePermissionMessage"), InfoBarSeverity.Error); }
         catch (Exception exception) { CaptionButton.IsEnabled = true; SetStatus(L("LiveAsrErrorTitle"), exception.Message, InfoBarSeverity.Error); }
     }
+
+    private void UpdateAsrModelProgress(AsrEvent update)
+    {
+        if (update.Stage == "download" && update.Progress is { } progress)
+        {
+            var model = update.Message ?? "Qwen3-ASR";
+            var modelProgress = update.ModelProgress ?? progress;
+            var message = update.TotalBytes is > 0 && update.DownloadedBytes is { } downloaded
+                ? F("StatusDownloadingAsrModel", model, modelProgress, FormatDownloadSize(downloaded), FormatDownloadSize(update.TotalBytes.Value))
+                : F("StatusPreparingAsrDownload", model);
+            SetStatus(L("StatusLoadingAsr"), message, InfoBarSeverity.Informational);
+        }
+        else SetStatus(L("StatusLoadingAsr"), L("StatusLoadingAsr"), InfoBarSeverity.Informational);
+    }
+
+    private static string FormatDownloadSize(long bytes) => bytes >= 1_073_741_824
+        ? $"{bytes / 1_073_741_824d:0.00} GB"
+        : $"{bytes / 1_048_576d:0.0} MB";
 
     private void OnCaptionReceived(object? sender, AsrEvent result) => DispatcherQueue.TryEnqueue(() =>
     {

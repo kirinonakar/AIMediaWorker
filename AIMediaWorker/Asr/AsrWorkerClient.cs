@@ -82,10 +82,10 @@ public sealed class AsrWorkerClient : IAsrEngine
         await StartAsync(_pythonExecutable, _workerScript, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task LoadModelAsync(string modelPath, string? alignerPath, string device, string precision, CancellationToken cancellationToken = default)
+    public async Task LoadModelAsync(string modelPath, string? alignerPath, string device, string precision, IProgress<AsrEvent>? progress = null, CancellationToken cancellationToken = default)
     {
         var request = AsrRequest.Create("load_model", new { model_path = modelPath, aligner_path = alignerPath, device, precision });
-        var response = await SendAndWaitAsync(request, cancellationToken).ConfigureAwait(false);
+        var response = await SendAndWaitAsync(request, cancellationToken, progress).ConfigureAwait(false);
         ThrowIfError(response);
     }
 
@@ -160,7 +160,7 @@ public sealed class AsrWorkerClient : IAsrEngine
         GC.SuppressFinalize(this);
     }
 
-    private async Task<AsrEvent> SendAndWaitAsync(AsrRequest request, CancellationToken cancellationToken)
+    private async Task<AsrEvent> SendAndWaitAsync(AsrRequest request, CancellationToken cancellationToken, IProgress<AsrEvent>? progress = null)
     {
         var channel = Register(request.Id);
         try
@@ -168,6 +168,7 @@ public sealed class AsrWorkerClient : IAsrEngine
             await WriteAsync(request, cancellationToken).ConfigureAwait(false);
             await foreach (var result in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
+                if (result.Event == "progress") progress?.Report(result);
                 if (result.Event is "partial" or "final") LiveResultReceived?.Invoke(this, result);
                 if (result.Event is "completed" or "ready" or "status" or "cancelled" or "error") return result;
             }

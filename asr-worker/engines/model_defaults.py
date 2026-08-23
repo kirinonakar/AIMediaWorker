@@ -25,6 +25,7 @@ def configure_model_cache() -> Path:
         os.environ[variable] = cache_path
     if "TRANSFORMERS_CACHE" in os.environ:
         os.environ["TRANSFORMERS_CACHE"] = cache_path
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
     return MODEL_CACHE_DIR
 
 

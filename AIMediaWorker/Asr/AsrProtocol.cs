@@ -44,6 +44,10 @@ public sealed record AsrEvent
     [JsonPropertyName("id")] public string? Id { get; init; }
     [JsonPropertyName("event")] public required string Event { get; init; }
     [JsonPropertyName("progress")] public double? Progress { get; init; }
+    [JsonPropertyName("model_progress")] public double? ModelProgress { get; init; }
+    [JsonPropertyName("stage")] public string? Stage { get; init; }
+    [JsonPropertyName("downloaded_bytes")] public long? DownloadedBytes { get; init; }
+    [JsonPropertyName("total_bytes")] public long? TotalBytes { get; init; }
     [JsonPropertyName("segment")] public AsrSegment? Segment { get; init; }
     [JsonPropertyName("text")] public string? Text { get; init; }
     [JsonPropertyName("code")] public string? Code { get; init; }

@@ -1294,7 +1294,8 @@ public sealed partial class MainWindow : Window
             var worker = System.IO.Path.Combine(AppContext.BaseDirectory, "asr-worker", "main.py");
             await _asrEngine.StartAsync(_settings.Asr.PythonExecutable, worker, token);
             StatusText.Text = L("StatusLoadingAsr");
-            await _asrEngine.LoadModelAsync(_settings.Asr.ModelPath, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), token);
+            var loadProgress = new Progress<AsrEvent>(UpdateAsrModelProgress);
+            await _asrEngine.LoadModelAsync(_settings.Asr.ModelPath, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress, token);
             var document = new SubtitleDocument();
             var track = document.EnsureTrack("srt"); track.Name = "Qwen3-ASR";
             BindDocument(document);
@@ -1316,10 +1317,32 @@ public sealed partial class MainWindow : Window
         catch (Exception exception) { await ShowMessageAsync("ASR_ERROR", exception.Message); }
         finally
         {
+            AsrDownloadProgressBar.Visibility = Visibility.Collapsed;
             if (temporaryInput is not null) try { File.Delete(temporaryInput); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
             _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null;
         }
     }
+
+    private void UpdateAsrModelProgress(AsrEvent update)
+    {
+        if (update.Stage == "download" && update.Progress is { } progress)
+        {
+            AsrDownloadProgressBar.Visibility = Visibility.Visible;
+            AsrDownloadProgressBar.Value = Math.Clamp(progress, 0, 1);
+            var model = update.Message ?? "Qwen3-ASR";
+            var modelProgress = update.ModelProgress ?? progress;
+            StatusText.Text = update.TotalBytes is > 0 && update.DownloadedBytes is { } downloaded
+                ? F("StatusDownloadingAsrModel", model, modelProgress, FormatDownloadSize(downloaded), FormatDownloadSize(update.TotalBytes.Value))
+                : F("StatusPreparingAsrDownload", model);
+            return;
+        }
+        AsrDownloadProgressBar.Visibility = Visibility.Collapsed;
+        StatusText.Text = L("StatusLoadingAsr");
+    }
+
+    private static string FormatDownloadSize(long bytes) => bytes >= 1_073_741_824
+        ? $"{bytes / 1_073_741_824d:0.00} GB"
+        : $"{bytes / 1_048_576d:0.0} MB";
 
     private async Task<string> DownloadAsrInputAsync(string source, IReadOnlyDictionary<string, string> headers, CancellationToken cancellationToken)
     {

@@ -1,4 +1,5 @@
 using AIMediaWorker.Asr;
+using System.Collections.Concurrent;
 
 namespace AIMediaWorker.Tests;
 
@@ -33,6 +34,18 @@ public sealed class AsrTests
         Assert.Contains("\"command\":\"transcribe_file\"", json);
         var result = AsrJson.DeserializeEvent("{\"id\":\"job-123\",\"event\":\"segment\",\"segment\":{\"start_us\":100,\"end_us\":200,\"text\":\"hi\"}}");
         Assert.Equal(100, result.Segment!.StartMicroseconds);
+    }
+
+    [Fact]
+    public void ProtocolReadsModelDownloadProgress()
+    {
+        var result = AsrJson.DeserializeEvent("{\"id\":\"job-1\",\"event\":\"progress\",\"stage\":\"download\",\"progress\":0.42,\"model_progress\":0.6,\"message\":\"Qwen3-ASR-1.7B\",\"downloaded_bytes\":420,\"total_bytes\":1000}");
+
+        Assert.Equal("download", result.Stage);
+        Assert.Equal(0.42, result.Progress);
+        Assert.Equal(0.6, result.ModelProgress);
+        Assert.Equal(420, result.DownloadedBytes);
+        Assert.Equal(1000, result.TotalBytes);
     }
 
     [Fact]
@@ -89,8 +102,10 @@ public sealed class AsrTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await client.StartAsync("python", script, cancellation.Token);
         var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "Qwen3-ASR-1.7B");
-        var error = await Assert.ThrowsAsync<AsrWorkerException>(() => client.LoadModelAsync(missing, null, "cpu", "float32", cancellation.Token));
+        var progress = new RecordingProgress();
+        var error = await Assert.ThrowsAsync<AsrWorkerException>(() => client.LoadModelAsync(missing, null, "cpu", "float32", progress, cancellation.Token));
         Assert.Equal("MODEL_NOT_FOUND", error.Code);
+        Assert.Contains(progress.Events, update => update.Event == "progress" && update.Stage == "download");
         Assert.Equal(AsrWorkerState.Ready, client.State);
     }
 
@@ -99,5 +114,11 @@ public sealed class AsrTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "AIMediaWorker.slnx"))) directory = directory.Parent;
         return directory?.FullName ?? AppContext.BaseDirectory;
+    }
+
+    private sealed class RecordingProgress : IProgress<AsrEvent>
+    {
+        public ConcurrentQueue<AsrEvent> Events { get; } = new();
+        public void Report(AsrEvent value) => Events.Enqueue(value);
     }
 }
