@@ -1,4 +1,5 @@
 using AIMediaWorker.Playback;
+using System.Text.Json.Serialization;
 
 namespace AIMediaWorker.Settings;
 
@@ -10,7 +11,7 @@ public enum ThinkingLevel { Default, Off, Low, Medium, High, XHigh, Max }
 
 public sealed class AppSettings
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public PlaybackSettings Playback { get; set; } = new();
     public SubtitleSettings Subtitle { get; set; } = new();
     public AsrSettings Asr { get; set; } = new();
@@ -80,9 +81,16 @@ public sealed class WebDavServerSettings
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = string.Empty;
-    public string Url { get; set; } = string.Empty;
-    public string? Username { get; set; }
     public string Authentication { get; set; } = "Basic";
+
+    // Read only for migrating settings created before connection details moved to Windows Credential Manager.
+    [JsonPropertyName("Url")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyUrl { get; set; }
+
+    [JsonPropertyName("Username")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyUsername { get; set; }
 }
 
 public sealed class CaptureSettings

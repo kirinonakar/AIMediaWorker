@@ -18,6 +18,7 @@ using Windows.Foundation.Collections;
 using AIMediaWorker.Settings;
 using AIMediaWorker.Localization;
 using AIMediaWorker.Diagnostics;
+using AIMediaWorker.Network;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -51,6 +52,14 @@ namespace AIMediaWorker
             try
             {
                 var settings = await SettingsService.CreateDefault().LoadAsync();
+                try
+                {
+                    var webDavCredentials = new WebDavCredentialStore(new WindowsCredentialService());
+                    var migratedWebDavCredentials = false;
+                    foreach (var server in settings.Network.WebDavServers) migratedWebDavCredentials |= webDavCredentials.MigrateLegacy(server);
+                    if (migratedWebDavCredentials) await SettingsService.CreateDefault().SaveAsync(settings);
+                }
+                catch (Exception exception) { await AppLog.WriteAsync("warning", "credentials", "WEBDAV_CREDENTIAL_MIGRATION_ERROR", exception.Message, exception); }
                 LocalizationService.Apply(settings.General.Language);
                 var launchSource = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(value => File.Exists(value) || Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https");
                 var mainWindow = new MainWindow(launchSource, settings);

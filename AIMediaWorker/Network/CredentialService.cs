@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
+using AIMediaWorker.Settings;
 
 namespace AIMediaWorker.Network;
 
@@ -18,6 +20,71 @@ public static class CredentialIdentifier
     {
         if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("A provider name is required.", nameof(value));
         return string.Concat(value.Trim().Where(c => char.IsLetterOrDigit(c) || c is '-' or '_')).ToLowerInvariant();
+    }
+}
+
+public sealed record WebDavConnectionCredential(string Address, int Port, string Username, string Password)
+{
+    public Uri RootUri
+    {
+        get
+        {
+            if (!Uri.TryCreate(Address, UriKind.Absolute, out var address) || address.Scheme is not ("http" or "https")) throw new ArgumentException("The WebDAV address must be an absolute HTTP or HTTPS URL.", nameof(Address));
+            if (Port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(Port), "The WebDAV port must be between 1 and 65535.");
+            var builder = new UriBuilder(address) { Port = Port };
+            var uri = builder.Uri;
+            return uri.AbsoluteUri.EndsWith('/') ? uri : new Uri(uri.AbsoluteUri + "/");
+        }
+    }
+
+    public static string NormalizeAddress(Uri uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        if (!uri.IsAbsoluteUri || uri.Scheme is not ("http" or "https")) throw new ArgumentException("The WebDAV address must be an absolute HTTP or HTTPS URL.", nameof(uri));
+        return new UriBuilder(uri) { Port = -1, UserName = string.Empty, Password = string.Empty, Query = string.Empty, Fragment = string.Empty }.Uri.AbsoluteUri;
+    }
+}
+
+public sealed class WebDavCredentialStore(ICredentialService credentials)
+{
+    private readonly ICredentialService _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
+
+    public void Save(Guid serverId, WebDavConnectionCredential credential)
+    {
+        ArgumentNullException.ThrowIfNull(credential);
+        _ = credential.RootUri;
+        _credentials.Save(CredentialIdentifier.ForWebDav(serverId), string.Empty, JsonSerializer.Serialize(credential));
+    }
+
+    public WebDavConnectionCredential? Read(Guid serverId)
+    {
+        var stored = _credentials.Read(CredentialIdentifier.ForWebDav(serverId));
+        if (stored is null) return null;
+        try
+        {
+            var credential = JsonSerializer.Deserialize<WebDavConnectionCredential>(stored.Value.Secret);
+            if (credential is null) return null;
+            _ = credential.RootUri;
+            return credential;
+        }
+        catch (Exception exception) when (exception is JsonException or ArgumentException) { return null; }
+    }
+
+    public bool Delete(Guid serverId) => _credentials.Delete(CredentialIdentifier.ForWebDav(serverId));
+
+    public bool MigrateLegacy(WebDavServerSettings server)
+    {
+        ArgumentNullException.ThrowIfNull(server);
+        if (string.IsNullOrWhiteSpace(server.LegacyUrl) || !Uri.TryCreate(server.LegacyUrl, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return false;
+        var legacy = _credentials.Read(CredentialIdentifier.ForWebDav(server.Id));
+        Save(server.Id, new WebDavConnectionCredential(
+            WebDavConnectionCredential.NormalizeAddress(uri),
+            uri.Port,
+            server.LegacyUsername ?? legacy?.Username ?? string.Empty,
+            legacy?.Secret ?? string.Empty));
+        server.LegacyUrl = null;
+        server.LegacyUsername = null;
+        return true;
     }
 }
 

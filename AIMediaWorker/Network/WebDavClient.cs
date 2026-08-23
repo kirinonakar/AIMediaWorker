@@ -31,11 +31,11 @@ public sealed class WebDavClient : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly bool _ownsClient;
-    private readonly ICredentialService _credentials;
+    private readonly WebDavCredentialStore _credentials;
 
     public WebDavClient(ICredentialService credentials, HttpClient? httpClient = null, TimeSpan? timeout = null)
     {
-        _credentials = credentials;
+        _credentials = new WebDavCredentialStore(credentials);
         _httpClient = httpClient ?? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, AutomaticDecompression = DecompressionMethods.All });
         _ownsClient = httpClient is null;
         _httpClient.Timeout = timeout ?? TimeSpan.FromSeconds(30);
@@ -43,12 +43,13 @@ public sealed class WebDavClient : IDisposable
 
     public async Task<IReadOnlyList<WebDavEntry>> ListAsync(WebDavServerSettings server, Uri directory, CancellationToken cancellationToken = default)
     {
-        var root = ValidateServer(server);
+        var credential = ReadCredential(server);
+        var root = credential.RootUri;
         EnsureWithinRoot(root, directory);
         using var request = new HttpRequestMessage(new HttpMethod("PROPFIND"), directory);
         request.Headers.TryAddWithoutValidation("Depth", "1");
         request.Content = new StringContent("<?xml version=\"1.0\" encoding=\"utf-8\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:displayname/><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getcontenttype/></d:prop></d:propfind>", Encoding.UTF8, "application/xml");
-        ApplyAuthentication(request, server);
+        ApplyAuthentication(request, server, credential);
         using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) throw new WebDavException("AUTH_ERROR", "WebDAV authentication failed.", response.StatusCode);
         if ((int)response.StatusCode != 207 && !response.IsSuccessStatusCode) throw new WebDavException("NETWORK_ERROR", $"WebDAV listing failed with HTTP {(int)response.StatusCode}.", response.StatusCode);
@@ -59,10 +60,11 @@ public sealed class WebDavClient : IDisposable
 
     public HttpRequestMessage CreateMediaRequest(WebDavServerSettings server, Uri mediaUri, HttpMethod? method = null)
     {
-        var root = ValidateServer(server);
+        var credential = ReadCredential(server);
+        var root = credential.RootUri;
         EnsureWithinRoot(root, mediaUri);
         var request = new HttpRequestMessage(method ?? HttpMethod.Get, mediaUri);
-        ApplyAuthentication(request, server);
+        ApplyAuthentication(request, server, credential);
         return request;
     }
 
@@ -81,21 +83,15 @@ public sealed class WebDavClient : IDisposable
         catch (HttpRequestException exception) { throw new WebDavException("NETWORK_ERROR", "The WebDAV server could not be reached.", exception.StatusCode, exception); }
     }
 
-    private void ApplyAuthentication(HttpRequestMessage request, WebDavServerSettings server)
+    private static void ApplyAuthentication(HttpRequestMessage request, WebDavServerSettings server, WebDavConnectionCredential credential)
     {
-        var credential = _credentials.Read(CredentialIdentifier.ForWebDav(server.Id));
-        if (credential is null) return;
         if (!server.Authentication.Equals("Basic", StringComparison.OrdinalIgnoreCase)) throw new WebDavException("AUTH_ERROR", $"Unsupported WebDAV authentication mode: {server.Authentication}");
-        var raw = Encoding.UTF8.GetBytes($"{credential.Value.Username}:{credential.Value.Secret}");
+        var raw = Encoding.UTF8.GetBytes($"{credential.Username}:{credential.Password}");
         try { request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(raw)); }
         finally { Array.Clear(raw); }
     }
 
-    private static Uri ValidateServer(WebDavServerSettings server)
-    {
-        if (!Uri.TryCreate(server.Url, UriKind.Absolute, out var root) || root.Scheme is not ("http" or "https")) throw new WebDavException("NETWORK_ERROR", "WebDAV server URL must be absolute HTTP or HTTPS.");
-        return root;
-    }
+    private WebDavConnectionCredential ReadCredential(WebDavServerSettings server) => _credentials.Read(server.Id) ?? throw new WebDavException("AUTH_ERROR", "WebDAV connection details are missing from Windows Credential Manager.");
 
     private static void EnsureWithinRoot(Uri root, Uri target)
     {

@@ -18,6 +18,7 @@ public sealed partial class WebDavWindow : Window
 {
     private readonly SettingsService _settingsService = SettingsService.CreateDefault();
     private readonly WindowsCredentialService _credentials = new();
+    private readonly WebDavCredentialStore _webDavCredentials;
     private readonly WebDavClient _client;
     private AppSettings _settings = new();
     private Uri? _currentDirectory;
@@ -35,6 +36,7 @@ public sealed partial class WebDavWindow : Window
         Title = L("WebDavWindow.Title");
         _initialServerId = initialServerId;
         _initialDirectory = initialDirectory;
+        _webDavCredentials = new WebDavCredentialStore(_credentials);
         _client = new WebDavClient(_credentials);
         Closed += OnClosed;
         var handle = WindowNative.GetWindowHandle(this);
@@ -46,6 +48,7 @@ public sealed partial class WebDavWindow : Window
         try
         {
             _settings = await _settingsService.LoadAsync();
+            await MigrateLegacyCredentialsAsync();
             ServerList.ItemsSource = _settings.Network.WebDavServers;
             var initialServer = _initialServerId is { } id ? _settings.Network.WebDavServers.FirstOrDefault(server => server.Id == id) : null;
             if (initialServer is not null && _initialDirectory is not null) { _currentDirectory = EnsureDirectoryUri(_initialDirectory); _currentServerId = initialServer.Id; }
@@ -56,7 +59,9 @@ public sealed partial class WebDavWindow : Window
 
     private async void OnServerChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (ServerList.SelectedItem is not WebDavServerSettings server || !Uri.TryCreate(server.Url, UriKind.Absolute, out var root)) return;
+        if (ServerList.SelectedItem is not WebDavServerSettings server) return;
+        var root = _webDavCredentials.Read(server.Id)?.RootUri;
+        if (root is null) { SetStatus(L("NetworkErrorTitle"), L("WebDavCredentialMissingMessage"), InfoBarSeverity.Error); return; }
         if (_currentDirectory is null || _currentServerId != server.Id) _currentDirectory = EnsureDirectoryUri(root);
         _currentServerId = server.Id;
         await RefreshAsync();
@@ -101,7 +106,9 @@ public sealed partial class WebDavWindow : Window
 
     private async void OnParentClick(object sender, RoutedEventArgs e)
     {
-        if (ServerList.SelectedItem is not WebDavServerSettings server || _currentDirectory is null || !Uri.TryCreate(server.Url, UriKind.Absolute, out var root)) return;
+        if (ServerList.SelectedItem is not WebDavServerSettings server || _currentDirectory is null) return;
+        var root = _webDavCredentials.Read(server.Id)?.RootUri;
+        if (root is null) { SetStatus(L("NetworkErrorTitle"), L("WebDavCredentialMissingMessage"), InfoBarSeverity.Error); return; }
         var parent = EnsureDirectoryUri(new Uri(_currentDirectory, "../"));
         var rootDirectory = EnsureDirectoryUri(root);
         if (!parent.AbsoluteUri.StartsWith(rootDirectory.AbsoluteUri, StringComparison.OrdinalIgnoreCase)) parent = rootDirectory;
@@ -133,22 +140,33 @@ public sealed partial class WebDavWindow : Window
         var confirmation = new ContentDialog { XamlRoot = Root.XamlRoot, Title = L("DeleteWebDavServerTitle"), Content = F("DeleteWebDavServerMessage", server.Name), PrimaryButtonText = L("DeleteButtonText"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Close };
         if (await confirmation.ShowAsync() != ContentDialogResult.Primary) return;
         _listingCancellation?.Cancel();
-        _settings.Network.WebDavServers.Remove(server); _credentials.Delete(CredentialIdentifier.ForWebDav(server.Id)); await _settingsService.SaveAsync(_settings); ServerList.ItemsSource = null; ServerList.ItemsSource = _settings.Network.WebDavServers; EntryList.ItemsSource = null; _currentDirectory = null; _currentServerId = null; PathText.Text = string.Empty;
+        _settings.Network.WebDavServers.Remove(server); _webDavCredentials.Delete(server.Id); await _settingsService.SaveAsync(_settings); ServerList.ItemsSource = null; ServerList.ItemsSource = _settings.Network.WebDavServers; EntryList.ItemsSource = null; _currentDirectory = null; _currentServerId = null; PathText.Text = string.Empty;
     }
 
     private async Task<bool> EditServerAsync(WebDavServerSettings server, bool isNew)
     {
+        var existing = isNew ? null : _webDavCredentials.Read(server.Id);
         var name = new TextBox { Header = L("NameHeader"), Text = server.Name };
-        var url = new TextBox { Header = "URL", Text = server.Url, PlaceholderText = "https://server.example/dav/" };
-        var username = new TextBox { Header = L("UsernameHeader"), Text = server.Username ?? string.Empty };
-        var password = new PasswordBox { Header = L("PasswordHeader"), Password = isNew ? string.Empty : _credentials.Read(CredentialIdentifier.ForWebDav(server.Id))?.Secret ?? string.Empty };
-        var panel = new StackPanel { Spacing = 8, MinWidth = 440, Children = { name, url, username, password } };
+        var address = new TextBox { Header = L("AddressHeader"), Text = existing?.Address ?? string.Empty, PlaceholderText = "https://server.example/dav/" };
+        var port = new NumberBox { Header = L("PortHeader"), Value = existing?.Port ?? 443, Minimum = 1, Maximum = 65535, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+        var username = new TextBox { Header = L("UsernameHeader"), Text = existing?.Username ?? string.Empty };
+        var password = new PasswordBox { Header = L("PasswordHeader"), Password = existing?.Password ?? string.Empty };
+        var panel = new StackPanel { Spacing = 8, MinWidth = 440, Children = { name, address, port, username, password } };
         var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = isNew ? L("AddWebDavServerTitle") : L("EditWebDavServerTitle"), Content = panel, PrimaryButtonText = L("SaveButtonText"), CloseButtonText = L("CancelButtonText") };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return false;
-        if (!Uri.TryCreate(url.Text, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) { StatusBar.Title = L("InvalidUrlTitle"); StatusBar.Message = L("InvalidWebDavUrlMessage"); StatusBar.Severity = InfoBarSeverity.Error; return false; }
-        server.Name = string.IsNullOrWhiteSpace(name.Text) ? uri.Host : name.Text.Trim(); server.Url = EnsureDirectoryUri(uri).AbsoluteUri; server.Username = username.Text.Trim();
-        _credentials.Save(CredentialIdentifier.ForWebDav(server.Id), server.Username ?? string.Empty, password.Password);
+        if (!Uri.TryCreate(address.Text.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || double.IsNaN(port.Value) || port.Value % 1 != 0 || port.Value is < 1 or > 65535) { StatusBar.Title = L("InvalidUrlTitle"); StatusBar.Message = L("InvalidWebDavAddressMessage"); StatusBar.Severity = InfoBarSeverity.Error; return false; }
+        server.Name = string.IsNullOrWhiteSpace(name.Text) ? uri.Host : name.Text.Trim();
+        server.LegacyUrl = null;
+        server.LegacyUsername = null;
+        _webDavCredentials.Save(server.Id, new WebDavConnectionCredential(WebDavConnectionCredential.NormalizeAddress(uri), (int)port.Value, username.Text.Trim(), password.Password));
         return true;
+    }
+
+    private async Task MigrateLegacyCredentialsAsync()
+    {
+        var migrated = false;
+        foreach (var server in _settings.Network.WebDavServers) migrated |= _webDavCredentials.MigrateLegacy(server);
+        if (migrated) await _settingsService.SaveAsync(_settings);
     }
 
     private async Task SaveAndRefreshServersAsync(WebDavServerSettings selected)

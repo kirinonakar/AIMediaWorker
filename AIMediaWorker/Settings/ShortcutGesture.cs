@@ -3,6 +3,10 @@ namespace AIMediaWorker.Settings;
 public static class ShortcutActions
 {
     public const string PlayPause = "PlayPause";
+    public const string PlayPauseAlternate = "PlayPauseAlternate";
+    public const string PlayFromBeginning = "PlayFromBeginning";
+    public const string PreviousMedia = "PreviousMedia";
+    public const string NextMedia = "NextMedia";
     public const string SeekBackward = "SeekBackward";
     public const string SeekForward = "SeekForward";
     public const string PreviousSubtitle = "PreviousSubtitle";
@@ -19,6 +23,10 @@ public static class ShortcutActions
     public static Dictionary<string, string> CreateDefaults() => new(StringComparer.OrdinalIgnoreCase)
     {
         [PlayPause] = "Space",
+        [PlayPauseAlternate] = "Ctrl+P",
+        [PlayFromBeginning] = "Ctrl+Shift+N",
+        [PreviousMedia] = "Ctrl+F",
+        [NextMedia] = "Ctrl+B",
         [SeekBackward] = "Left",
         [SeekForward] = "Right",
         [PreviousSubtitle] = "Ctrl+Left",

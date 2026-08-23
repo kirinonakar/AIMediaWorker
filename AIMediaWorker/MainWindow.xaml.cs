@@ -117,6 +117,8 @@ public sealed partial class MainWindow : Window
         }
         if (_appWindow is not null) { _appWindow.Closing += OnAppWindowClosing; _appWindow.Changed += OnAppWindowChanged; }
         Closed += OnWindowClosed;
+        RootGrid.ActualThemeChanged += OnRootActualThemeChanged;
+        ApplyTheme(_settings.General.Theme);
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnRootKeyDown), true);
         PositionSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPositionSliderPointerPressed), true);
         PositionSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
@@ -467,6 +469,7 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnPlayPauseClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.TogglePause);
+    private void PlayFromBeginning() => TryPlayback(() => { _playback.Seek(TimeSpan.Zero, true); _playback.Play(); });
     private void OnStopClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.Stop);
     private async void OnPreviousMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(-1);
     private async void OnNextMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(1);
@@ -958,11 +961,18 @@ public sealed partial class MainWindow : Window
         var save = Is(ShortcutActions.SaveSubtitle);
         var saveAs = Is(ShortcutActions.SaveSubtitleAs);
         var close = Is(ShortcutActions.CloseWindow);
-        if (isTextInput && !save && !saveAs && !close) return;
+        var playPauseAlternate = Is(ShortcutActions.PlayPauseAlternate);
+        var playFromBeginning = Is(ShortcutActions.PlayFromBeginning);
+        var previousMedia = Is(ShortcutActions.PreviousMedia);
+        var nextMedia = Is(ShortcutActions.NextMedia);
+        if (isTextInput && !save && !saveAs && !close && !playPauseAlternate && !playFromBeginning && !previousMedia && !nextMedia) return;
         if (close) OnExitClick(this, new RoutedEventArgs());
         else if (saveAs) OnSaveSubtitleAsClick(this, new RoutedEventArgs());
         else if (save) OnSaveSubtitleClick(this, new RoutedEventArgs());
-        else if (Is(ShortcutActions.PlayPause)) OnPlayPauseClick(this, new RoutedEventArgs());
+        else if (Is(ShortcutActions.PlayPause) || playPauseAlternate) OnPlayPauseClick(this, new RoutedEventArgs());
+        else if (playFromBeginning) PlayFromBeginning();
+        else if (previousMedia) OnPreviousMediaClick(this, new RoutedEventArgs());
+        else if (nextMedia) OnNextMediaClick(this, new RoutedEventArgs());
         else if (Is(ShortcutActions.PreviousSubtitle)) SelectRelativeCue(-1);
         else if (Is(ShortcutActions.NextSubtitle)) SelectRelativeCue(1);
         else if (Is(ShortcutActions.SeekBackward)) OnSeekBackClick(this, new RoutedEventArgs());
@@ -994,7 +1004,7 @@ public sealed partial class MainWindow : Window
         SaveSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.SaveSubtitle);
         SaveSubtitleAsMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.SaveSubtitleAs);
         ExitMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.CloseWindow);
-        PlayPauseMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.PlayPause);
+        PlayPauseMenuItem.KeyboardAcceleratorTextOverride = Combine(Shortcut(ShortcutActions.PlayPause), Shortcut(ShortcutActions.PlayPauseAlternate));
         DeleteCueMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.DeleteCue);
         PreviousSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.PreviousSubtitle);
         NextSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.NextSubtitle);
@@ -1003,12 +1013,14 @@ public sealed partial class MainWindow : Window
         SubtitleVisibilityMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSubtitles);
         FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F")} · Esc";
 
-        ToolTipService.SetToolTip(PlayPauseButton, $"{L("PlayPause.Text")} ({Shortcut(ShortcutActions.PlayPause)})");
+        ToolTipService.SetToolTip(PlayPauseButton, $"{L("PlayPause.Text")} ({Combine(Shortcut(ShortcutActions.PlayPause), Shortcut(ShortcutActions.PlayPauseAlternate))})");
+        ToolTipService.SetToolTip(PreviousButton, $"Previous media ({Shortcut(ShortcutActions.PreviousMedia)})");
+        ToolTipService.SetToolTip(NextButton, $"Next media ({Shortcut(ShortcutActions.NextMedia)})");
         ToolTipService.SetToolTip(SeekBackButton, $"Seek backward ({Shortcut(ShortcutActions.SeekBackward)})");
         ToolTipService.SetToolTip(SeekForwardButton, $"Seek forward ({Shortcut(ShortcutActions.SeekForward)})");
         ToolTipService.SetToolTip(MuteButton, "Mute (M)");
         ToolTipService.SetToolTip(VolumeSlider, "Volume (↑ / ↓)");
-        ToolTipService.SetToolTip(PositionSlider, "Seek (Home / End)");
+        ToolTipService.SetToolTip(PositionSlider, $"Seek (Home / End) · Play from beginning ({Shortcut(ShortcutActions.PlayFromBeginning)})");
         ToolTipService.SetToolTip(SubtitleList, $"Previous: {Shortcut(ShortcutActions.PreviousSubtitle)} · Next: {Shortcut(ShortcutActions.NextSubtitle)}");
     }
 
@@ -1464,7 +1476,36 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ApplyTheme(AppTheme theme) => RootGrid.RequestedTheme = theme switch { AppTheme.Light => ElementTheme.Light, AppTheme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
+    private void ApplyTheme(AppTheme theme)
+    {
+        RootGrid.RequestedTheme = theme switch { AppTheme.Light => ElementTheme.Light, AppTheme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
+        ApplyTitleBarTheme(RootGrid.ActualTheme);
+    }
+
+    private void OnRootActualThemeChanged(FrameworkElement sender, object args) => ApplyTitleBarTheme(sender.ActualTheme);
+
+    private void ApplyTitleBarTheme(ElementTheme theme)
+    {
+        if (_appWindow?.TitleBar is not { } titleBar) return;
+        var dark = theme == ElementTheme.Dark;
+        var background = dark ? Windows.UI.Color.FromArgb(255, 32, 32, 32) : Windows.UI.Color.FromArgb(255, 243, 243, 243);
+        var foreground = dark ? Windows.UI.Color.FromArgb(255, 255, 255, 255) : Windows.UI.Color.FromArgb(255, 24, 24, 24);
+        var inactiveForeground = dark ? Windows.UI.Color.FromArgb(255, 160, 160, 160) : Windows.UI.Color.FromArgb(255, 110, 110, 110);
+        var hover = dark ? Windows.UI.Color.FromArgb(255, 58, 58, 58) : Windows.UI.Color.FromArgb(255, 224, 224, 224);
+        var pressed = dark ? Windows.UI.Color.FromArgb(255, 72, 72, 72) : Windows.UI.Color.FromArgb(255, 208, 208, 208);
+        titleBar.BackgroundColor = background;
+        titleBar.ForegroundColor = foreground;
+        titleBar.InactiveBackgroundColor = background;
+        titleBar.InactiveForegroundColor = inactiveForeground;
+        titleBar.ButtonBackgroundColor = background;
+        titleBar.ButtonForegroundColor = foreground;
+        titleBar.ButtonHoverBackgroundColor = hover;
+        titleBar.ButtonHoverForegroundColor = foreground;
+        titleBar.ButtonPressedBackgroundColor = pressed;
+        titleBar.ButtonPressedForegroundColor = foreground;
+        titleBar.ButtonInactiveBackgroundColor = background;
+        titleBar.ButtonInactiveForegroundColor = inactiveForeground;
+    }
 
     private void OnAddFavoriteClick(object sender, RoutedEventArgs e)
     {
@@ -1618,7 +1659,7 @@ public sealed partial class MainWindow : Window
         {
             if (favorite.SourceType == MediaSourceKind.WebDav)
             {
-                var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => favorite.Location.StartsWith(candidate.Url, StringComparison.OrdinalIgnoreCase));
+                var server = FindWebDavServerForLocation(favorite.Location);
                 if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("FavoriteServerMissingMessage")); return; }
                 ShowWebDavWindow(server.Id, new Uri(favorite.Location));
                 return;
@@ -1662,7 +1703,7 @@ public sealed partial class MainWindow : Window
         IMediaSource source;
         if (recent.SourceType == MediaSourceKind.WebDav)
         {
-            var server = _settings.Network.WebDavServers.Where(candidate => recent.Location.StartsWith(candidate.Url, StringComparison.OrdinalIgnoreCase)).OrderByDescending(candidate => candidate.Url.Length).FirstOrDefault();
+            var server = FindWebDavServerForLocation(recent.Location);
             if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("RecentServerMissingMessage")); return; }
             using var client = new WebDavClient(new WindowsCredentialService());
             using var request = client.CreateMediaRequest(server, new Uri(recent.Location));
@@ -1672,6 +1713,27 @@ public sealed partial class MainWindow : Window
         else source = MediaSourceFactory.Parse(recent.Location);
         await OpenMediaAsync(recent.Location, headers, source);
         if (_settings.General.ResumePlayback && recent.LastPlaybackPositionMicroseconds > 0) _playback.Seek(TimeSpan.FromTicks(recent.LastPlaybackPositionMicroseconds * 10), true);
+    }
+
+    private WebDavServerSettings? FindWebDavServerForLocation(string location)
+    {
+        if (!Uri.TryCreate(location, UriKind.Absolute, out var target)) return null;
+        var credentials = new WebDavCredentialStore(new WindowsCredentialService());
+        WebDavServerSettings? bestMatch = null;
+        var bestPathLength = -1;
+        foreach (var server in _settings.Network.WebDavServers)
+        {
+            WebDavConnectionCredential? credential;
+            try { credential = credentials.Read(server.Id); }
+            catch (Exception) { continue; }
+            if (credential is null) continue;
+            var root = credential.RootUri;
+            if (!root.Scheme.Equals(target.Scheme, StringComparison.OrdinalIgnoreCase) || !root.Host.Equals(target.Host, StringComparison.OrdinalIgnoreCase) || root.Port != target.Port || !target.AbsolutePath.StartsWith(root.AbsolutePath, StringComparison.OrdinalIgnoreCase)) continue;
+            if (root.AbsolutePath.Length <= bestPathLength) continue;
+            bestMatch = server;
+            bestPathLength = root.AbsolutePath.Length;
+        }
+        return bestMatch;
     }
 
     private void RememberCurrentPosition()

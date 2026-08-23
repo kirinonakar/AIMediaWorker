@@ -10,6 +10,19 @@
     Title="AIMediaWorker">
     <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
     <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Loaded="OnRootLoaded" SizeChanged="OnRootSizeChanged" AllowDrop="True" DragOver="OnRootDragOver" Drop="OnRootDrop">
+        <Grid.Resources>
+            <Style x:Key="PlaybackControlButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="Width" Value="44" />
+                <Setter Property="MinWidth" Value="44" />
+                <Setter Property="Height" Value="32" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderBrush" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+            </Style>
+        </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
             <RowDefinition x:Name="BottomPanelSplitterRow" Height="6" /><RowDefinition x:Name="BottomPanelRow" Height="160" /><RowDefinition Height="Auto" />
@@ -98,18 +111,18 @@
         </Grid>
         <Grid x:Name="PlaybackControls" Grid.Row="5" Padding="8,4" ColumnSpacing="6">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="120" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="95" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <Button x:Name="PreviousButton" Grid.Column="0" Content="⏮" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media" />
-            <Button x:Name="SeekBackButton" Grid.Column="1" Content="−5s" Click="OnSeekBackClick" ToolTipService.ToolTip="Seek backward" />
-            <Button x:Name="PlayPauseButton" Grid.Column="2" Content="▶" Click="OnPlayPauseClick" ToolTipService.ToolTip="Play / Pause (Space)" />
-            <Button Grid.Column="3" Content="■" Click="OnStopClick" ToolTipService.ToolTip="Stop" />
-            <Button x:Name="SeekForwardButton" Grid.Column="4" Content="+5s" Click="OnSeekForwardClick" ToolTipService.ToolTip="Seek forward" />
-            <Button x:Name="NextButton" Grid.Column="5" Content="⏭" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media" />
+            <Button x:Name="PreviousButton" Grid.Column="0" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏮" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media" />
+            <Button x:Name="SeekBackButton" Grid.Column="1" Style="{StaticResource PlaybackControlButtonStyle}" Content="−5s" Click="OnSeekBackClick" ToolTipService.ToolTip="Seek backward" />
+            <Button x:Name="PlayPauseButton" Grid.Column="2" Style="{StaticResource PlaybackControlButtonStyle}" Content="▶" Click="OnPlayPauseClick" ToolTipService.ToolTip="Play / Pause (Space)" />
+            <Button Grid.Column="3" Style="{StaticResource PlaybackControlButtonStyle}" Content="■" Click="OnStopClick" ToolTipService.ToolTip="Stop" />
+            <Button x:Name="SeekForwardButton" Grid.Column="4" Style="{StaticResource PlaybackControlButtonStyle}" Content="+5s" Click="OnSeekForwardClick" ToolTipService.ToolTip="Seek forward" />
+            <Button x:Name="NextButton" Grid.Column="5" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏭" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media" />
             <Slider x:Name="PositionSlider" Grid.Column="6" Minimum="0" Maximum="1" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
             <TextBlock x:Name="PositionText" Grid.Column="7" Text="00:00 / 00:00" VerticalAlignment="Center" FontFamily="Consolas" />
             <Slider x:Name="VolumeSlider" Grid.Column="8" Minimum="0" Maximum="130" Value="100" ValueChanged="OnVolumeChanged" />
-            <Button x:Name="MuteButton" Grid.Column="9" Content="🔊" Click="OnMuteClick" />
+            <Button x:Name="MuteButton" Grid.Column="9" Style="{StaticResource PlaybackControlButtonStyle}" Content="🔊" Click="OnMuteClick" />
             <TextBlock x:Uid="SpeedLabel" Grid.Column="10" Text="Speed" VerticalAlignment="Center" /><ComboBox x:Name="RateCombo" Grid.Column="11" SelectionChanged="OnRateChanged" />
-            <Button x:Name="RepeatButton" Grid.Column="12" Content="↪" Click="OnRepeatClick" ToolTipService.ToolTip="Repeat off" />
+            <Button x:Name="RepeatButton" Grid.Column="12" Style="{StaticResource PlaybackControlButtonStyle}" Content="↪" Click="OnRepeatClick" ToolTipService.ToolTip="Repeat off" />
         </Grid>
         <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="3" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
         <Grid x:Name="VisualizationPanel" Grid.Row="4" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">

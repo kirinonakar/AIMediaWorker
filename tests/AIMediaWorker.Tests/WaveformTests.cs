@@ -24,6 +24,24 @@ public sealed class WaveformTests : IDisposable
     }
 
     [Fact]
+    public async Task CacheRemovesOldEntriesInsteadOfGrowingWithoutLimit()
+    {
+        var directory = Path.Combine(_folder, "bounded-cache");
+        var cache = new WaveformCache(directory, maximumEntries: 2);
+        var data = new WaveformData(16000, TimeSpan.FromSeconds(1), [new(-0.5f, 0.5f)]);
+
+        await cache.SaveAsync("https://example.test/one.mp4", data);
+        await Task.Delay(20);
+        await cache.SaveAsync("https://example.test/two.mp4", data);
+        await Task.Delay(20);
+        await cache.SaveAsync("https://example.test/three.mp4", data);
+
+        Assert.Equal(2, Directory.GetFiles(directory, "*.waveform").Length);
+        Assert.Null(await cache.TryLoadAsync("https://example.test/one.mp4"));
+        Assert.NotNull(await cache.TryLoadAsync("https://example.test/three.mp4"));
+    }
+
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task FfmpegGeneratesBoundedWaveformFromWav()
     {

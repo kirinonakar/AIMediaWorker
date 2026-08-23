@@ -16,6 +16,10 @@ public sealed class ServicesTests : IDisposable
     [InlineData("Ctrl+S", "S", true, true, false, false)]
     [InlineData("Space", "Space", false, false, false, true)]
     [InlineData("Alt+F11", "F11", false, false, true, true)]
+    [InlineData("Ctrl+P", "P", true, false, false, true)]
+    [InlineData("Ctrl+Shift+N", "N", true, true, false, true)]
+    [InlineData("Ctrl+F", "F", true, false, false, true)]
+    [InlineData("Ctrl+B", "B", true, false, false, true)]
     public void ShortcutGesturesMatchExactModifiers(string gesture, string key, bool control, bool shift, bool alt, bool expected)
     {
         Assert.Equal(expected, ShortcutGesture.Matches(gesture, key, control, shift, alt));
@@ -70,6 +74,10 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal("Enter", loaded.General.Shortcuts[ShortcutActions.Fullscreen]);
         Assert.Equal("V", loaded.General.Shortcuts[ShortcutActions.ToggleSubtitles]);
         Assert.Equal("Ctrl+W", loaded.General.Shortcuts[ShortcutActions.CloseWindow]);
+        Assert.Equal("Ctrl+P", loaded.General.Shortcuts[ShortcutActions.PlayPauseAlternate]);
+        Assert.Equal("Ctrl+Shift+N", loaded.General.Shortcuts[ShortcutActions.PlayFromBeginning]);
+        Assert.Equal("Ctrl+F", loaded.General.Shortcuts[ShortcutActions.PreviousMedia]);
+        Assert.Equal("Ctrl+B", loaded.General.Shortcuts[ShortcutActions.NextMedia]);
     }
 
     [Fact]
@@ -116,24 +124,75 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
+    public void WebDavConnectionDetailsRoundTripThroughOneCredentialEntry()
+    {
+        var credentials = new MemoryCredentials();
+        var store = new WebDavCredentialStore(credentials);
+        var serverId = Guid.NewGuid();
+        var expected = new WebDavConnectionCredential("https://dav.example.test/root/", 8443, "media-user", "secret-value");
+
+        store.Save(serverId, expected);
+
+        Assert.Equal(expected, store.Read(serverId));
+        Assert.Equal("https://dav.example.test:8443/root/", store.Read(serverId)!.RootUri.AbsoluteUri);
+        Assert.Equal(string.Empty, credentials.Read(CredentialIdentifier.ForWebDav(serverId))!.Value.Username);
+    }
+
+    [Fact]
+    public async Task WebDavSettingsContainOnlyNonSecretServerMetadata()
+    {
+        var path = Path.Combine(_folder, "webdav-settings.json");
+        var settings = new AppSettings();
+        settings.Network.WebDavServers.Add(new WebDavServerSettings { Name = "Private server" });
+
+        await new SettingsService(path).SaveAsync(settings);
+
+        var json = await File.ReadAllTextAsync(path);
+        Assert.Contains("Private server", json);
+        Assert.DoesNotContain("\"Url\"", json);
+        Assert.DoesNotContain("\"Username\"", json);
+        Assert.DoesNotContain("Password", json);
+    }
+
+    [Fact]
+    public void LegacyWebDavSettingsMigrateIntoCredentialManagerPayload()
+    {
+        var credentials = new MemoryCredentials();
+        var server = new WebDavServerSettings { LegacyUrl = "https://legacy.example.test:9443/dav/", LegacyUsername = "legacy-user" };
+        credentials.Save(CredentialIdentifier.ForWebDav(server.Id), "old-user-field", "legacy-password");
+        var store = new WebDavCredentialStore(credentials);
+
+        Assert.True(store.MigrateLegacy(server));
+
+        var migrated = store.Read(server.Id);
+        Assert.NotNull(migrated);
+        Assert.Equal(("https://legacy.example.test/dav/", 9443, "legacy-user", "legacy-password"), (migrated.Address, migrated.Port, migrated.Username, migrated.Password));
+        Assert.Null(server.LegacyUrl);
+        Assert.Null(server.LegacyUsername);
+    }
+
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task WebDavMultiStatusIsParsedAndSorted()
     {
         const string xml = "<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>/root/</d:href><d:propstat><d:prop><d:displayname>root</d:displayname><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response><d:response><d:href>/root/folder/</d:href><d:propstat><d:prop><d:displayname>folder</d:displayname><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response><d:response><d:href>/root/movie.mkv</d:href><d:propstat><d:prop><d:displayname>movie.mkv</d:displayname><d:resourcetype/><d:getcontentlength>1234</d:getcontentlength></d:prop></d:propstat></d:response></d:multistatus>";
         using var http = new HttpClient(new StaticHandler(new HttpResponseMessage((HttpStatusCode)207) { Content = new StringContent(xml, Encoding.UTF8, "application/xml") }));
-        using var client = new WebDavClient(new EmptyCredentials(), http);
-        var server = new WebDavServerSettings { Url = "https://dav.example/root/" };
-        var entries = await client.ListAsync(server, new Uri(server.Url));
+        var credentials = new MemoryCredentials();
+        var server = new WebDavServerSettings();
+        new WebDavCredentialStore(credentials).Save(server.Id, new WebDavConnectionCredential("https://dav.example/root/", 443, "user", "password"));
+        using var client = new WebDavClient(credentials, http);
+        var entries = await client.ListAsync(server, new Uri("https://dav.example/root/"));
         Assert.Equal(2, entries.Count);
         Assert.True(entries[0].IsCollection);
         Assert.Equal(1234, entries[1].ContentLength);
     }
 
-    private sealed class EmptyCredentials : ICredentialService
+    private sealed class MemoryCredentials : ICredentialService
     {
-        public void Save(string identifier, string username, string secret) { }
-        public (string Username, string Secret)? Read(string identifier) => null;
-        public bool Delete(string identifier) => false;
+        private readonly Dictionary<string, (string Username, string Secret)> _values = [];
+        public void Save(string identifier, string username, string secret) => _values[identifier] = (username, secret);
+        public (string Username, string Secret)? Read(string identifier) => _values.TryGetValue(identifier, out var value) ? value : null;
+        public bool Delete(string identifier) => _values.Remove(identifier);
     }
 
     private sealed class StaticHandler(HttpResponseMessage response) : HttpMessageHandler
