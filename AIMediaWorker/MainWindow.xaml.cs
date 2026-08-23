@@ -71,6 +71,8 @@ public sealed partial class MainWindow : Window
     private Uri? _webDavPanelDirectory;
     private readonly AsrWorkerClient _asrEngine = new();
     private CancellationTokenSource? _aiOperationCancellation;
+    private Task? _aiPipelineTask;
+    private CancellationTokenSource? _seekAiRestartCancellation;
     private bool _subtitleGenerationCompletedForCurrentMedia;
     private bool _translationCompletedForCurrentMedia;
     private readonly SemaphoreSlim _dialogLock = new(1, 1);
@@ -347,6 +349,7 @@ public sealed partial class MainWindow : Window
 
     private async Task OpenMediaAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, IMediaSource? mediaSource = null, bool preservePlaylist = false)
     {
+        await CancelAiPipelineAsync();
         if (!await ConfirmDiscardChangesAsync(L("ActionOpenMedia"))) return;
         try
         {
@@ -493,14 +496,14 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnPlayPauseClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.TogglePause);
-    private void PlayFromBeginning() => TryPlayback(() => { _playback.Seek(TimeSpan.Zero, true); _playback.Play(); });
-    private void OnGoToBeginningClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.Seek(TimeSpan.Zero, true));
+    private void PlayFromBeginning() => SeekAndRestartAi(TimeSpan.Zero, () => { _playback.Seek(TimeSpan.Zero, true); _playback.Play(); });
+    private void OnGoToBeginningClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(TimeSpan.Zero, () => _playback.Seek(TimeSpan.Zero, true));
     private void OnStopClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.Stop);
     private async void OnPreviousMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(-1);
     private async void OnNextMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(1);
     private void OnFrameStepClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.FrameStep());
-    private void OnSeekBackClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.SeekRelative(TimeSpan.FromSeconds(-_settings.Playback.SeekIntervalSeconds)));
-    private void OnSeekForwardClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.SeekRelative(TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds)));
+    private void OnSeekBackClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(_playback.Position - TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds), () => _playback.SeekRelative(TimeSpan.FromSeconds(-_settings.Playback.SeekIntervalSeconds)));
+    private void OnSeekForwardClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(_playback.Position + TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds), () => _playback.SeekRelative(TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds)));
     private void OnMuteClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.SetMute(!_playback.IsMuted));
     private void OnToggleSubtitleVisibilityClick(object sender, RoutedEventArgs e)
     {
@@ -556,7 +559,7 @@ public sealed partial class MainWindow : Window
 
     private void OnPositionSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        if (!_updatingPosition && !_positionSliderDragging && _playback.IsAvailable && PositionSlider.Maximum > 0) TryPlayback(() => _playback.Seek(TimeSpan.FromSeconds(e.NewValue)));
+        if (!_updatingPosition && !_positionSliderDragging && _playback.IsAvailable && PositionSlider.Maximum > 0) SeekAndRestartAi(TimeSpan.FromSeconds(e.NewValue), () => _playback.Seek(TimeSpan.FromSeconds(e.NewValue)));
     }
 
     private void OnPositionSliderPointerPressed(object sender, PointerRoutedEventArgs e) => _positionSliderDragging = true;
@@ -564,7 +567,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_positionSliderDragging) return;
         _positionSliderDragging = false;
-        if (_playback.IsAvailable) TryPlayback(() => _playback.Seek(TimeSpan.FromSeconds(PositionSlider.Value), true));
+        if (_playback.IsAvailable) SeekAndRestartAi(TimeSpan.FromSeconds(PositionSlider.Value), () => _playback.Seek(TimeSpan.FromSeconds(PositionSlider.Value), true));
     }
 
     private async void OnLoadSubtitleClick(object sender, RoutedEventArgs e)
@@ -586,6 +589,7 @@ public sealed partial class MainWindow : Window
 
     private async Task LoadSubtitleFromPathAsync(string path)
     {
+        await CancelAiPipelineAsync();
         if (!await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"))) return;
         try
         {
@@ -764,7 +768,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception) { await ShowMessageAsync(L("PasteErrorTitle"), exception.Message); }
     }
-    private void OnSubtitleItemClick(object sender, ItemClickEventArgs e) { if (e.ClickedItem is SubtitleCue cue) TryPlayback(() => _playback.Seek(TimeSpan.FromTicks(cue.StartMicroseconds * 10), true)); }
+    private void OnSubtitleItemClick(object sender, ItemClickEventArgs e) { if (e.ClickedItem is SubtitleCue cue) SeekAndRestartAi(TimeSpan.FromTicks(cue.StartMicroseconds * 10), () => _playback.Seek(TimeSpan.FromTicks(cue.StartMicroseconds * 10), true)); }
 
     private void OnTimelinePointerPressed(object sender, PointerRoutedEventArgs e)
     {
@@ -779,7 +783,7 @@ public sealed partial class MainWindow : Window
             SubtitleList.SelectedItem = cue; TimelineCanvas.CapturePointer(e.Pointer); e.Handled = true; return;
         }
         var time = _timelineTransform.XToTime(point.Position.X);
-        TryPlayback(() => _playback.Seek(TimeSpan.FromTicks(time * 10), true));
+        SeekAndRestartAi(TimeSpan.FromTicks(time * 10), () => _playback.Seek(TimeSpan.FromTicks(time * 10), true));
     }
 
     private void OnTimelinePointerMoved(object sender, PointerRoutedEventArgs e)
@@ -940,7 +944,7 @@ public sealed partial class MainWindow : Window
     {
         PlayPauseButton.Content = _playback.State == PlaybackState.Playing ? "⏸" : "▶"; StatusText.Text = _playback.State.ToString();
         if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) StartPostOpenWorkIfReady();
-        if (_playback.State == PlaybackState.Playing) _ = RunCheckedAiPipelineAsync();
+        if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null) StartCheckedAiPipeline();
     });
     private void OnPlaybackPositionChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
@@ -986,8 +990,8 @@ public sealed partial class MainWindow : Window
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.M) { OnMuteClick(this, new RoutedEventArgs()); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Up) { TryPlayback(() => _playback.SetVolume(_playback.Volume + 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Down) { TryPlayback(() => _playback.SetVolume(_playback.Volume - 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Home) { TryPlayback(() => _playback.Seek(TimeSpan.Zero, true)); e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.End) { TryPlayback(() => _playback.Seek(_playback.Duration, true)); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Home) { SeekAndRestartAi(TimeSpan.Zero, () => _playback.Seek(TimeSpan.Zero, true)); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.End) { SeekAndRestartAi(_playback.Duration, () => _playback.Seek(_playback.Duration, true)); e.Handled = true; return; }
         bool Is(string action) => _settings.General.Shortcuts.TryGetValue(action, out var gesture) && ShortcutGesture.Matches(gesture, key, ctrl, shift, alt);
         var save = Is(ShortcutActions.SaveSubtitle);
         var saveAs = Is(ShortcutActions.SaveSubtitleAs);
@@ -1020,7 +1024,7 @@ public sealed partial class MainWindow : Window
     {
         var cues = _document.ActiveTrack?.Cues; if (cues is null || cues.Count == 0) return;
         var index = SubtitleList.SelectedItem is SubtitleCue selected ? cues.IndexOf(selected) : 0; index = Math.Clamp(index + delta, 0, cues.Count - 1);
-        SubtitleList.SelectedItem = cues[index]; SubtitleList.ScrollIntoView(cues[index]); TryPlayback(() => _playback.Seek(TimeSpan.FromTicks(cues[index].StartMicroseconds * 10), true));
+        SubtitleList.SelectedItem = cues[index]; SubtitleList.ScrollIntoView(cues[index]); SeekAndRestartAi(TimeSpan.FromTicks(cues[index].StartMicroseconds * 10), () => _playback.Seek(TimeSpan.FromTicks(cues[index].StartMicroseconds * 10), true));
     }
 
     private void OnPreviousSubtitleClick(object sender, RoutedEventArgs e) => SelectRelativeCue(-1);
@@ -1295,10 +1299,77 @@ public sealed partial class MainWindow : Window
         if (!GenerateSubtitlesMenuItem.IsChecked) return;
         _subtitleGenerationCompletedForCurrentMedia = false;
         _translationCompletedForCurrentMedia = false;
-        _ = RunCheckedAiPipelineAsync();
+        StartCheckedAiPipeline();
     }
 
-    private async Task RunCheckedAiPipelineAsync()
+    private void StartCheckedAiPipeline(long? requestedStartMicroseconds = null)
+    {
+        if (_aiPipelineTask is { IsCompleted: false } || _aiOperationCancellation is not null) return;
+        _aiPipelineTask = RunCheckedAiPipelineAsync(requestedStartMicroseconds);
+    }
+
+    private async Task CancelAiPipelineAsync()
+    {
+        CancelPendingSeekAiRestart();
+        var operation = _aiPipelineTask;
+        _aiOperationCancellation?.Cancel();
+        if (operation is null || operation.IsCompleted) return;
+        try { await operation; }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) { await AppLog.WriteAsync("warning", "ai", "AI_CANCEL_WAIT_ERROR", exception.Message, exception); }
+    }
+
+    private void ScheduleAiRestartAfterSeek(TimeSpan requestedPosition)
+    {
+        if (!GenerateSubtitlesMenuItem.IsChecked && !TranslateMenuItem.IsChecked) return;
+        CancelPendingSeekAiRestart();
+        var cancellation = new CancellationTokenSource();
+        _seekAiRestartCancellation = cancellation;
+        var maximum = _playback.Duration > TimeSpan.Zero ? _playback.Duration : TimeSpan.MaxValue;
+        var clampedPosition = requestedPosition < TimeSpan.Zero ? TimeSpan.Zero : requestedPosition > maximum ? maximum : requestedPosition;
+        _ = RestartAiAfterSeekAsync(cancellation, Math.Max(0, clampedPosition.Ticks / 10));
+    }
+
+    private async Task RestartAiAfterSeekAsync(CancellationTokenSource cancellation, long requestedStartMicroseconds)
+    {
+        var cancellationToken = cancellation.Token;
+        try
+        {
+            await Task.Delay(250, cancellationToken);
+            await CancelAiPipelineForSeekAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_seekAiRestartCancellation, cancellation)) return;
+            if (GenerateSubtitlesMenuItem.IsChecked) _subtitleGenerationCompletedForCurrentMedia = false;
+            if (TranslateMenuItem.IsChecked) _translationCompletedForCurrentMedia = false;
+            StartCheckedAiPipeline(requestedStartMicroseconds);
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            if (ReferenceEquals(_seekAiRestartCancellation, cancellation)) _seekAiRestartCancellation = null;
+            cancellation.Dispose();
+        }
+    }
+
+    private void CancelPendingSeekAiRestart()
+    {
+        var cancellation = _seekAiRestartCancellation;
+        _seekAiRestartCancellation = null;
+        if (cancellation is null) return;
+        cancellation.Cancel();
+        cancellation.Dispose();
+    }
+
+    private async Task CancelAiPipelineForSeekAsync(CancellationToken seekCancellationToken)
+    {
+        var operation = _aiPipelineTask;
+        _aiOperationCancellation?.Cancel();
+        if (operation is null || operation.IsCompleted) return;
+        try { await operation.WaitAsync(seekCancellationToken); }
+        catch (OperationCanceledException) when (!seekCancellationToken.IsCancellationRequested) { }
+    }
+
+    private async Task RunCheckedAiPipelineAsync(long? requestedStartMicroseconds = null)
     {
         if (_aiOperationCancellation is not null) return;
         var generate = GenerateSubtitlesMenuItem.IsChecked && !_subtitleGenerationCompletedForCurrentMedia;
@@ -1315,7 +1386,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var startMicroseconds = Math.Max(0, (long)(_playback.Position.TotalMilliseconds * 1000));
+        var startMicroseconds = requestedStartMicroseconds ?? Math.Max(0, _playback.Position.Ticks / 10);
         _aiOperationCancellation = new CancellationTokenSource();
         string? temporaryInput = null;
         var translating = false;
@@ -1378,13 +1449,15 @@ public sealed partial class MainWindow : Window
         StatusText.Text = F("StatusGeneratingSubtitles", 0d);
         EnableGeneratedSubtitleOverlay();
         var translationQueue = Channel.CreateUnbounded<SubtitleCue>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
-        var translationTask = TranslateGeneratedCuesRealtimeAsync(translationQueue.Reader, track, token);
+        var translationTask = TranslateGeneratedCuesRealtimeAsync(translationQueue.Reader, document, track, token);
+        var translatedCount = 0;
         var segmentation = _settings.Subtitle.Segmentation;
         var asrSegmentation = new AsrSegmentationOptions(segmentation.MinimumCueSeconds, segmentation.MaximumCueSeconds, segmentation.MaximumLines, segmentation.TargetCharactersPerLine, segmentation.SilenceSplitSeconds, segmentation.MaximumCharactersPerSecond);
         try
         {
             await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, startMicroseconds, token))
             {
+                if (!ReferenceEquals(_document, document)) throw new OperationCanceledException(token);
                 if (result.Event == "progress" && result.Progress is { } progress) StatusText.Text = F("StatusGeneratingSubtitles", progress);
                 if (result.Event == "segment" && result.Segment is { } segment)
                 {
@@ -1396,14 +1469,24 @@ public sealed partial class MainWindow : Window
                 }
             }
         }
-        finally { translationQueue.Writer.TryComplete(); }
-        var translatedCount = await translationTask;
+        finally
+        {
+            translationQueue.Writer.TryComplete();
+            if (token.IsCancellationRequested)
+            {
+                try { await translationTask; }
+                catch (OperationCanceledException) { }
+                catch (Exception exception) { await AppLog.WriteAsync("warning", "translation", "TRANSLATION_CANCEL_WAIT_ERROR", exception.Message, exception); }
+            }
+            else translatedCount = await translationTask;
+        }
+        if (!ReferenceEquals(_document, document)) return false;
         document.Sort(); document.MarkDirty(); ScheduleSubtitleOverlaySync();
         StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
         return TranslateMenuItem.IsChecked && translatedCount == track.Cues.Count;
     }
 
-    private async Task<int> TranslateGeneratedCuesRealtimeAsync(ChannelReader<SubtitleCue> reader, SubtitleTrack track, CancellationToken cancellationToken)
+    private async Task<int> TranslateGeneratedCuesRealtimeAsync(ChannelReader<SubtitleCue> reader, SubtitleDocument targetDocument, SubtitleTrack track, CancellationToken cancellationToken)
     {
         const int realtimeBatchSize = 4;
         var pending = new List<SubtitleCue>(realtimeBatchSize);
@@ -1457,7 +1540,7 @@ public sealed partial class MainWindow : Window
                 {
                     var completed = translatedBeforeBatch + result.Completed;
                     var total = Math.Max(completed, track.Cues.Count);
-                    return ApplyTranslationBatchAsync(new TranslationBatch(result.Items, completed, total), cuesById, token);
+                    return ApplyTranslationBatchAsync(targetDocument, new TranslationBatch(result.Items, completed, total), cuesById, token);
                 }, batchSize: realtimeBatchSize, cancellationToken: cancellationToken);
                 translatedCount += translated.Count;
                 await AppLog.WriteAsync("info", "translation", "TRANSLATION_BATCH_COMPLETED", $"Realtime translation completed {translatedCount} cues; {pending.Count} queued.");
@@ -1526,12 +1609,13 @@ public sealed partial class MainWindow : Window
         _settings.Llm.TranslateSubtitles = TranslateMenuItem.IsChecked;
         if (!TranslateMenuItem.IsChecked) return;
         _translationCompletedForCurrentMedia = false;
-        _ = RunCheckedAiPipelineAsync();
+        StartCheckedAiPipeline();
     }
 
     private async Task<bool> TranslateSubtitlesAsync(long startMicroseconds, CancellationToken cancellationToken)
     {
-        var track = _document.ActiveTrack;
+        var targetDocument = _document;
+        var track = targetDocument.ActiveTrack;
         if (track is null || track.Cues.Count == 0)
         {
             StatusText.Text = L("LoadSubtitlesFirst");
@@ -1558,15 +1642,17 @@ public sealed partial class MainWindow : Window
         using var disposable = provider as IDisposable;
         var service = new LlmService(provider, _settings.Llm.Model, _settings.Llm.ThinkingLevel);
         var cuesById = cues.ToDictionary(cue => cue.Id);
-        var translated = await service.TranslateAsync(cues, _settings.Llm.TranslationLanguage, batchCompleted: (batch, token) => ApplyTranslationBatchAsync(batch, cuesById, token), cancellationToken: cancellationToken);
+        var translated = await service.TranslateAsync(cues, _settings.Llm.TranslationLanguage, batchCompleted: (batch, token) => ApplyTranslationBatchAsync(targetDocument, batch, cuesById, token), cancellationToken: cancellationToken);
+        if (!ReferenceEquals(_document, targetDocument)) return false;
         StatusText.Text = F("StatusTranslated", translated.Count);
         await AppLog.WriteAsync("info", "translation", "TRANSLATION_COMPLETED", $"Translated {translated.Count} cues from {startMicroseconds} microseconds using {_settings.Llm.Provider}.");
         return true;
     }
 
-    private Task ApplyTranslationBatchAsync(TranslationBatch batch, IReadOnlyDictionary<Guid, SubtitleCue> cuesById, CancellationToken cancellationToken)
+    private Task ApplyTranslationBatchAsync(SubtitleDocument targetDocument, TranslationBatch batch, IReadOnlyDictionary<Guid, SubtitleCue> cuesById, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (!ReferenceEquals(_document, targetDocument)) return Task.CompletedTask;
         if (DispatcherQueue.HasThreadAccess)
         {
             Apply();
@@ -1583,9 +1669,10 @@ public sealed partial class MainWindow : Window
         void Apply()
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_document, targetDocument)) return;
             var commands = batch.Items
                 .Where(item => cuesById.ContainsKey(item.Key))
-                .Select(item => (IUndoableSubtitleCommand)new EditSubtitleTextCommand(_document, cuesById[item.Key], item.Value))
+                .Select(item => (IUndoableSubtitleCommand)new EditSubtitleTextCommand(targetDocument, cuesById[item.Key], item.Value))
                 .ToArray();
             if (commands.Length > 0) _history.Execute(new CompositeSubtitleCommand("Translate subtitle batch", commands));
             DrawTimeline();
@@ -1619,7 +1706,11 @@ public sealed partial class MainWindow : Window
         finally { _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null; }
     }
 
-    private void OnCancelAiClick(object sender, RoutedEventArgs e) => _aiOperationCancellation?.Cancel();
+    private void OnCancelAiClick(object sender, RoutedEventArgs e)
+    {
+        CancelPendingSeekAiRestart();
+        _aiOperationCancellation?.Cancel();
+    }
 
     private ILlmProvider CreateLlmProvider()
     {
@@ -2078,7 +2169,11 @@ public sealed partial class MainWindow : Window
         }
         else source = MediaSourceFactory.Parse(recent.Location);
         await OpenMediaAsync(recent.Location, headers, source);
-        if (_settings.General.ResumePlayback && recent.LastPlaybackPositionMicroseconds > 0) _playback.Seek(TimeSpan.FromTicks(recent.LastPlaybackPositionMicroseconds * 10), true);
+        if (_settings.General.ResumePlayback && recent.LastPlaybackPositionMicroseconds > 0)
+        {
+            var resumePosition = TimeSpan.FromTicks(recent.LastPlaybackPositionMicroseconds * 10);
+            SeekAndRestartAi(resumePosition, () => _playback.Seek(resumePosition, true));
+        }
     }
 
     private WebDavServerSettings? FindWebDavServerForLocation(string location)
@@ -2194,6 +2289,11 @@ public sealed partial class MainWindow : Window
     }
 
     private void TryPlayback(Action action) { try { action(); } catch (Exception exception) { StatusText.Text = exception.Message; } }
+    private void SeekAndRestartAi(TimeSpan requestedPosition, Action seek)
+    {
+        TryPlayback(seek);
+        ScheduleAiRestartAfterSeek(requestedPosition);
+    }
     private ContentDialog CreateDialog(string title, object content, string primaryText) => new() { XamlRoot = RootGrid.XamlRoot, Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
     private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
     {
@@ -2237,6 +2337,7 @@ public sealed partial class MainWindow : Window
         _waveformCancellation?.Cancel(); _waveformCancellation?.Dispose();
         _postOpenCancellation?.Cancel(); _postOpenCancellation?.Dispose();
         _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose();
+        CancelPendingSeekAiRestart();
         _aiOperationCancellation?.Cancel(); _aiOperationCancellation?.Dispose();
         _webDavListingCancellation?.Cancel(); _webDavListingCancellation?.Dispose();
         _webDavClient.Dispose();
