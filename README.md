@@ -158,7 +158,7 @@ Select a provider in Preferences, store its API key, synchronize the real model 
 
 Text boxes retain ordinary editing shortcuts. Available shortcuts are shown beside their menu commands or in the related control tooltip. Shortcut gestures are persisted as a declarative action-to-gesture map in `settings.json`, so custom configuration UI can be added without changing command routing.
 
-In fullscreen mode the window frame and panels are hidden. Hover at the top, bottom, or right edge to reveal the menu, playback toolbar, or side panel respectively.
+In fullscreen mode the window frame and panels are hidden. Fullscreen opens on the display currently containing the window and remains frame-free when moved between displays. Hover at the top, bottom, or right edge to reveal the menu, playback toolbar, or side panel respectively; the wider right-edge activation zone also works across a shared dual-monitor boundary.
 
 ## Settings, data, and diagnostics
 

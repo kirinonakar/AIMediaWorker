@@ -12,6 +12,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private nint _context;
     private CancellationTokenSource? _eventLoopCancellation;
     private Task? _eventLoop;
+    private Task? _initializationTask;
     private PlaybackState _state = PlaybackState.Uninitialized;
     private string? _editorSubtitlePath;
     private bool _disposed;
@@ -35,45 +36,22 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public event EventHandler<PlaybackError>? ErrorOccurred;
     public event EventHandler? MediaEnded;
 
-    public Task InitializeAsync(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer = "gpu-next", CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer = "gpu-next", CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_context != 0) return Task.CompletedTask;
+        if (_context != 0) return;
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            _context = MpvInterop.mpv_create();
-            if (_context == 0) throw new InvalidOperationException("libmpv could not create a playback context.");
-            SetOption("wid", unchecked((ulong)videoWindowHandle).ToString(CultureInfo.InvariantCulture));
-            SetOption("terminal", "no");
-            SetOption("input-default-bindings", "no");
-            SetOption("keep-open", "yes");
-            SetOption("idle", "yes");
-            TrySetOption("force-window", "immediate");
-            SetOption("vo", string.IsNullOrWhiteSpace(renderer) ? "gpu-next" : renderer);
-            SetOption("gpu-api", "d3d11");
-            SetOption("hwdec", hardwareDecoder switch
-            {
-                HardwareDecoder.D3D11VA => "d3d11va-copy,auto-safe",
-                HardwareDecoder.Nvdec => "nvdec-copy,auto-safe",
-                HardwareDecoder.Off => "no",
-                _ => "auto-safe"
-            });
-            SetOption("sub-auto", "fuzzy");
-            SetOption("sub-fonts-dir", ".");
-            SetOption("audio-client-name", "AIMediaWorker");
-            TrySetOption("audio-buffer", "0.2");
-            TrySetOption("audio-pitch-correction", "yes");
-            TrySetOption("cache", "yes");
-            TrySetOption("cache-secs", "20");
-            TrySetOption("demuxer-readahead-secs", "20");
-            TrySetOption("cache-pause", "no");
-            TrySetOption("stream-lavf-o", "reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=5");
-            MpvInterop.EnsureSuccess(MpvInterop.mpv_initialize(_context), "initialize libmpv");
-            LibraryVersion = GetString("mpv-version");
-            _eventLoopCancellation = new CancellationTokenSource();
-            _eventLoop = Task.Run(() => EventLoop(_eventLoopCancellation.Token), CancellationToken.None);
-            SetState(PlaybackState.Idle);
+            var initialization = Task.Run(() => InitializeCore(videoWindowHandle, hardwareDecoder, renderer, cancellationToken), cancellationToken);
+            _initializationTask = initialization;
+            await initialization.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            CleanupContext();
+            SetState(PlaybackState.Uninitialized);
+            throw;
         }
         catch (DllNotFoundException exception)
         {
@@ -93,7 +71,44 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             SetState(PlaybackState.Failed);
             RaiseError("PLAYBACK_ERROR", exception.Message, exception);
         }
-        return Task.CompletedTask;
+        finally { _initializationTask = null; }
+    }
+
+    private void InitializeCore(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _context = MpvInterop.mpv_create();
+        if (_context == 0) throw new InvalidOperationException("libmpv could not create a playback context.");
+        SetOption("wid", unchecked((ulong)videoWindowHandle).ToString(CultureInfo.InvariantCulture));
+        SetOption("terminal", "no");
+        SetOption("input-default-bindings", "no");
+        SetOption("keep-open", "yes");
+        SetOption("idle", "yes");
+        TrySetOption("force-window", "immediate");
+        SetOption("vo", string.IsNullOrWhiteSpace(renderer) ? "gpu-next" : renderer);
+        SetOption("gpu-api", "d3d11");
+        SetOption("hwdec", hardwareDecoder switch
+        {
+            HardwareDecoder.D3D11VA => "d3d11va-copy,auto-safe",
+            HardwareDecoder.Nvdec => "nvdec-copy,auto-safe",
+            HardwareDecoder.Off => "no",
+            _ => "auto-safe"
+        });
+        SetOption("sub-auto", "fuzzy");
+        SetOption("sub-fonts-dir", ".");
+        SetOption("audio-client-name", "AIMediaWorker");
+        TrySetOption("audio-buffer", "0.2");
+        TrySetOption("audio-pitch-correction", "yes");
+        TrySetOption("cache", "yes");
+        TrySetOption("cache-secs", "20");
+        TrySetOption("demuxer-readahead-secs", "20");
+        TrySetOption("cache-pause", "no");
+        TrySetOption("stream-lavf-o", "reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=5");
+        MpvInterop.EnsureSuccess(MpvInterop.mpv_initialize(_context), "initialize libmpv");
+        LibraryVersion = GetString("mpv-version");
+        _eventLoopCancellation = new CancellationTokenSource();
+        _eventLoop = Task.Run(() => EventLoop(_eventLoopCancellation.Token), CancellationToken.None);
+        SetState(PlaybackState.Idle);
     }
 
     public async Task OpenAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, CancellationToken cancellationToken = default)
@@ -188,6 +203,11 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     {
         if (_disposed) return;
         _disposed = true;
+        if (_initializationTask is { } initialization)
+        {
+            try { await initialization.ConfigureAwait(false); }
+            catch (Exception exception) when (exception is OperationCanceledException or DllNotFoundException or BadImageFormatException or MpvException or InvalidOperationException) { }
+        }
         var cancellation = _eventLoopCancellation;
         cancellation?.Cancel();
         if (_eventLoop is not null)

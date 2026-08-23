@@ -48,6 +48,13 @@ public sealed partial class MainWindow : Window
     private bool _updatingPosition;
     private bool _positionSliderDragging;
     private bool _isFullscreen;
+    private bool _changingFullscreen;
+    private bool _fullscreenRepairQueued;
+    private bool _fullscreenStyleCaptured;
+    private int _windowedStyle;
+    private RectInt32? _windowBoundsBeforeFullscreen;
+    private RectInt32? _workAreaBeforeFullscreen;
+    private bool _wasMaximizedBeforeFullscreen;
     private bool _rightPanelVisible = true;
     private bool _bottomPanelVisible = true;
     private double _rightPanelWidth = 360;
@@ -61,6 +68,7 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _aiOperationCancellation;
     private CancellationTokenSource? _waveformCancellation;
     private WaveformData _waveform = WaveformData.Empty;
+    private Rectangle? _waveformPlayhead;
     private readonly WaveformGenerator _waveformGenerator = new();
     private readonly WaveformCache _waveformCache = new(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIMediaWorker", "Waveforms"));
     private readonly MediaHistoryService _historyService = new(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIMediaWorker", "history.json"));
@@ -85,6 +93,7 @@ public sealed partial class MainWindow : Window
     private DateTimeOffset _showFullscreenControlsUntil;
     private DateTimeOffset _showFullscreenRightPanelUntil;
     private string? _pendingLaunchSource;
+    private string[]? _pendingDroppedFiles;
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
 
     public MainWindow() : this(null) { }
@@ -134,7 +143,14 @@ public sealed partial class MainWindow : Window
 
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {
-        if (!_initialized || _isFullscreen || sender.Presenter is not OverlappedPresenter presenter || presenter.State == OverlappedPresenterState.Minimized) return;
+        if (!_initialized || _changingFullscreen) return;
+        if (_isFullscreen)
+        {
+            ApplyFullscreenWindowStyle();
+            if (sender.Presenter.Kind != AppWindowPresenterKind.FullScreen) QueueFullscreenRepair();
+            return;
+        }
+        if (sender.Presenter is not OverlappedPresenter presenter || presenter.State == OverlappedPresenterState.Minimized) return;
         CaptureWindowPlacement(sender, presenter);
     }
 
@@ -167,6 +183,7 @@ public sealed partial class MainWindow : Window
             RebuildFavoritesMenu();
             ApplyTheme(_settings.General.Theme);
             _videoHost = new NativeVideoHost(this, VideoPlaceholder);
+            _videoHost.FilesDropped += OnNativeVideoFilesDropped;
             await _playback.InitializeAsync(_videoHost.Create(), _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
             if (_playback.IsAvailable)
             {
@@ -183,7 +200,13 @@ public sealed partial class MainWindow : Window
             await RefreshBrowserAsync(_browserDirectory);
             UpdatePlaylistButtons();
             StatusText.Text = _playback.IsAvailable ? L("StatusLibmpvReady") : L("StatusPlaybackUnavailable");
-            if (_playback.IsAvailable && _pendingLaunchSource is { Length: > 0 } launchSource)
+            if (_playback.IsAvailable && _pendingDroppedFiles is { Length: > 0 } droppedFiles)
+            {
+                _pendingDroppedFiles = null;
+                _pendingLaunchSource = null;
+                await OpenFilesAsPlaylistAsync(droppedFiles);
+            }
+            else if (_playback.IsAvailable && _pendingLaunchSource is { Length: > 0 } launchSource)
             {
                 _pendingLaunchSource = null;
                 await OpenMediaAsync(launchSource);
@@ -240,13 +263,13 @@ public sealed partial class MainWindow : Window
             if (e.DataView.Contains(StandardDataFormats.StorageItems))
             {
                 var items = await e.DataView.GetStorageItemsAsync();
-                await OpenFilesAsPlaylistAsync(items.OfType<StorageFile>().Select(file => file.Path));
+                await HandleDroppedFilesAsync(items.OfType<StorageFile>().Select(file => file.Path));
                 return;
             }
             if (e.DataView.Contains(StandardDataFormats.Text))
             {
                 var value = (await e.DataView.GetTextAsync()).Trim();
-                if (File.Exists(value)) await OpenFilesAsPlaylistAsync([value]);
+                if (File.Exists(value)) await HandleDroppedFilesAsync([value]);
                 else if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") await OpenMediaAsync(uri.AbsoluteUri);
             }
         }
@@ -255,6 +278,33 @@ public sealed partial class MainWindow : Window
             await AppLog.WriteAsync("error", "drag-drop", "DROP_OPEN_ERROR", exception.Message, exception);
             await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
         }
+    }
+
+    private void OnNativeVideoFilesDropped(object? sender, FilesDroppedEventArgs e)
+    {
+        var paths = e.Paths.ToArray();
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            try { await HandleDroppedFilesAsync(paths); }
+            catch (Exception exception)
+            {
+                await AppLog.WriteAsync("error", "drag-drop", "NATIVE_DROP_OPEN_ERROR", exception.Message, exception);
+                await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
+            }
+        });
+    }
+
+    private async Task HandleDroppedFilesAsync(IEnumerable<string> paths)
+    {
+        var files = paths.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (files.Length == 0) return;
+        if (!_playback.IsAvailable)
+        {
+            _pendingDroppedFiles = files;
+            StatusText.Text = L("StatusPreparingDroppedMedia");
+            return;
+        }
+        await OpenFilesAsPlaylistAsync(files);
     }
 
     private async Task OpenMediaAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, IMediaSource? mediaSource = null, bool preservePlaylist = false)
@@ -646,7 +696,7 @@ public sealed partial class MainWindow : Window
             var shift = (visible.End - visible.Start) / 8;
             _timelineTransform.PanTo(_timelineTransform.ViewStartMicroseconds + (delta > 0 ? -shift : shift));
         }
-        DrawTimeline(); e.Handled = true;
+        DrawTimeline(); DrawWaveform(); e.Handled = true;
     }
     private void OnVisualizationSizeChanged(object sender, SizeChangedEventArgs e) { DrawTimeline(); DrawWaveform(); }
 
@@ -669,8 +719,7 @@ public sealed partial class MainWindow : Window
                 Canvas.SetLeft(border, left); Canvas.SetTop(border, 8); TimelineCanvas.Children.Add(border);
             }
         }
-        var playhead = new Rectangle { Width = 2, Height = TimelineCanvas.ActualHeight, Fill = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 255, 69, 0)), IsHitTestVisible = false };
-        Canvas.SetLeft(playhead, _timelineTransform.TimeToX((long)(_playback.Position.TotalMilliseconds * 1000))); TimelineCanvas.Children.Add(playhead);
+        UpdateWaveformPlayhead();
     }
 
     private async Task GenerateWaveformAsync(string source)
@@ -700,25 +749,50 @@ public sealed partial class MainWindow : Window
     private void DrawWaveform()
     {
         WaveformCanvas.Children.Clear();
+        _waveformPlayhead = null;
         if (WaveformCanvas.ActualWidth <= 0) return;
         if (_waveform.Peaks.Count == 0)
         {
             var text = new TextBlock { Text = L("WaveformEmptyMessage"), Opacity = 0.55 };
-            Canvas.SetLeft(text, 12); Canvas.SetTop(text, 12); WaveformCanvas.Children.Add(text); return;
+            Canvas.SetLeft(text, 12); Canvas.SetTop(text, 12); WaveformCanvas.Children.Add(text);
+            UpdateWaveformPlayhead();
+            return;
         }
         var width = WaveformCanvas.ActualWidth;
         var height = WaveformCanvas.ActualHeight;
         var center = height / 2;
         var count = Math.Max(1, (int)Math.Ceiling(width));
         var brush = ThemeBrush("AccentTextFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 75, 150, 240));
+        var durationMicroseconds = Math.Max(1d, _waveform.Duration.TotalMilliseconds * 1000d);
         for (var pixel = 0; pixel < count; pixel++)
         {
-            var start = Math.Min(_waveform.Peaks.Count - 1, (int)(pixel / width * _waveform.Peaks.Count));
-            var end = Math.Min(_waveform.Peaks.Count, Math.Max(start + 1, (int)((pixel + 1) / width * _waveform.Peaks.Count)));
+            var startTime = _timelineTransform.XToTime(pixel);
+            if (startTime >= durationMicroseconds) break;
+            var endTime = _timelineTransform.XToTime(pixel + 1);
+            var start = Math.Min(_waveform.Peaks.Count - 1, (int)Math.Floor(startTime / durationMicroseconds * _waveform.Peaks.Count));
+            var end = Math.Min(_waveform.Peaks.Count, Math.Max(start + 1, (int)Math.Ceiling(endTime / durationMicroseconds * _waveform.Peaks.Count)));
             var minimum = 0f; var maximum = 0f;
             for (var index = start; index < end; index++) { minimum = Math.Min(minimum, _waveform.Peaks[index].Minimum); maximum = Math.Max(maximum, _waveform.Peaks[index].Maximum); }
             WaveformCanvas.Children.Add(new Line { X1 = pixel, X2 = pixel, Y1 = center - maximum * center, Y2 = center - minimum * center, Stroke = brush, StrokeThickness = 1 });
         }
+        UpdateWaveformPlayhead();
+    }
+
+    private void UpdateWaveformPlayhead()
+    {
+        if (WaveformCanvas.ActualWidth <= 0 || WaveformCanvas.ActualHeight <= 0) return;
+        if (_waveformPlayhead is null)
+        {
+            _waveformPlayhead = new Rectangle
+            {
+                Width = 2,
+                Fill = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 255, 69, 0)),
+                IsHitTestVisible = false
+            };
+            WaveformCanvas.Children.Add(_waveformPlayhead);
+        }
+        _waveformPlayhead.Height = WaveformCanvas.ActualHeight;
+        Canvas.SetLeft(_waveformPlayhead, _timelineTransform.TimeToX((long)(_playback.Position.TotalMilliseconds * 1000)));
     }
 
     private void BindDocument(SubtitleDocument document)
@@ -850,8 +924,14 @@ public sealed partial class MainWindow : Window
     private void EnterFullscreen()
     {
         if (_appWindow is null || _isFullscreen) return;
+        _changingFullscreen = true;
         try
         {
+            var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
+            _wasMaximizedBeforeFullscreen = _appWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized };
+            if (_wasMaximizedBeforeFullscreen && _appWindow.Presenter is OverlappedPresenter presenter) presenter.Restore();
+            _windowBoundsBeforeFullscreen = new RectInt32(_appWindow.Position.X, _appWindow.Position.Y, _appWindow.Size.Width, _appWindow.Size.Height);
+            _workAreaBeforeFullscreen = display.WorkArea;
             _isFullscreen = true;
             MainMenuBar.Visibility = Visibility.Collapsed;
             PlaybackControls.Visibility = Visibility.Collapsed;
@@ -865,30 +945,108 @@ public sealed partial class MainWindow : Window
             BottomPanelSplitterRow.Height = new GridLength(0);
             BottomPanelRow.Height = new GridLength(0);
             VideoPlaceholder.Margin = new Thickness(0);
+            ApplyFullscreenWindowStyle();
+            _appWindow.MoveAndResize(display.OuterBounds);
             _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+            ApplyFullscreenWindowStyle();
             _fullscreenHoverTimer?.Start();
         }
         catch (Exception exception)
         {
             _isFullscreen = false;
+            RestoreWindowStyle();
+            RestoreWindowBounds(DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest));
             ApplyPanelVisibility();
             StatusText.Text = exception.Message;
         }
+        finally { _changingFullscreen = false; }
     }
 
     private void ExitFullscreen()
     {
         if (_appWindow is null || !_isFullscreen) return;
-        try { _appWindow.SetPresenter(AppWindowPresenterKind.Default); }
+        _changingFullscreen = true;
+        var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
+        _isFullscreen = false;
+        try
+        {
+            _appWindow.SetPresenter(AppWindowPresenterKind.Default);
+            RestoreWindowStyle();
+            RestoreWindowBounds(display);
+        }
         finally
         {
             _fullscreenHoverTimer?.Stop();
-            _isFullscreen = false;
             MainMenuBar.Visibility = Visibility.Visible;
             PlaybackControls.Visibility = Visibility.Visible;
             VideoPlaceholder.Margin = new Thickness(8, 4, 4, 4);
             ApplyPanelVisibility();
+            _changingFullscreen = false;
         }
+    }
+
+    private void QueueFullscreenRepair()
+    {
+        if (_fullscreenRepairQueued || _appWindow is null) return;
+        _fullscreenRepairQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _fullscreenRepairQueued = false;
+            if (!_isFullscreen || _appWindow is null) return;
+            _changingFullscreen = true;
+            try
+            {
+                var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
+                ApplyFullscreenWindowStyle();
+                _appWindow.MoveAndResize(display.OuterBounds);
+                _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+                ApplyFullscreenWindowStyle();
+            }
+            catch (Exception exception) { _ = AppLog.WriteAsync("error", "fullscreen", "FULLSCREEN_REPAIR_ERROR", exception.Message, exception); }
+            finally { _changingFullscreen = false; }
+        });
+    }
+
+    private void RestoreWindowBounds(DisplayArea currentDisplay)
+    {
+        if (_appWindow is null || _windowBoundsBeforeFullscreen is not { } bounds) return;
+        if (_workAreaBeforeFullscreen is { } previousWorkArea && (previousWorkArea.X != currentDisplay.WorkArea.X || previousWorkArea.Y != currentDisplay.WorkArea.Y))
+        {
+            var width = Math.Min(bounds.Width, currentDisplay.WorkArea.Width);
+            var height = Math.Min(bounds.Height, currentDisplay.WorkArea.Height);
+            var relativeX = Math.Max(0, bounds.X - previousWorkArea.X);
+            var relativeY = Math.Max(0, bounds.Y - previousWorkArea.Y);
+            bounds = new RectInt32(
+                currentDisplay.WorkArea.X + Math.Min(relativeX, Math.Max(0, currentDisplay.WorkArea.Width - width)),
+                currentDisplay.WorkArea.Y + Math.Min(relativeY, Math.Max(0, currentDisplay.WorkArea.Height - height)),
+                width,
+                height);
+        }
+        _appWindow.MoveAndResize(bounds);
+        if (_wasMaximizedBeforeFullscreen && _appWindow.Presenter is OverlappedPresenter presenter) presenter.Maximize();
+        _windowBoundsBeforeFullscreen = null;
+        _workAreaBeforeFullscreen = null;
+        _wasMaximizedBeforeFullscreen = false;
+    }
+
+    private void ApplyFullscreenWindowStyle()
+    {
+        var handle = WindowNative.GetWindowHandle(this);
+        var style = GetWindowLong(handle, GwlStyle);
+        if (!_fullscreenStyleCaptured) { _windowedStyle = style; _fullscreenStyleCaptured = true; }
+        var framelessStyle = style & ~(WsCaption | WsThickFrame);
+        if (framelessStyle == style) return;
+        SetWindowLong(handle, GwlStyle, framelessStyle);
+        SetWindowPos(handle, 0, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpFrameChanged);
+    }
+
+    private void RestoreWindowStyle()
+    {
+        if (!_fullscreenStyleCaptured) return;
+        var handle = WindowNative.GetWindowHandle(this);
+        SetWindowLong(handle, GwlStyle, _windowedStyle);
+        SetWindowPos(handle, 0, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpFrameChanged);
+        _fullscreenStyleCaptured = false;
     }
 
     private void ApplyPanelVisibility()
@@ -953,16 +1111,21 @@ public sealed partial class MainWindow : Window
     private void OnFullscreenHoverTick(DispatcherQueueTimer sender, object args)
     {
         if (!_isFullscreen || _appWindow is null) return;
-        var handle = WindowNative.GetWindowHandle(this);
-        if (!GetCursorPos(out var cursor) || !GetWindowRect(handle, out var window)) return;
+        if (!GetCursorPos(out var cursor)) return;
+        var left = _appWindow.Position.X;
+        var top = _appWindow.Position.Y;
+        var right = left + _appWindow.Size.Width;
+        var bottom = top + _appWindow.Size.Height;
         var now = DateTimeOffset.UtcNow;
-        var inside = cursor.X >= window.Left && cursor.X < window.Right && cursor.Y >= window.Top && cursor.Y < window.Bottom;
+        var inside = cursor.X >= left && cursor.X < right && cursor.Y >= top && cursor.Y < bottom;
         if (inside)
         {
-            if (cursor.Y <= window.Top + 10 || MainMenuBar.Visibility == Visibility.Visible && cursor.Y <= window.Top + 70) _showFullscreenMenuUntil = now.AddSeconds(1.5);
-            if (cursor.Y >= window.Bottom - 12 || PlaybackControls.Visibility == Visibility.Visible && cursor.Y >= window.Bottom - 150) _showFullscreenControlsUntil = now.AddSeconds(1.5);
-            if (cursor.X >= window.Right - 12 || SubtitlePanel.Visibility == Visibility.Visible && cursor.X >= window.Right - _rightPanelWidth - 40) _showFullscreenRightPanelUntil = now.AddSeconds(1.5);
+            if (cursor.Y <= top + 16 || MainMenuBar.Visibility == Visibility.Visible && cursor.Y <= top + 70) _showFullscreenMenuUntil = now.AddSeconds(1.5);
+            if (cursor.Y >= bottom - 32 || PlaybackControls.Visibility == Visibility.Visible && cursor.Y >= bottom - 150) _showFullscreenControlsUntil = now.AddSeconds(1.5);
         }
+        var verticallyAligned = cursor.Y >= top && cursor.Y < bottom;
+        if (verticallyAligned && (cursor.X >= right - 64 && cursor.X <= right + 24 || SubtitlePanel.Visibility == Visibility.Visible && cursor.X >= right - _rightPanelWidth - 40 && cursor.X < right))
+            _showFullscreenRightPanelUntil = now.AddSeconds(1.5);
         MainMenuBar.Visibility = now < _showFullscreenMenuUntil ? Visibility.Visible : Visibility.Collapsed;
         var showControls = now < _showFullscreenControlsUntil;
         PlaybackControls.Visibility = showControls ? Visibility.Visible : Visibility.Collapsed;
@@ -1522,10 +1685,19 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private const int GwlStyle = -16;
+    private const int WsCaption = 0x00C00000;
+    private const int WsThickFrame = 0x00040000;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpFrameChanged = 0x0020;
     [StructLayout(LayoutKind.Sequential)] private struct NativePoint { public int X; public int Y; }
-    [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left; public int Top; public int Right; public int Bottom; }
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out NativePoint point);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(nint window, out NativeRect rect);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)] private static extern int GetWindowLong(nint window, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)] private static extern int SetWindowLong(nint window, int index, int value);
+    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
 
     private enum TimelineDragMode { None, Move, ResizeStart, ResizeEnd }
     private enum RepeatMode { Off, One, All }

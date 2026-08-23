@@ -46,6 +46,8 @@ Last updated: 2026-08-23
 - Drag-and-drop and multi-file playlist opening, sibling-folder playlists, previous/next, repeat modes, deferred exact seeking, subtitle visibility toggle, and command-line autoplay.
 - Enter fullscreen toggle, Escape restore, frame-free fullscreen, edge-hover menu/controls/side panel, and independently hideable timeline and side panels.
 - The fullscreen splitter rows collapse completely, shortcut hints are exposed in menus/tooltips, Ctrl+W follows the guarded close workflow, and Preferences are grouped into seven focused tabs.
+- libmpv startup initialization runs off the UI thread; the waveform and timeline share one time transform, with the red playhead overlaid at full waveform height.
+- Fullscreen targets the window's current display, repairs its presenter/chrome after multi-monitor topology or display moves, and uses virtual-screen coordinates plus an expanded shared-edge hover zone for the right overlay.
 - Main side-panel Explorer, Playlist, WebDAV, and Subtitles tabs; connected WebDAV listings mirror into the main panel while server registration remains available in the WebDAV manager.
 - Persistent main-window position, size, maximized state, panel visibility, and user-resizable side/timeline panel dimensions with current-display bounds correction.
 - Unpackaged secondary-window localization crash fixed for WebDAV, Preferences, and Camera windows; all three activate together in the runtime smoke check without a new error log.
