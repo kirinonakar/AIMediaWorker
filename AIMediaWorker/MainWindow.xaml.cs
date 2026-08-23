@@ -1294,11 +1294,17 @@ public sealed partial class MainWindow : Window
             var worker = System.IO.Path.Combine(AppContext.BaseDirectory, "asr-worker", "main.py");
             await _asrEngine.StartAsync(_settings.Asr.PythonExecutable, worker, token);
             StatusText.Text = L("StatusLoadingAsr");
-            var loadProgress = new Progress<AsrEvent>(UpdateAsrModelProgress);
-            await _asrEngine.LoadModelAsync(_settings.Asr.ModelPath, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress, token);
+            var acceptingLoadProgress = true;
+            var loadProgress = new Progress<AsrEvent>(update => { if (acceptingLoadProgress) UpdateAsrModelProgress(update); });
+            try { await _asrEngine.LoadModelAsync(_settings.Asr.ModelPath, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress, token); }
+            finally { acceptingLoadProgress = false; }
             var document = new SubtitleDocument();
             var track = document.EnsureTrack("srt"); track.Name = "Qwen3-ASR";
             BindDocument(document);
+            _rightPanelVisible = true;
+            ApplyPanelVisibility();
+            RightPanelTabs.SelectedIndex = 3;
+            StatusText.Text = F("StatusGeneratingSubtitles", 0d);
             var segmentation = _settings.Subtitle.Segmentation;
             var asrSegmentation = new AsrSegmentationOptions(segmentation.MinimumCueSeconds, segmentation.MaximumCueSeconds, segmentation.MaximumLines, segmentation.TargetCharactersPerLine, segmentation.SilenceSplitSeconds, segmentation.MaximumCharactersPerSecond);
             await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, token))
@@ -1318,6 +1324,7 @@ public sealed partial class MainWindow : Window
         finally
         {
             AsrDownloadProgressBar.Visibility = Visibility.Collapsed;
+            AsrDownloadProgressBar.IsIndeterminate = false;
             if (temporaryInput is not null) try { File.Delete(temporaryInput); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
             _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null;
         }
@@ -1328,6 +1335,7 @@ public sealed partial class MainWindow : Window
         if (update.Stage == "download" && update.Progress is { } progress)
         {
             AsrDownloadProgressBar.Visibility = Visibility.Visible;
+            AsrDownloadProgressBar.IsIndeterminate = false;
             AsrDownloadProgressBar.Value = Math.Clamp(progress, 0, 1);
             var model = update.Message ?? "Qwen3-ASR";
             var modelProgress = update.ModelProgress ?? progress;
@@ -1336,7 +1344,15 @@ public sealed partial class MainWindow : Window
                 : F("StatusPreparingAsrDownload", model);
             return;
         }
+        if (update.Stage == "loading")
+        {
+            AsrDownloadProgressBar.Visibility = Visibility.Visible;
+            AsrDownloadProgressBar.IsIndeterminate = true;
+            StatusText.Text = update.ElapsedSeconds is > 0 ? $"{L("StatusLoadingAsr")} ({update.ElapsedSeconds}s)" : L("StatusLoadingAsr");
+            return;
+        }
         AsrDownloadProgressBar.Visibility = Visibility.Collapsed;
+        AsrDownloadProgressBar.IsIndeterminate = false;
         StatusText.Text = L("StatusLoadingAsr");
     }
 

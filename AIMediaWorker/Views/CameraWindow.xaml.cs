@@ -130,8 +130,10 @@ public sealed partial class CameraWindow : Window
             CaptionButton.IsEnabled = false;
             var worker = Path.Combine(AppContext.BaseDirectory, "asr-worker", "main.py");
             await _asr.StartAsync(_settings.Asr.PythonExecutable, worker);
-            var loadProgress = new Progress<AsrEvent>(UpdateAsrModelProgress);
-            await _asr.LoadModelAsync(_settings.Asr.ModelPath, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress);
+            var acceptingLoadProgress = true;
+            var loadProgress = new Progress<AsrEvent>(update => { if (acceptingLoadProgress) UpdateAsrModelProgress(update); });
+            try { await _asr.LoadModelAsync(_settings.Asr.ModelPath, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress); }
+            finally { acceptingLoadProgress = false; }
             var language = (LanguageCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "auto";
             await _liveAsr.StartAsync((MicrophoneCombo.SelectedItem as CaptureDevice)?.Id, language);
             CaptionButton.Content = L("StopCaptionsText");
@@ -153,7 +155,11 @@ public sealed partial class CameraWindow : Window
                 : F("StatusPreparingAsrDownload", model);
             SetStatus(L("StatusLoadingAsr"), message, InfoBarSeverity.Informational);
         }
-        else SetStatus(L("StatusLoadingAsr"), L("StatusLoadingAsr"), InfoBarSeverity.Informational);
+        else
+        {
+            var message = update.ElapsedSeconds is > 0 ? $"{L("StatusLoadingAsr")} ({update.ElapsedSeconds}s)" : L("StatusLoadingAsr");
+            SetStatus(L("StatusLoadingAsr"), message, InfoBarSeverity.Informational);
+        }
     }
 
     private static string FormatDownloadSize(long bytes) => bytes >= 1_073_741_824

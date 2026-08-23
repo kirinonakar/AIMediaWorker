@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -50,7 +52,25 @@ class QwenAsrEngine:
         kwargs: dict[str, Any] = {"device_map": actual_device, "dtype": dtype, "max_inference_batch_size": 1}
         kwargs["forced_aligner"] = aligner_local_path
         kwargs["forced_aligner_kwargs"] = {"device_map": actual_device, "dtype": dtype}
-        self.model = Qwen3ASRModel.from_pretrained(model_local_path, **kwargs)
+        loading_finished = threading.Event()
+        loading_thread: threading.Thread | None = None
+        if progress:
+            loading_name = f"Qwen3-ASR + ForcedAligner ({actual_device})"
+            loading_started = time.monotonic()
+            progress("loading", loading_name, 0.0, 0, 0)
+
+            def report_loading_elapsed() -> None:
+                while not loading_finished.wait(1.0):
+                    progress("loading", loading_name, time.monotonic() - loading_started, 0, 0)
+
+            loading_thread = threading.Thread(target=report_loading_elapsed, name="asr-model-loading-progress", daemon=True)
+            loading_thread.start()
+        try:
+            self.model = Qwen3ASRModel.from_pretrained(model_local_path, **kwargs)
+        finally:
+            loading_finished.set()
+            if loading_thread is not None:
+                loading_thread.join(timeout=0.5)
         self.model_path = model_reference
         self.aligner_path = aligner_reference
 

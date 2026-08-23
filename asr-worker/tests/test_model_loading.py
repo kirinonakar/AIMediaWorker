@@ -103,6 +103,27 @@ class ModelLoadingTests(unittest.TestCase):
         self.assertEqual("cuda:0", calls[0]["device_map"])
         self.assertEqual("bfloat16", calls[0]["dtype"])
 
+    def test_loading_progress_is_reported_before_weights_are_loaded(self) -> None:
+        events: list[str] = []
+
+        class FakeAsrModel:
+            @staticmethod
+            def from_pretrained(model_id: str, **kwargs: object) -> object:
+                events.append("from_pretrained")
+                return object()
+
+        def fake_download(reference: str, progress: object) -> str:
+            progress(1.0, 100, 100)  # type: ignore[operator]
+            return reference
+
+        qwen_asr = types.ModuleType("qwen_asr")
+        qwen_asr.Qwen3ASRModel = FakeAsrModel
+        report = lambda kind, name, value, downloaded, total: events.append(kind)
+        with patch.dict(sys.modules, {"torch": _fake_torch(cuda_available=True), "qwen_asr": qwen_asr}), patch("engines.qwen_asr.download_model", fake_download):
+            QwenAsrEngine().load(device="cuda", progress=report)
+
+        self.assertEqual(["asr", "aligner", "loading", "from_pretrained"], events)
+
     def test_missing_absolute_model_path_still_fails_without_downloading(self) -> None:
         missing = str(Path(tempfile.gettempdir(), "aimw-missing-model", "model").resolve())
         with self.assertRaises(FileNotFoundError):

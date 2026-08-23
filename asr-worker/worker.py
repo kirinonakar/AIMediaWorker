@@ -132,13 +132,15 @@ class AsrWorker:
         self._check_cancel(cancel)
         self.emit({"id": request_id, "event": "progress", "stage": "download", "progress": 0.0, "message": "Qwen3-ASR-1.7B", "downloaded_bytes": 0, "total_bytes": 0})
 
-        def report_download(kind: str, name: str, value: float, downloaded: int, total: int) -> None:
+        def report_model_progress(kind: str, name: str, value: float, downloaded: int, total: int) -> None:
+            if kind == "loading":
+                self.emit({"id": request_id, "event": "progress", "stage": "loading", "progress": 1.0, "elapsed_seconds": max(0, int(value)), "message": name})
+                return
             base, weight = (0.0, 0.72) if kind == "asr" else (0.72, 0.28)
             self.emit({"id": request_id, "event": "progress", "stage": "download", "progress": base + weight * value, "model_progress": value, "message": name, "downloaded_bytes": downloaded, "total_bytes": total})
 
-        self.engine.load(model_path or DEFAULT_ASR_MODEL, aligner_path or DEFAULT_FORCED_ALIGNER_MODEL, str(request.get("device", "auto")), str(request.get("precision", "auto")), report_download)
+        self.engine.load(model_path or DEFAULT_ASR_MODEL, aligner_path or DEFAULT_FORCED_ALIGNER_MODEL, str(request.get("device", "auto")), str(request.get("precision", "auto")), report_model_progress)
         self._check_cancel(cancel)
-        self.emit({"id": request_id, "event": "progress", "stage": "loading", "progress": 1.0, "message": "Loading models into memory"})
         self.emit({"id": request_id, "event": "completed"})
 
     def _unload_model(self, request_id: str, request: dict[str, Any], cancel: threading.Event) -> None:

@@ -49,6 +49,16 @@ public sealed class AsrTests
     }
 
     [Fact]
+    public void ProtocolReadsModelLoadingElapsedTime()
+    {
+        var result = AsrJson.DeserializeEvent("{\"id\":\"job-1\",\"event\":\"progress\",\"stage\":\"loading\",\"elapsed_seconds\":12,\"message\":\"Qwen3-ASR + ForcedAligner (cuda:0)\"}");
+
+        Assert.Equal("loading", result.Stage);
+        Assert.Equal(12, result.ElapsedSeconds);
+        Assert.Contains("cuda:0", result.Message);
+    }
+
+    [Fact]
     public void ProtocolUsesSnakeCaseInsideNestedArguments()
     {
         var request = AsrRequest.Create("transcribe_file", new
