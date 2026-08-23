@@ -1,4 +1,4 @@
-qwen-asr>=0.1.0
+qwen-asr>=0.0.6
 torch>=2.6
 numpy>=2.0
 soundfile>=0.13
