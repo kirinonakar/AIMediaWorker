@@ -101,6 +101,7 @@ public sealed partial class MainWindow : Window
     private string[]? _pendingDroppedFiles;
     private PendingPostOpenWork? _pendingPostOpenWork;
     private CancellationTokenSource? _postOpenCancellation;
+    private Task? _historyLoadTask;
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
 
     public MainWindow() : this(null, new AppSettings()) { }
@@ -196,16 +197,12 @@ public sealed partial class MainWindow : Window
             _bottomPanelHeight = Math.Clamp(_settings.Window.BottomPanelHeight, 100, 800);
             ClampPanelSizesToAvailable();
             ApplyPanelVisibility();
-            var historyLoad = _historyService.LoadAsync();
+            var historyLoad = _historyLoadTask ??= _historyService.LoadAsync();
             _videoHost = new NativeVideoHost(this, VideoPlaceholder);
             _videoHost.FilesDropped += OnNativeVideoFilesDropped;
             _videoHost.Clicked += OnNativeVideoClicked;
             var playbackInitialization = _playback.InitializeAsync(_videoHost.Create(), _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
-            await Task.WhenAll(historyLoad, playbackInitialization);
-            RebuildRecentMenu();
-            RebuildFavoritesMenu();
-            RefreshWebDavServerList();
-            ApplyTheme(_settings.General.Theme);
+            await playbackInitialization;
             if (_playback.IsAvailable)
             {
                 _playback.SetVolume(_settings.Playback.DefaultVolume); _playback.SetRate(_settings.Playback.PlaybackRate);
@@ -234,6 +231,11 @@ public sealed partial class MainWindow : Window
                 await OpenMediaAsync(launchSource);
             }
             else _ = RefreshBrowserAsync(_browserDirectory);
+            await historyLoad;
+            RebuildRecentMenu();
+            RebuildFavoritesMenu();
+            RefreshWebDavServerList();
+            ApplyTheme(_settings.General.Theme);
         }
         catch (Exception exception) { StatusText.Text = exception.Message; }
     }
@@ -350,9 +352,7 @@ public sealed partial class MainWindow : Window
             await _playback.OpenAsync(source, httpHeaders);
             _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
             _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
-            _historyService.AddRecent(_currentMediaSource, 0, _settings.General.RecentMediaCount);
-            _ = SaveHistoryAfterOpenAsync();
-            RebuildRecentMenu();
+            _ = SaveHistoryAfterOpenAsync(_currentMediaSource);
             var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
             StatusText.Text = source;
             VideoStatusText.Visibility = Visibility.Collapsed;
@@ -366,9 +366,15 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task SaveHistoryAfterOpenAsync()
+    private async Task SaveHistoryAfterOpenAsync(IMediaSource source)
     {
-        try { await _historyService.SaveAsync(); }
+        try
+        {
+            if (_historyLoadTask is { } historyLoad) await historyLoad;
+            _historyService.AddRecent(source, 0, _settings.General.RecentMediaCount);
+            await _historyService.SaveAsync();
+            RebuildRecentMenu();
+        }
         catch (Exception exception) { await AppLog.WriteAsync("error", "history", "HISTORY_SAVE_AFTER_OPEN_ERROR", exception.Message, exception); }
     }
 
@@ -1439,7 +1445,7 @@ public sealed partial class MainWindow : Window
                 validation.Text = L("InvalidWebDavAddressMessage");
                 validation.Visibility = Visibility.Visible;
             };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary || parsedAddress is null) return;
+            if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary || parsedAddress is null) return;
 
             var server = new WebDavServerSettings { Name = string.IsNullOrWhiteSpace(name.Text) ? parsedAddress.Host : name.Text.Trim() };
             _webDavCredentials.Save(server.Id, new WebDavConnectionCredential(WebDavConnectionCredential.NormalizeAddress(parsedAddress), (int)port.Value, username.Text.Trim(), password.Password));

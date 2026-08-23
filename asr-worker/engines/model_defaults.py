@@ -6,7 +6,17 @@ from pathlib import Path
 
 DEFAULT_ASR_MODEL = "Qwen/Qwen3-ASR-1.7B"
 DEFAULT_FORCED_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"
-MODEL_CACHE_DIR = Path(__file__).resolve().parents[1] / "models"
+
+
+def _find_model_cache_dir() -> Path:
+    source = Path(__file__).resolve()
+    for directory in source.parents:
+        if (directory / "AIMediaWorker.slnx").is_file():
+            return directory / "asr-worker" / "models"
+    return source.parents[1] / "models"
+
+
+MODEL_CACHE_DIR = _find_model_cache_dir()
 
 
 def configure_model_cache() -> Path:

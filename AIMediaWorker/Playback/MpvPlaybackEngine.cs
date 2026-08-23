@@ -6,6 +6,9 @@ namespace AIMediaWorker.Playback;
 
 public sealed class MpvPlaybackEngine : IPlaybackEngine
 {
+    private static readonly Lazy<Task> LibraryPreload = new(
+        () => Task.Run(PreloadLibraryCore),
+        LazyThreadSafetyMode.ExecutionAndPublication);
     private readonly object _sync = new();
     private readonly SemaphoreSlim _openLock = new(1, 1);
     private readonly List<MediaTrack> _tracks = [];
@@ -13,6 +16,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private CancellationTokenSource? _eventLoopCancellation;
     private Task? _eventLoop;
     private Task? _initializationTask;
+    private CancellationTokenSource? _trackRefreshCancellation;
     private long _nextCommandId;
     private PlaybackState _state = PlaybackState.Uninitialized;
     private string? _editorSubtitlePath;
@@ -37,6 +41,21 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public event EventHandler<PlaybackError>? ErrorOccurred;
     public event EventHandler? MediaEnded;
 
+    /// <summary>
+    /// Starts loading libmpv and its native dependencies without creating a playback context.
+    /// Calling this during application construction moves cold DLL I/O off the first-play path.
+    /// </summary>
+    public static Task PreloadAsync() => LibraryPreload.Value;
+
+    private static void PreloadLibraryCore()
+    {
+        try { _ = MpvInterop.mpv_client_api_version(); }
+        catch (Exception exception) when (exception is DllNotFoundException or BadImageFormatException)
+        {
+            // InitializeAsync reports the actionable playback error through the normal UI path.
+        }
+    }
+
     public async Task InitializeAsync(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer = "gpu-next", CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -44,6 +63,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
+            await PreloadAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
             var initialization = Task.Run(() => InitializeCore(videoWindowHandle, hardwareDecoder, renderer, cancellationToken), cancellationToken);
             _initializationTask = initialization;
             await initialization.ConfigureAwait(false);
@@ -120,6 +140,9 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var trackRefreshCancellation = Interlocked.Exchange(ref _trackRefreshCancellation, null);
+            trackRefreshCancellation?.Cancel();
+            trackRefreshCancellation?.Dispose();
             SetState(PlaybackState.Loading);
             CurrentSource = source;
             Position = TimeSpan.Zero;
@@ -208,11 +231,14 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         }
         var cancellation = _eventLoopCancellation;
         cancellation?.Cancel();
+        var trackRefreshCancellation = Interlocked.Exchange(ref _trackRefreshCancellation, null);
+        trackRefreshCancellation?.Cancel();
         if (_eventLoop is not null)
         {
             try { await _eventLoop.ConfigureAwait(false); } catch (OperationCanceledException) { }
         }
         cancellation?.Dispose();
+        trackRefreshCancellation?.Dispose();
         CleanupContext();
         SetState(PlaybackState.Disposed);
         GC.SuppressFinalize(this);
@@ -220,7 +246,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
 
     private void EventLoop(CancellationToken cancellationToken)
     {
-        var nextPoll = DateTime.UtcNow;
+        var nextPoll = DateTime.UtcNow.AddMilliseconds(200);
         try
         {
             while (!cancellationToken.IsCancellationRequested && _context != 0)
@@ -231,7 +257,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                     var mpvEvent = Marshal.PtrToStructure<MpvInterop.MpvEvent>(eventPointer);
                     HandleEvent(mpvEvent);
                 }
-                if (DateTime.UtcNow >= nextPoll)
+                if (_state is PlaybackState.Playing or PlaybackState.Paused && DateTime.UtcNow >= nextPoll)
                 {
                     PollProperties();
                     nextPoll = DateTime.UtcNow.AddMilliseconds(200);
@@ -253,8 +279,8 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 if (mpvEvent.Error < 0) RaiseError("PLAYBACK_ERROR", MpvInterop.ErrorString(mpvEvent.Error));
                 break;
             case MpvInterop.MpvEventId.FileLoaded:
-                ReadTracks();
                 SetState(GetBool("pause") ? PlaybackState.Paused : PlaybackState.Playing);
+                ScheduleTrackRefresh();
                 break;
             case MpvInterop.MpvEventId.EndFile:
                 var endedNaturally = true;
@@ -276,10 +302,36 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 break;
             case MpvInterop.MpvEventId.VideoReconfig:
             case MpvInterop.MpvEventId.AudioReconfig:
-                ReadTracks();
+                ScheduleTrackRefresh();
                 break;
             case MpvInterop.MpvEventId.Shutdown:
                 return;
+        }
+    }
+
+    private void ScheduleTrackRefresh()
+    {
+        var cancellation = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _trackRefreshCancellation, cancellation);
+        previous?.Cancel();
+        previous?.Dispose();
+        _ = RefreshTracksAfterFirstFrameAsync(cancellation);
+    }
+
+    private async Task RefreshTracksAfterFirstFrameAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            // Track metadata uses many synchronous property reads. Keep those reads away from
+            // file loading and the renderer's first-frame setup, then coalesce reconfigure events.
+            await Task.Delay(300, cancellation.Token).ConfigureAwait(false);
+            if (!cancellation.IsCancellationRequested && _context != 0) ReadTracks();
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            if (Interlocked.CompareExchange(ref _trackRefreshCancellation, null, cancellation) == cancellation)
+                cancellation.Dispose();
         }
     }
 

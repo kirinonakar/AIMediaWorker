@@ -77,13 +77,12 @@ FFmpeg is used as a streaming PCM source for waveforms and as the audio extracto
 
 ## Python and Qwen setup
 
-Create an isolated environment. Install a PyTorch build appropriate for your CUDA driver first, then the worker dependencies:
+Create an isolated environment, then install the worker dependencies. The requirements select the official PyTorch CUDA 13.0 build used by this Windows application:
 
 ```powershell
 py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-# Install the CUDA or CPU PyTorch build appropriate for this machine first.
 python -m pip install -r asr-worker/requirements.txt
 ```
 

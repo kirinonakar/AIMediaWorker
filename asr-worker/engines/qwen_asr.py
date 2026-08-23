@@ -33,7 +33,10 @@ class QwenAsrEngine:
             from qwen_asr import Qwen3ASRModel
         except ImportError as exc:
             raise RuntimeError("qwen-asr and PyTorch are required. Install asr-worker/requirements.txt.") from exc
-        actual_device = "cuda:0" if device.lower() in {"auto", "cuda"} and torch.cuda.is_available() else "cpu"
+        requested_device = device.lower()
+        if requested_device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested, but the installed PyTorch build cannot use CUDA.")
+        actual_device = "cuda:0" if requested_device in {"auto", "cuda"} and torch.cuda.is_available() else "cpu"
         dtype_map = {
             "float32": torch.float32,
             "float16": torch.float16,

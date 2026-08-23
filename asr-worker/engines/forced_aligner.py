@@ -17,7 +17,10 @@ class ForcedAlignerEngine:
             from qwen_asr import Qwen3ForcedAligner
         except ImportError as exc:
             raise RuntimeError("qwen-asr and PyTorch are required for forced alignment") from exc
-        actual_device = "cuda:0" if device.lower() in {"auto", "cuda"} and torch.cuda.is_available() else "cpu"
+        requested_device = device.lower()
+        if requested_device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested, but the installed PyTorch build cannot use CUDA.")
+        actual_device = "cuda:0" if requested_device in {"auto", "cuda"} and torch.cuda.is_available() else "cpu"
         dtype = torch.bfloat16 if precision.lower() in {"auto", "bfloat16"} and actual_device.startswith("cuda") else torch.float32
         self.model = Qwen3ForcedAligner.from_pretrained(model_reference, device_map=actual_device, dtype=dtype)
 

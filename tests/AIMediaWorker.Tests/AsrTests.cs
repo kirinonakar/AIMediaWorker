@@ -5,6 +5,26 @@ namespace AIMediaWorker.Tests;
 public sealed class AsrTests
 {
     [Fact]
+    public void DefaultPythonCommandUsesNearestProjectVirtualEnvironment()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "AIMediaWorker.Tests", Guid.NewGuid().ToString("N"));
+        var python = Path.Combine(root, ".venv", "Scripts", "python.exe");
+        var worker = Path.Combine(root, "build", "asr-worker", "main.py");
+        Directory.CreateDirectory(Path.GetDirectoryName(python)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(worker)!);
+        File.WriteAllText(python, string.Empty);
+        try
+        {
+            Assert.Equal(Path.GetFullPath(python), PythonEnvironment.ResolveExecutable("python", worker));
+            Assert.Equal("C:\\custom\\python.exe", PythonEnvironment.ResolveExecutable("C:\\custom\\python.exe", worker));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
     public void ProtocolUsesMicrosecondWireNames()
     {
         var request = AsrRequest.Create("transcribe_file", new { input = "C:\\media.mp4", timestamps = true }, "job-123");

@@ -30,15 +30,15 @@ public sealed class AsrWorkerClient : IAsrEngine
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (State is AsrWorkerState.Ready or AsrWorkerState.Busy) return;
         if (_process is not null) await StopProcessAsync().ConfigureAwait(false);
-        _pythonExecutable = pythonExecutable;
         _workerScript = Path.GetFullPath(workerScript);
         if (!File.Exists(_workerScript)) throw new FileNotFoundException("The ASR worker script was not found.", _workerScript);
+        _pythonExecutable = PythonEnvironment.ResolveExecutable(pythonExecutable, _workerScript);
         SetState(AsrWorkerState.Starting);
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = pythonExecutable,
+                FileName = _pythonExecutable,
                 ArgumentList = { "-u", _workerScript },
                 WorkingDirectory = Path.GetDirectoryName(_workerScript)!,
                 UseShellExecute = false,

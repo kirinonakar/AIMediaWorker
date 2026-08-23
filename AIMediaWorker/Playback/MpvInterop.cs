@@ -47,6 +47,7 @@ internal static class MpvInterop
     }
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern nint mpv_create();
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern ulong mpv_client_api_version();
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern int mpv_initialize(nint context);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern void mpv_terminate_destroy(nint context);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern int mpv_set_option_string(nint context, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, [MarshalAs(UnmanagedType.LPUTF8Str)] string value);

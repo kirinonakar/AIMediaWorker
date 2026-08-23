@@ -19,6 +19,7 @@ using AIMediaWorker.Settings;
 using AIMediaWorker.Localization;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Network;
+using AIMediaWorker.Playback;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -31,6 +32,7 @@ namespace AIMediaWorker
     public partial class App : Application
     {
         private Window? _window;
+        private readonly Task<AppSettings> _settingsLoadTask;
 
         /// <summary>
         /// Initializes the singleton application object.  This is the first line of authored code
@@ -40,6 +42,8 @@ namespace AIMediaWorker
         {
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
             InitializeComponent();
+            _settingsLoadTask = SettingsService.CreateDefault().LoadAsync();
+            _ = MpvPlaybackEngine.PreloadAsync();
             UnhandledException += (_, eventArgs) => _ = AppLog.WriteAsync("critical", "application", "UNHANDLED_EXCEPTION", eventArgs.Message, eventArgs.Exception);
         }
 
@@ -51,7 +55,7 @@ namespace AIMediaWorker
         {
             try
             {
-                var settings = await SettingsService.CreateDefault().LoadAsync();
+                var settings = await _settingsLoadTask;
                 try
                 {
                     var webDavCredentials = new WebDavCredentialStore(new WindowsCredentialService());
@@ -73,5 +77,6 @@ namespace AIMediaWorker
                 throw;
             }
         }
+
     }
 }

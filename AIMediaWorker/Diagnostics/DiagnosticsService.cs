@@ -15,6 +15,7 @@ public sealed class DiagnosticsService
 {
     public async Task<DiagnosticSnapshot> CollectAsync(IPlaybackEngine playback, AsrWorkerState workerState, string pythonExecutable, string? asrModel, string? alignerModel, CancellationToken cancellationToken = default)
     {
+        pythonExecutable = PythonEnvironment.ResolveExecutable(pythonExecutable, AppContext.BaseDirectory);
         var graphics = new GraphicsCapabilityService().DetectRtxVideoSuperResolution();
         var values = new Dictionary<string, string>
         {
