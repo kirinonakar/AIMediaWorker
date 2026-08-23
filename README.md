@@ -35,9 +35,28 @@ python -m unittest discover -s asr-worker/tests -v
 
 ## libmpv setup
 
-1. Obtain a maintained x64 Windows libmpv build compatible with your distribution requirements.
-2. Place `mpv-2.dll` and every DLL it depends on beside `AIMediaWorker.exe`. If the distribution calls the import library `libmpv-2.dll`, use the actual runtime filename expected by the application: `mpv-2.dll`.
-3. Open **Tools → Diagnostics**. `libmpv` should report its version rather than `not loaded`.
+The [official mpv installation page](https://mpv.io/installation/) lists maintained Windows binary providers. AIMediaWorker needs the embeddable **libmpv development build**, not the normal `mpv.exe` player archive.
+
+1. Open the [shinchiro Windows build releases](https://github.com/shinchiro/mpv-winbuild-cmake/releases).
+2. From the newest release, download `mpv-dev-x86_64-<date>-git-<commit>.7z`.
+   - Choose a file containing both `dev` and `x86_64`.
+   - Do not download the similarly named `mpv-x86_64-...` player archive.
+   - The build without `-v3` has the broadest CPU compatibility. The `-v3` variant is appropriate only for CPUs supporting the x86-64-v3 instruction set.
+3. Optionally compare the downloaded file's SHA-256 hash with the value shown next to the GitHub release asset.
+4. Extract the `.7z` archive with [7-Zip](https://www.7-zip.org/).
+5. Copy `libmpv-2.dll` from the archive into the repository-level `Libs` folder and rename it to `mpv-2.dll`:
+
+   ```text
+   AIMediaWorker/
+   ├─ Libs/
+   │  └─ mpv-2.dll
+   ├─ AIMediaWorker/
+   └─ AIMediaWorker.slnx
+   ```
+
+6. If the downloaded build supplies additional runtime DLLs, place those DLLs in `Libs` as well.
+7. Build the application. Every DLL directly inside `Libs` is copied beside `AIMediaWorker.exe` for Debug, Release, and publish output.
+8. Open **Tools → Diagnostics**. `libmpv` should report its version rather than `not loaded`.
 
 AIMediaWorker requests mpv's `gpu-next` D3D11 renderer and `auto-safe` hardware decoding by default. D3D11VA, NVDEC, software decode, renderer, language preferences, cache/network timeout, subtitle appearance, playback rate, and seek interval are configurable.
 
