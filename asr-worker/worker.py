@@ -18,6 +18,7 @@ from typing import Any, Callable
 from audio.ffmpeg_audio import FfmpegCancelled, FfmpegError, extract_window, probe_duration
 from audio.vad import SpeechWindow, VadEngine
 from engines.forced_aligner import ForcedAlignerEngine
+from engines.model_defaults import DEFAULT_ASR_MODEL, DEFAULT_FORCED_ALIGNER_MODEL
 from engines.qwen_asr import QwenAsrEngine
 from protocol.messages import SubtitleSegment, WordTimestamp, require_string
 from subtitle.segmenter import SegmentationOptions, SubtitleSegmenter
@@ -122,13 +123,15 @@ class AsrWorker:
         self.emit({"id": request_id, "event": "status", "state": self.state, "model": self.engine.model_path, "aligner": self.engine.aligner_path, "jobs": list(self.jobs)})
 
     def _load_model(self, request_id: str, request: dict[str, Any], cancel: threading.Event) -> None:
-        model_path = require_string(request, "model_path")
+        model_path = request.get("model_path")
+        if model_path is not None and not isinstance(model_path, str):
+            raise ValueError("'model_path' must be a string or null")
         aligner_path = request.get("aligner_path")
         if aligner_path is not None and not isinstance(aligner_path, str):
             raise ValueError("'aligner_path' must be a string or null")
         self._check_cancel(cancel)
-        self.emit({"id": request_id, "event": "progress", "progress": 0.05, "message": "Loading Qwen3 ASR"})
-        self.engine.load(model_path, aligner_path or None, str(request.get("device", "auto")), str(request.get("precision", "auto")))
+        self.emit({"id": request_id, "event": "progress", "progress": 0.05, "message": "Downloading or loading Qwen3 ASR and ForcedAligner"})
+        self.engine.load(model_path or DEFAULT_ASR_MODEL, aligner_path or DEFAULT_FORCED_ALIGNER_MODEL, str(request.get("device", "auto")), str(request.get("precision", "auto")))
         self._check_cancel(cancel)
         self.emit({"id": request_id, "event": "progress", "progress": 1.0})
         self.emit({"id": request_id, "event": "completed"})
@@ -259,7 +262,9 @@ class AsrWorker:
     def _align(self, request_id: str, request: dict[str, Any], cancel: threading.Event) -> None:
         audio = require_string(request, "input")
         text = require_string(request, "text")
-        model_path = require_string(request, "aligner_path")
+        model_path = request.get("aligner_path")
+        if model_path is not None and not isinstance(model_path, str):
+            raise ValueError("'aligner_path' must be a string or null")
         self.aligner.load(model_path, str(request.get("device", "auto")), str(request.get("precision", "auto")))
         words = self.aligner.align(audio, text, str(request.get("language", "English")))
         self.emit({"id": request_id, "event": "alignment", "words": [asdict(word) for word in words]})

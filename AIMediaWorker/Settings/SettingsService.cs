@@ -68,6 +68,8 @@ public sealed class SettingsService
         settings.Subtitle ??= new SubtitleSettings();
         settings.Subtitle.Segmentation ??= new SegmentationSettings();
         settings.Asr ??= new AsrSettings();
+        settings.Asr.ModelPath = string.IsNullOrWhiteSpace(settings.Asr.ModelPath) ? AsrSettings.DefaultModelId : settings.Asr.ModelPath.Trim();
+        settings.Asr.AlignerPath = string.IsNullOrWhiteSpace(settings.Asr.AlignerPath) ? AsrSettings.DefaultAlignerId : settings.Asr.AlignerPath.Trim();
         settings.Network ??= new NetworkSettings();
         settings.Network.WebDavServers ??= [];
         settings.Capture ??= new CaptureSettings();

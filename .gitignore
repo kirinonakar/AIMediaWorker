@@ -15,6 +15,7 @@
 AGENTS.md
 Libs/
 .venv/
+asr-worker/models/
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

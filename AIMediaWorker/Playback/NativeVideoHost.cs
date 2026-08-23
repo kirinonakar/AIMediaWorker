@@ -30,6 +30,7 @@ public sealed class NativeVideoHost : IDisposable
     private WindowProcedure? _windowProcedure;
     private bool _disposed;
     private bool _pointerPressed;
+    private bool _visible = true;
     private (int X, int Y, int Width, int Height)? _lastBounds;
 
     public NativeVideoHost(Window window, FrameworkElement placeholder)
@@ -41,6 +42,7 @@ public sealed class NativeVideoHost : IDisposable
     }
 
     public nint Handle => _handle;
+    public bool IsVisible => _visible;
     public event EventHandler<FilesDroppedEventArgs>? FilesDropped;
     public event EventHandler? Clicked;
 
@@ -63,6 +65,15 @@ public sealed class NativeVideoHost : IDisposable
         DragAcceptFiles(_handle, true);
         UpdateBounds();
         return _handle;
+    }
+
+    public void SetVisible(bool visible)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _visible = visible;
+        if (_handle == 0) return;
+        ShowWindow(_handle, visible ? 4 : 0); // SW_SHOWNOACTIVATE / SW_HIDE
+        if (visible) UpdateBounds();
     }
 
     public void Dispose()
@@ -159,6 +170,7 @@ public sealed class NativeVideoHost : IDisposable
     private static extern nint CreateWindowEx(int exStyle, string className, string windowName, int style, int x, int y, int width, int height, nint parent, nint menu, nint instance, nint parameter);
     [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyWindow(nint window);
     [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, int flags);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)] private static extern nint SetWindowLongPtr(nint window, int index, nint value);
     [DllImport("user32.dll", EntryPoint = "CallWindowProcW")] private static extern nint CallWindowProc(nint previousProcedure, nint window, uint message, nint wParam, nint lParam);
     [DllImport("user32.dll", EntryPoint = "DefWindowProcW")] private static extern nint DefWindowProc(nint window, uint message, nint wParam, nint lParam);

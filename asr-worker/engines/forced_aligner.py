@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
+from engines.model_defaults import DEFAULT_FORCED_ALIGNER_MODEL, resolve_model_reference
 from protocol.messages import WordTimestamp
 
 
@@ -10,9 +10,8 @@ class ForcedAlignerEngine:
     def __init__(self) -> None:
         self.model: Any | None = None
 
-    def load(self, model_path: str, device: str = "auto", precision: str = "auto") -> None:
-        if Path(model_path).is_absolute() and not Path(model_path).exists():
-            raise FileNotFoundError(f"Forced aligner model not found: {model_path}")
+    def load(self, model_path: str | None = None, device: str = "auto", precision: str = "auto") -> None:
+        model_reference = resolve_model_reference(model_path, DEFAULT_FORCED_ALIGNER_MODEL, "Forced aligner model")
         try:
             import torch
             from qwen_asr import Qwen3ForcedAligner
@@ -20,7 +19,7 @@ class ForcedAlignerEngine:
             raise RuntimeError("qwen-asr and PyTorch are required for forced alignment") from exc
         actual_device = "cuda:0" if device.lower() in {"auto", "cuda"} and torch.cuda.is_available() else "cpu"
         dtype = torch.bfloat16 if precision.lower() in {"auto", "bfloat16"} and actual_device.startswith("cuda") else torch.float32
-        self.model = Qwen3ForcedAligner.from_pretrained(model_path, device_map=actual_device, dtype=dtype)
+        self.model = Qwen3ForcedAligner.from_pretrained(model_reference, device_map=actual_device, dtype=dtype)
 
     def align(self, audio_path: str, text: str, language: str) -> list[WordTimestamp]:
         if self.model is None:

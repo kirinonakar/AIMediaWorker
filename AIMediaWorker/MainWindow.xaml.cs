@@ -62,10 +62,15 @@ public sealed partial class MainWindow : Window
     private bool _initialized;
     private CameraWindow? _cameraWindow;
     private SettingsWindow? _settingsWindow;
-    private WebDavWindow? _webDavWindow;
     private AppSettings _settings = new();
+    private readonly WindowsCredentialService _windowsCredentials = new();
+    private readonly WebDavCredentialStore _webDavCredentials;
+    private readonly WebDavClient _webDavClient;
+    private CancellationTokenSource? _webDavListingCancellation;
+    private Uri? _webDavPanelDirectory;
     private readonly AsrWorkerClient _asrEngine = new();
     private CancellationTokenSource? _aiOperationCancellation;
+    private readonly SemaphoreSlim _dialogLock = new(1, 1);
     private CancellationTokenSource? _waveformCancellation;
     private WaveformData _waveform = WaveformData.Empty;
     private Rectangle? _waveformPlayhead;
@@ -105,6 +110,8 @@ public sealed partial class MainWindow : Window
     public MainWindow(string? initialSource, AppSettings settings)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        _webDavCredentials = new WebDavCredentialStore(_windowsCredentials);
+        _webDavClient = new WebDavClient(_windowsCredentials, timeout: TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds));
         InitializeComponent();
         _pendingLaunchSource = initialSource;
         var handle = WindowNative.GetWindowHandle(this);
@@ -197,6 +204,7 @@ public sealed partial class MainWindow : Window
             await Task.WhenAll(historyLoad, playbackInitialization);
             RebuildRecentMenu();
             RebuildFavoritesMenu();
+            RefreshWebDavServerList();
             ApplyTheme(_settings.General.Theme);
             if (_playback.IsAvailable)
             {
@@ -251,7 +259,7 @@ public sealed partial class MainWindow : Window
     {
         var input = new TextBox { PlaceholderText = "https://example.com/video.m3u8", MinWidth = 460 };
         var dialog = CreateDialog(L("OpenUrlTitle"), input, L("OpenButton"));
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
         if (!Uri.TryCreate(input.Text, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
         {
             await ShowMessageAsync(L("InvalidUrlTitle"), L("InvalidUrlMessage"));
@@ -470,6 +478,7 @@ public sealed partial class MainWindow : Window
 
     private void OnPlayPauseClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.TogglePause);
     private void PlayFromBeginning() => TryPlayback(() => { _playback.Seek(TimeSpan.Zero, true); _playback.Play(); });
+    private void OnGoToBeginningClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.Seek(TimeSpan.Zero, true));
     private void OnStopClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.Stop);
     private async void OnPreviousMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(-1);
     private async void OnNextMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(1);
@@ -706,7 +715,7 @@ public sealed partial class MainWindow : Window
     {
         var track = _document.ActiveTrack; if (track is null || track.Cues.Count == 0) return;
         var input = new NumberBox { Header = L("ShiftSecondsHeader"), Value = 0, SmallChange = 0.1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 320 };
-        if (await CreateDialog(L("ShiftSubtitlesTitle"), input, L("ShiftButton")).ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowDialogAsync(CreateDialog(L("ShiftSubtitlesTitle"), input, L("ShiftButton"))) != ContentDialogResult.Primary) return;
         var selected = SubtitleList.SelectedItems.Cast<SubtitleCue>().ToArray(); var cues = selected.Length > 0 ? selected : track.Cues.ToArray();
         try { _history.Execute(new BatchShiftCommand(_document, cues, checked((long)Math.Round(input.Value * 1_000_000)))); DrawTimeline(); ScheduleSubtitleOverlaySync(); }
         catch (Exception exception) { await ShowMessageAsync(L("InvalidShiftTitle"), exception.Message); }
@@ -1015,6 +1024,7 @@ public sealed partial class MainWindow : Window
         FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F")} · Esc";
 
         ToolTipService.SetToolTip(PlayPauseButton, $"{L("PlayPause.Text")} ({Combine(Shortcut(ShortcutActions.PlayPause), Shortcut(ShortcutActions.PlayPauseAlternate))})");
+        ToolTipService.SetToolTip(BeginningButton, "Go to beginning (Home)");
         ToolTipService.SetToolTip(PreviousButton, $"Previous media ({Shortcut(ShortcutActions.PreviousMedia)})");
         ToolTipService.SetToolTip(NextButton, $"Next media ({Shortcut(ShortcutActions.NextMedia)})");
         ToolTipService.SetToolTip(SeekBackButton, $"Seek backward ({Shortcut(ShortcutActions.SeekBackward)})");
@@ -1255,7 +1265,7 @@ public sealed partial class MainWindow : Window
         StatusText.Text = L("StatusCollectingDiagnostics");
         var snapshot = await new DiagnosticsService().CollectAsync(_playback, _asrEngine.State, _settings.Asr.PythonExecutable, _settings.Asr.ModelPath, _settings.Asr.AlignerPath);
         var output = new TextBox { Text = snapshot.ToString(), IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinWidth = 650, MinHeight = 420, FontFamily = new FontFamily("Consolas") };
-        await new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("DiagnosticsTitle"), Content = output, CloseButtonText = L("CloseButton") }.ShowAsync();
+        await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("DiagnosticsTitle"), Content = output, CloseButtonText = L("CloseButton") });
         StatusText.Text = L("ReadyText");
     }
     private async void OnGenerateSubtitleClick(object sender, RoutedEventArgs e)
@@ -1336,7 +1346,7 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(_settings.Llm.Model)) { await ShowMessageAsync(L("LlmModelMissingTitle"), L("LlmModelMissingMessage")); return; }
         if (_aiOperationCancellation is not null) return;
         var targetBox = new TextBox { Text = _settings.Llm.TranslationLanguage, Header = L("TargetLanguageHeader"), MinWidth = 320 };
-        if (await CreateDialog(L("TranslateSubtitlesTitle"), targetBox, L("TranslateButton")).ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowDialogAsync(CreateDialog(L("TranslateSubtitlesTitle"), targetBox, L("TranslateButton"))) != ContentDialogResult.Primary) return;
         var selected = SubtitleList.SelectedItems.Cast<SubtitleCue>().ToArray();
         var cues = selected.Length > 0 ? selected : track.Cues.ToArray();
         _aiOperationCancellation = new CancellationTokenSource();
@@ -1363,7 +1373,7 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(_settings.Llm.Model)) { await ShowMessageAsync(L("LlmModelMissingTitle"), L("LlmModelMissingMessage")); return; }
         if (_aiOperationCancellation is not null) return;
         var choices = new ComboBox { Header = L("SummaryStyleHeader"), MinWidth = 300, ItemsSource = Enum.GetValues<SummaryKind>(), SelectedIndex = 0 };
-        if (await CreateDialog(L("SummarizeTranscriptTitle"), choices, L("SummarizeButton")).ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowDialogAsync(CreateDialog(L("SummarizeTranscriptTitle"), choices, L("SummarizeButton"))) != ContentDialogResult.Primary) return;
         _aiOperationCancellation = new CancellationTokenSource();
         try
         {
@@ -1373,7 +1383,7 @@ public sealed partial class MainWindow : Window
             var progress = new Progress<double>(value => StatusText.Text = F("StatusSummarizing", value));
             var summary = await service.SummarizeAsync(track.Cues, (SummaryKind)(choices.SelectedItem ?? SummaryKind.Short), progress, cancellationToken: _aiOperationCancellation.Token);
             var output = new TextBox { Text = summary, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinWidth = 600, MinHeight = 380 };
-            await new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("TranscriptSummaryTitle"), Content = output, CloseButtonText = L("CloseButton") }.ShowAsync();
+            await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("TranscriptSummaryTitle"), Content = output, CloseButtonText = L("CloseButton") });
             StatusText.Text = L("StatusSummaryComplete");
         }
         catch (OperationCanceledException) { StatusText.Text = L("StatusSummaryCancelled"); }
@@ -1389,43 +1399,162 @@ public sealed partial class MainWindow : Window
     }
     private void OnWebDavClick(object sender, RoutedEventArgs e)
     {
-        ShowWebDavWindow();
+        _rightPanelVisible = true;
+        ApplyPanelVisibility();
+        RightPanelTabs.SelectedIndex = 2;
+        WebDavServerList.Focus(FocusState.Programmatic);
     }
 
-    private async void ShowWebDavWindow(Guid? serverId = null, Uri? directory = null)
+    private async void OnAddWebDavServerClick(object sender, RoutedEventArgs e)
     {
         try
         {
-            if (_webDavWindow is not null)
+            var name = CreateWebDavTextBox(L("NameHeader"), string.Empty);
+            var address = CreateWebDavTextBox(L("AddressHeader"), string.Empty, "https://server.example/dav/");
+            var port = new NumberBox
             {
-                if (serverId is null) { _webDavWindow.Activate(); return; }
-                _webDavWindow.Close();
-            }
-            _webDavWindow = new WebDavWindow(this, serverId, directory);
-            _webDavWindow.DirectoryListed += (_, snapshot) =>
-            {
-                _webDavPanelServerId = snapshot.ServerId;
-                WebDavPanelPathText.Text = snapshot.Directory.AbsoluteUri;
-                WebDavPanelEntryList.ItemsSource = snapshot.Entries;
-                RightPanelTabs.SelectedIndex = 2;
+                Header = L("PortHeader"),
+                Value = 443,
+                Minimum = 1,
+                Maximum = 65535,
+                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden
             };
-            _webDavWindow.MediaSelected += async (_, selection) => { await OpenMediaAsync(selection.Uri.AbsoluteUri, selection.Headers, new WebDavMediaSource(selection.ServerId, selection.Uri, selection.Name)); _webDavWindow?.Close(); };
-            _webDavWindow.FolderFavoriteRequested += async (_, selection) =>
+            var username = CreateWebDavTextBox(L("UsernameHeader"), string.Empty);
+            var password = new PasswordBox { Header = L("PasswordHeader") };
+            var validation = new TextBlock
             {
-                _historyService.AddFavorite(new WebDavMediaSource(selection.ServerId, selection.Uri, selection.Name), true);
-                await _historyService.SaveAsync();
-                RebuildFavoritesMenu();
+                Foreground = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 196, 43, 28)),
+                TextWrapping = TextWrapping.Wrap,
+                Visibility = Visibility.Collapsed
             };
-            _webDavWindow.Closed += (_, _) => _webDavWindow = null;
-            _webDavWindow.Activate();
+            var panel = new StackPanel { Spacing = 12, Width = 440, Children = { name, address, port, username, password, validation } };
+            var dialog = CreateDialog(L("AddWebDavServerTitle"), panel, L("SaveButtonText"));
+            Uri? parsedAddress = null;
+            dialog.PrimaryButtonClick += (_, args) =>
+            {
+                if (Uri.TryCreate(address.Text.Trim(), UriKind.Absolute, out parsedAddress) &&
+                    parsedAddress.Scheme is "http" or "https" &&
+                    !double.IsNaN(port.Value) && port.Value % 1 == 0 && port.Value is >= 1 and <= 65535) return;
+                args.Cancel = true;
+                validation.Text = L("InvalidWebDavAddressMessage");
+                validation.Visibility = Visibility.Visible;
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || parsedAddress is null) return;
+
+            var server = new WebDavServerSettings { Name = string.IsNullOrWhiteSpace(name.Text) ? parsedAddress.Host : name.Text.Trim() };
+            _webDavCredentials.Save(server.Id, new WebDavConnectionCredential(WebDavConnectionCredential.NormalizeAddress(parsedAddress), (int)port.Value, username.Text.Trim(), password.Password));
+            _settings.Network.WebDavServers.Add(server);
+            await SettingsService.CreateDefault().SaveAsync(_settings);
+            RefreshWebDavServerList(server);
+            WebDavConnectionStatusText.Text = F("WebDavServerAddedMessage", server.Name);
         }
         catch (Exception exception)
         {
-            _webDavWindow = null;
-            await AppLog.WriteAsync("error", "webdav", "WEBDAV_WINDOW_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("NetworkErrorTitle"), exception.Message);
+            await AppLog.WriteAsync("error", "webdav", "WEBDAV_ADD_ERROR", exception.Message, exception);
+            WebDavConnectionStatusText.Text = exception.Message;
         }
     }
+
+    private static TextBox CreateWebDavTextBox(string header, string text, string? placeholder = null) => new()
+    {
+        Header = header,
+        Text = text,
+        PlaceholderText = placeholder ?? string.Empty,
+        IsSpellCheckEnabled = false,
+        IsTextPredictionEnabled = false
+    };
+
+    private void RefreshWebDavServerList(WebDavServerSettings? selected = null)
+    {
+        WebDavServerList.ItemsSource = null;
+        WebDavServerList.ItemsSource = _settings.Network.WebDavServers;
+        WebDavEmptyServersText.Visibility = _settings.Network.WebDavServers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (selected is not null) WebDavServerList.SelectedItem = selected;
+    }
+
+    private async void OnWebDavServerClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is WebDavServerSettings server) await ConnectWebDavServerAsync(server);
+    }
+
+    private async Task ConnectWebDavServerAsync(WebDavServerSettings server, Uri? directory = null)
+    {
+        var credential = _webDavCredentials.Read(server.Id);
+        if (credential is null)
+        {
+            _webDavPanelServerId = null;
+            _webDavPanelDirectory = null;
+            WebDavPanelEntryList.ItemsSource = null;
+            WebDavParentButton.IsEnabled = false;
+            WebDavRefreshButton.IsEnabled = false;
+            WebDavPanelPathText.Text = L("WebDavSelectServerMessage");
+            WebDavConnectionStatusText.Text = L("WebDavCredentialMissingMessage");
+            return;
+        }
+        _webDavPanelServerId = server.Id;
+        _webDavPanelDirectory = EnsureWebDavDirectoryUri(directory ?? credential.RootUri);
+        WebDavServerList.SelectedItem = server;
+        await RefreshWebDavDirectoryAsync();
+    }
+
+    private async Task RefreshWebDavDirectoryAsync()
+    {
+        if (_webDavPanelServerId is not { } serverId || _webDavPanelDirectory is null) return;
+        var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == serverId);
+        if (server is null) return;
+
+        _webDavListingCancellation?.Cancel();
+        _webDavListingCancellation?.Dispose();
+        _webDavListingCancellation = new CancellationTokenSource();
+        var operation = _webDavListingCancellation;
+        WebDavProgressRing.IsActive = true;
+        WebDavPanelEntryList.IsEnabled = false;
+        WebDavParentButton.IsEnabled = false;
+        WebDavRefreshButton.IsEnabled = false;
+        WebDavPanelPathText.Text = _webDavPanelDirectory.AbsoluteUri;
+        WebDavConnectionStatusText.Text = F("WebDavConnectingMessage", server.Name);
+        try
+        {
+            var entries = await _webDavClient.ListAsync(server, _webDavPanelDirectory, operation.Token);
+            if (operation.IsCancellationRequested) return;
+            WebDavPanelEntryList.ItemsSource = entries;
+            WebDavConnectionStatusText.Text = F("WebDavConnectedMessage", server.Name, entries.Count);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception) when (operation.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "webdav", exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_LIST_ERROR", exception.Message, exception);
+            WebDavPanelEntryList.ItemsSource = null;
+            WebDavConnectionStatusText.Text = exception.Message;
+        }
+        finally
+        {
+            if (ReferenceEquals(_webDavListingCancellation, operation))
+            {
+                WebDavProgressRing.IsActive = false;
+                WebDavPanelEntryList.IsEnabled = true;
+                WebDavParentButton.IsEnabled = true;
+                WebDavRefreshButton.IsEnabled = true;
+            }
+        }
+    }
+
+    private async void OnWebDavParentClick(object sender, RoutedEventArgs e)
+    {
+        if (_webDavPanelServerId is not { } serverId || _webDavPanelDirectory is null) return;
+        var credential = _webDavCredentials.Read(serverId);
+        if (credential is null) return;
+        var root = EnsureWebDavDirectoryUri(credential.RootUri);
+        var parent = EnsureWebDavDirectoryUri(new Uri(_webDavPanelDirectory, "../"));
+        if (!parent.AbsoluteUri.StartsWith(root.AbsoluteUri, StringComparison.OrdinalIgnoreCase)) parent = root;
+        _webDavPanelDirectory = parent;
+        await RefreshWebDavDirectoryAsync();
+    }
+
+    private async void OnWebDavRefreshClick(object sender, RoutedEventArgs e) => await RefreshWebDavDirectoryAsync();
+
+    private static Uri EnsureWebDavDirectoryUri(Uri uri) => uri.AbsoluteUri.EndsWith('/') ? uri : new Uri(uri.AbsoluteUri + "/");
     private async void OnCameraClick(object sender, RoutedEventArgs e)
     {
         try
@@ -1621,11 +1750,15 @@ public sealed partial class MainWindow : Window
     private async void OnWebDavPanelEntryDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (WebDavPanelEntryList.SelectedItem is not WebDavEntry entry || _webDavPanelServerId is not { } serverId) return;
-        if (entry.IsCollection) { ShowWebDavWindow(serverId, entry.Uri); return; }
+        if (entry.IsCollection)
+        {
+            _webDavPanelDirectory = EnsureWebDavDirectoryUri(entry.Uri);
+            await RefreshWebDavDirectoryAsync();
+            return;
+        }
         var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == serverId);
         if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("RecentServerMissingMessage")); return; }
-        using var client = new WebDavClient(new WindowsCredentialService());
-        using var request = client.CreateMediaRequest(server, entry.Uri);
+        using var request = _webDavClient.CreateMediaRequest(server, entry.Uri);
         var headers = request.Headers.Authorization is { } authorization ? new Dictionary<string, string> { ["Authorization"] = authorization.ToString() } : null;
         await OpenMediaAsync(entry.Uri.AbsoluteUri, headers, new WebDavMediaSource(server.Id, entry.Uri, entry.Name));
     }
@@ -1662,7 +1795,10 @@ public sealed partial class MainWindow : Window
             {
                 var server = FindWebDavServerForLocation(favorite.Location);
                 if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("FavoriteServerMissingMessage")); return; }
-                ShowWebDavWindow(server.Id, new Uri(favorite.Location));
+                _rightPanelVisible = true;
+                ApplyPanelVisibility();
+                RightPanelTabs.SelectedIndex = 2;
+                await ConnectWebDavServerAsync(server, new Uri(favorite.Location));
                 return;
             }
             await BrowseLocalFavoriteFolderAsync(favorite);
@@ -1683,7 +1819,7 @@ public sealed partial class MainWindow : Window
         if (files.Length == 0) { await ShowMessageAsync(L("FavoriteFolderTitle"), L("FavoriteFolderEmptyMessage")); return; }
         var list = new ListView { ItemsSource = files, SelectionMode = ListViewSelectionMode.Single, MinWidth = 520, MinHeight = 360 };
         var dialog = CreateDialog(favorite.DisplayName, list, L("OpenButton"));
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary && list.SelectedItem is string selected) await OpenMediaAsync(selected);
+        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary && list.SelectedItem is string selected) await OpenMediaAsync(selected);
     }
 
     private void RebuildRecentMenu()
@@ -1772,7 +1908,7 @@ public sealed partial class MainWindow : Window
         if (_allowClose || !_document.IsDirty) return;
         args.Cancel = true;
         var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("UnsavedChangesTitle"), Content = L("UnsavedChangesCloseMessage"), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
-        var result = await dialog.ShowAsync();
+        var result = await ShowDialogAsync(dialog);
         if (result == ContentDialogResult.None) return;
         if (result == ContentDialogResult.Primary)
         {
@@ -1787,7 +1923,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_document.IsDirty) return true;
         var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("UnsavedChangesTitle"), Content = F("UnsavedChangesActionMessage", action), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
-        var result = await dialog.ShowAsync();
+        var result = await ShowDialogAsync(dialog);
         if (result == ContentDialogResult.None) return false;
         if (result == ContentDialogResult.Primary)
         {
@@ -1799,7 +1935,22 @@ public sealed partial class MainWindow : Window
 
     private void TryPlayback(Action action) { try { action(); } catch (Exception exception) { StatusText.Text = exception.Message; } }
     private ContentDialog CreateDialog(string title, object content, string primaryText) => new() { XamlRoot = RootGrid.XamlRoot, Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
-    private async Task ShowMessageAsync(string title, string message) => await new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap }, CloseButtonText = L("OkButton") }.ShowAsync();
+    private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
+    {
+        await _dialogLock.WaitAsync();
+        var restoreVideo = _videoHost?.IsVisible == true;
+        try
+        {
+            if (restoreVideo) _videoHost!.SetVisible(false);
+            return await dialog.ShowAsync();
+        }
+        finally
+        {
+            if (restoreVideo && _videoHost is not null) _videoHost.SetVisible(true);
+            _dialogLock.Release();
+        }
+    }
+    private async Task ShowMessageAsync(string title, string message) => await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap }, CloseButtonText = L("OkButton") });
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
     private static Brush ThemeBrush(string resourceKey, Windows.UI.Color fallback) => Application.Current.Resources.TryGetValue(resourceKey, out var value) && value is Brush brush ? brush : new SolidColorBrush(fallback);
@@ -1827,6 +1978,8 @@ public sealed partial class MainWindow : Window
         _postOpenCancellation?.Cancel(); _postOpenCancellation?.Dispose();
         _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose();
         _aiOperationCancellation?.Cancel(); _aiOperationCancellation?.Dispose();
+        _webDavListingCancellation?.Cancel(); _webDavListingCancellation?.Dispose();
+        _webDavClient.Dispose();
         try { await _asrEngine.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "ASR_DISPOSE_ERROR", exception.Message, exception); }
         try { await _playback.DisposeAsync(); }

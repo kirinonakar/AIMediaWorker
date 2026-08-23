@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
+from engines.model_defaults import DEFAULT_ASR_MODEL, DEFAULT_FORCED_ALIGNER_MODEL, resolve_model_reference
 from protocol.messages import WordTimestamp
 
 
@@ -25,11 +25,9 @@ class QwenAsrEngine:
         self.model_path: str | None = None
         self.aligner_path: str | None = None
 
-    def load(self, model_path: str, aligner_path: str | None, device: str, precision: str) -> None:
-        if Path(model_path).is_absolute() and not Path(model_path).exists():
-            raise FileNotFoundError(f"ASR model not found: {model_path}")
-        if aligner_path and Path(aligner_path).is_absolute() and not Path(aligner_path).exists():
-            raise FileNotFoundError(f"Forced aligner model not found: {aligner_path}")
+    def load(self, model_path: str | None = None, aligner_path: str | None = None, device: str = "auto", precision: str = "auto") -> None:
+        model_reference = resolve_model_reference(model_path, DEFAULT_ASR_MODEL, "ASR model")
+        aligner_reference = resolve_model_reference(aligner_path, DEFAULT_FORCED_ALIGNER_MODEL, "Forced aligner model")
         try:
             import torch
             from qwen_asr import Qwen3ASRModel
@@ -44,12 +42,11 @@ class QwenAsrEngine:
         }
         dtype = dtype_map.get(precision.lower(), dtype_map["auto"])
         kwargs: dict[str, Any] = {"device_map": actual_device, "dtype": dtype, "max_inference_batch_size": 1}
-        if aligner_path:
-            kwargs["forced_aligner"] = aligner_path
-            kwargs["forced_aligner_kwargs"] = {"device_map": actual_device, "dtype": dtype}
-        self.model = Qwen3ASRModel.from_pretrained(model_path, **kwargs)
-        self.model_path = model_path
-        self.aligner_path = aligner_path
+        kwargs["forced_aligner"] = aligner_reference
+        kwargs["forced_aligner_kwargs"] = {"device_map": actual_device, "dtype": dtype}
+        self.model = Qwen3ASRModel.from_pretrained(model_reference, **kwargs)
+        self.model_path = model_reference
+        self.aligner_path = aligner_reference
 
     def unload(self) -> None:
         self.model = None

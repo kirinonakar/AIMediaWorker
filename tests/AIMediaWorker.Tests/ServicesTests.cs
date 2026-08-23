@@ -61,7 +61,7 @@ public sealed class ServicesTests : IDisposable
     {
         var path = Path.Combine(_folder, "settings-null-sections.json");
         Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(path, "{\"Playback\":null,\"General\":{\"Shortcuts\":null},\"Network\":null,\"Window\":null}");
+        await File.WriteAllTextAsync(path, "{\"Playback\":null,\"Asr\":{\"ModelPath\":null,\"AlignerPath\":\"  \"},\"General\":{\"Shortcuts\":null},\"Network\":null,\"Window\":null}");
 
         var loaded = await new SettingsService(path).LoadAsync();
 
@@ -70,6 +70,8 @@ public sealed class ServicesTests : IDisposable
         Assert.NotNull(loaded.Network);
         Assert.NotNull(loaded.Window);
         Assert.Equal(1280, loaded.Window.Width);
+        Assert.Equal(AsrSettings.DefaultModelId, loaded.Asr.ModelPath);
+        Assert.Equal(AsrSettings.DefaultAlignerId, loaded.Asr.AlignerPath);
         Assert.Equal("Ctrl+Shift+S", loaded.General.Shortcuts[ShortcutActions.SaveSubtitleAs]);
         Assert.Equal("Enter", loaded.General.Shortcuts[ShortcutActions.Fullscreen]);
         Assert.Equal("V", loaded.General.Shortcuts[ShortcutActions.ToggleSubtitles]);
@@ -185,6 +187,10 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal(2, entries.Count);
         Assert.True(entries[0].IsCollection);
         Assert.Equal(1234, entries[1].ContentLength);
+
+        using var mediaRequest = client.CreateMediaRequest(server, entries[1].Uri);
+        Assert.Equal("Basic", mediaRequest.Headers.Authorization?.Scheme);
+        Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("user:password")), mediaRequest.Headers.Authorization?.Parameter);
     }
 
     private sealed class MemoryCredentials : ICredentialService

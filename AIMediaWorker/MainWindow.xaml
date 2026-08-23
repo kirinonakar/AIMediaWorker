@@ -64,7 +64,7 @@
                 <ToggleMenuFlyoutItem x:Uid="ShowBottomPanel" x:Name="ShowBottomPanelMenuItem" Text="Show timeline panel" IsChecked="True" Click="OnToggleBottomPanelClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="ToolsMenu" Title="Tools">
-                <MenuFlyoutItem x:Uid="WebDavBrowser" Text="WebDAV browser…" Click="OnWebDavClick" /><MenuFlyoutItem x:Uid="CameraCaptions" Text="Camera and live captions…" Click="OnCameraClick" />
+                <MenuFlyoutItem x:Uid="WebDavBrowser" Text="WebDAV" Click="OnWebDavClick" /><MenuFlyoutItem x:Uid="CameraCaptions" Text="Camera and live captions…" Click="OnCameraClick" />
                 <MenuFlyoutItem x:Uid="Diagnostics" Text="Diagnostics…" Click="OnDiagnosticsClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SettingsMenu" Title="Settings"><MenuFlyoutItem x:Uid="Preferences" Text="Preferences…" Click="OnSettingsClick" /></MenuBarItem>
@@ -95,7 +95,51 @@
                         <Grid RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><CommandBar DefaultLabelPosition="Collapsed"><AppBarButton Icon="OpenFile" Label="Add media" Click="OnOpenMediaClick" /><AppBarButton Icon="Delete" Label="Clear" Click="OnClearPlaylistClick" /></CommandBar><ListView x:Name="PlaylistList" Grid.Row="1" SelectionMode="Single" DoubleTapped="OnPlaylistDoubleTapped"><ListView.ItemTemplate><DataTemplate><Grid Padding="5"><TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Path}" /></Grid></DataTemplate></ListView.ItemTemplate></ListView></Grid>
                     </TabViewItem>
                     <TabViewItem Header="WebDAV" IsClosable="False">
-                        <Grid RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><Button Content="Manage servers and connect" Click="OnWebDavClick" HorizontalAlignment="Stretch" /><TextBlock x:Name="WebDavPanelPathText" Grid.Row="1" Text="Connect to a WebDAV server to browse files" TextTrimming="CharacterEllipsis" Opacity="0.7" /><ListView x:Name="WebDavPanelEntryList" Grid.Row="2" SelectionMode="Single" DoubleTapped="OnWebDavPanelEntryDoubleTapped"><ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate></ListView></Grid>
+                        <Grid RowSpacing="6">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Button x:Name="AddWebDavServerButton" Click="OnAddWebDavServerClick" HorizontalAlignment="Stretch">
+                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                                    <FontIcon Glyph="&#xE710;" FontSize="14" />
+                                    <TextBlock x:Uid="WebDavAddServerText" Text="Add WebDAV server" />
+                                </StackPanel>
+                            </Button>
+                            <TextBlock x:Uid="WebDavServersPanelLabel" Grid.Row="1" Text="Servers" FontWeight="SemiBold" Margin="4,4,4,0" />
+                            <Grid Grid.Row="2" MaxHeight="150">
+                                <ListView x:Name="WebDavServerList" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnWebDavServerClick">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Padding="6" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <FontIcon Glyph="&#xE968;" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                                <TextBlock x:Uid="WebDavNoServersText" x:Name="WebDavEmptyServersText" Text="No servers added" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" />
+                            </Grid>
+                            <CommandBar Grid.Row="3" DefaultLabelPosition="Collapsed">
+                                <AppBarButton x:Uid="ParentButton" x:Name="WebDavParentButton" Icon="Back" Label="Parent folder" Click="OnWebDavParentClick" IsEnabled="False" />
+                                <AppBarButton x:Uid="RefreshCommand" x:Name="WebDavRefreshButton" Icon="Refresh" Label="Refresh" Click="OnWebDavRefreshClick" IsEnabled="False" />
+                                <AppBarElementContainer>
+                                    <ProgressRing x:Name="WebDavProgressRing" Width="20" Height="20" Margin="8,0" IsActive="False" />
+                                </AppBarElementContainer>
+                            </CommandBar>
+                            <StackPanel Grid.Row="4" Margin="4,0" Spacing="2">
+                                <TextBlock x:Uid="WebDavSelectServerText" x:Name="WebDavPanelPathText" Text="Select a server to connect" TextTrimming="CharacterEllipsis" Opacity="0.7" />
+                                <TextBlock x:Name="WebDavConnectionStatusText" Text="" TextTrimming="CharacterEllipsis" Opacity="0.7" FontSize="11" />
+                            </StackPanel>
+                            <ListView x:Name="WebDavPanelEntryList" Grid.Row="5" SelectionMode="Single" DoubleTapped="OnWebDavPanelEntryDoubleTapped">
+                                <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
                     </TabViewItem>
                     <TabViewItem Header="Subtitles" IsClosable="False">
                         <Grid RowSpacing="6">
@@ -110,19 +154,20 @@
             </Grid>
         </Grid>
         <Grid x:Name="PlaybackControls" Grid.Row="5" Padding="8,4" ColumnSpacing="6">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="120" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="95" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <Button x:Name="PreviousButton" Grid.Column="0" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏮" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media" />
-            <Button x:Name="SeekBackButton" Grid.Column="1" Style="{StaticResource PlaybackControlButtonStyle}" Content="−5s" Click="OnSeekBackClick" ToolTipService.ToolTip="Seek backward" />
-            <Button x:Name="PlayPauseButton" Grid.Column="2" Style="{StaticResource PlaybackControlButtonStyle}" Content="▶" Click="OnPlayPauseClick" ToolTipService.ToolTip="Play / Pause (Space)" />
-            <Button Grid.Column="3" Style="{StaticResource PlaybackControlButtonStyle}" Content="■" Click="OnStopClick" ToolTipService.ToolTip="Stop" />
-            <Button x:Name="SeekForwardButton" Grid.Column="4" Style="{StaticResource PlaybackControlButtonStyle}" Content="+5s" Click="OnSeekForwardClick" ToolTipService.ToolTip="Seek forward" />
-            <Button x:Name="NextButton" Grid.Column="5" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏭" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media" />
-            <Slider x:Name="PositionSlider" Grid.Column="6" Minimum="0" Maximum="1" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
-            <TextBlock x:Name="PositionText" Grid.Column="7" Text="00:00 / 00:00" VerticalAlignment="Center" FontFamily="Consolas" />
-            <Slider x:Name="VolumeSlider" Grid.Column="8" Minimum="0" Maximum="130" Value="100" ValueChanged="OnVolumeChanged" />
-            <Button x:Name="MuteButton" Grid.Column="9" Style="{StaticResource PlaybackControlButtonStyle}" Content="🔊" Click="OnMuteClick" />
-            <TextBlock x:Uid="SpeedLabel" Grid.Column="10" Text="Speed" VerticalAlignment="Center" /><ComboBox x:Name="RateCombo" Grid.Column="11" SelectionChanged="OnRateChanged" />
-            <Button x:Name="RepeatButton" Grid.Column="12" Style="{StaticResource PlaybackControlButtonStyle}" Content="↪" Click="OnRepeatClick" ToolTipService.ToolTip="Repeat off" />
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="120" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="95" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <Button x:Name="BeginningButton" Grid.Column="0" Style="{StaticResource PlaybackControlButtonStyle}" Content="↤" Click="OnGoToBeginningClick" ToolTipService.ToolTip="Go to beginning (Home)" />
+            <Button x:Name="PreviousButton" Grid.Column="1" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏮" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media" />
+            <Button x:Name="SeekBackButton" Grid.Column="2" Style="{StaticResource PlaybackControlButtonStyle}" Content="−5s" Click="OnSeekBackClick" ToolTipService.ToolTip="Seek backward" />
+            <Button x:Name="PlayPauseButton" Grid.Column="3" Style="{StaticResource PlaybackControlButtonStyle}" Content="▶" Click="OnPlayPauseClick" ToolTipService.ToolTip="Play / Pause (Space)" />
+            <Button Grid.Column="4" Style="{StaticResource PlaybackControlButtonStyle}" Content="■" Click="OnStopClick" ToolTipService.ToolTip="Stop" />
+            <Button x:Name="SeekForwardButton" Grid.Column="5" Style="{StaticResource PlaybackControlButtonStyle}" Content="+5s" Click="OnSeekForwardClick" ToolTipService.ToolTip="Seek forward" />
+            <Button x:Name="NextButton" Grid.Column="6" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏭" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media" />
+            <Slider x:Name="PositionSlider" Grid.Column="7" Minimum="0" Maximum="1" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
+            <TextBlock x:Name="PositionText" Grid.Column="8" Text="00:00 / 00:00" VerticalAlignment="Center" FontFamily="Consolas" />
+            <Slider x:Name="VolumeSlider" Grid.Column="9" Minimum="0" Maximum="130" Value="100" ValueChanged="OnVolumeChanged" />
+            <Button x:Name="MuteButton" Grid.Column="10" Style="{StaticResource PlaybackControlButtonStyle}" Content="🔊" Click="OnMuteClick" />
+            <TextBlock x:Uid="SpeedLabel" Grid.Column="11" Text="Speed" VerticalAlignment="Center" /><ComboBox x:Name="RateCombo" Grid.Column="12" SelectionChanged="OnRateChanged" />
+            <Button x:Name="RepeatButton" Grid.Column="13" Style="{StaticResource PlaybackControlButtonStyle}" Content="↪" Click="OnRepeatClick" ToolTipService.ToolTip="Repeat off" />
         </Grid>
         <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="3" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
         <Grid x:Name="VisualizationPanel" Grid.Row="4" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">

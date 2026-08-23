@@ -90,8 +90,8 @@ python -m pip install -r asr-worker/requirements.txt
 In **Settings → Automatic speech recognition**, configure:
 
 - Python executable, for example `D:\path\to\.venv\Scripts\python.exe`.
-- Qwen3-ASR-1.7B local directory or model identifier.
-- Optional Qwen3-ForcedAligner-0.6B directory or model identifier.
+- Qwen3-ASR-1.7B local directory or model identifier. The official `Qwen/Qwen3-ASR-1.7B` model is downloaded to `asr-worker/models` automatically by default.
+- Qwen3-ForcedAligner-0.6B directory or model identifier. The official `Qwen/Qwen3-ForcedAligner-0.6B` model is downloaded to `asr-worker/models` automatically by default.
 - Device (`Auto`, `Cpu`, `Cuda`), precision, VAD, language, and chunk duration.
 
 Offline processing extracts bounded chunks, optionally applies Silero VAD, restores global microsecond timestamps, uses forced alignment when configured, and emits subtitles before the complete file finishes. The live path uses a bounded rolling 30-second PCM window because transformer Qwen streaming does not expose the same official low-latency vLLM path.
@@ -110,7 +110,7 @@ The subtitle encoding setting supports UTF-8 and installed Windows code pages. E
 
 ## WebDAV and remote media
 
-Open **Tools → WebDAV browser** to add, edit, or remove servers. Server metadata is stored in settings; passwords are stored separately in Windows Credential Manager. Supported operations include directory listing, parent navigation, refresh, direct remote playback, and saving the current WebDAV folder as a favorite. Connected directory results are also mirrored into the main window's WebDAV side-panel tab.
+Open the **WebDAV** side-panel tab (or **Tools → WebDAV**) to add a server. Saved servers appear directly below the add button; select one to connect and browse it in the same tab. Server metadata is stored in settings, while passwords are stored separately in Windows Credential Manager. Supported operations include directory listing, parent navigation, refresh, and direct remote playback.
 
 Local folders, media items, WebDAV folders, and remote URLs can be opened or removed from the Favorites menu. Recent items retain source type and playback position. Missing local paths or removed servers do not prevent startup.
 

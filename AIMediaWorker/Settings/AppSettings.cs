@@ -60,8 +60,11 @@ public sealed class SegmentationSettings
 
 public sealed class AsrSettings
 {
-    public string? ModelPath { get; set; }
-    public string? AlignerPath { get; set; }
+    public const string DefaultModelId = "Qwen/Qwen3-ASR-1.7B";
+    public const string DefaultAlignerId = "Qwen/Qwen3-ForcedAligner-0.6B";
+
+    public string? ModelPath { get; set; } = DefaultModelId;
+    public string? AlignerPath { get; set; } = DefaultAlignerId;
     public string PythonExecutable { get; set; } = "python";
     public AsrDevice Device { get; set; } = AsrDevice.Auto;
     public AsrPrecision Precision { get; set; } = AsrPrecision.Auto;
