@@ -122,7 +122,9 @@ class ModelLoadingTests(unittest.TestCase):
         with patch.dict(sys.modules, {"torch": _fake_torch(cuda_available=True), "qwen_asr": qwen_asr}), patch("engines.qwen_asr.download_model", fake_download):
             QwenAsrEngine().load(device="cuda", progress=report)
 
-        self.assertEqual(["asr", "aligner", "loading", "from_pretrained"], events)
+        self.assertEqual(["asr", "aligner"], events[:2])
+        self.assertEqual("loading", events[2])
+        self.assertEqual("from_pretrained", events[-1])
 
     def test_missing_absolute_model_path_still_fails_without_downloading(self) -> None:
         missing = str(Path(tempfile.gettempdir(), "aimw-missing-model", "model").resolve())

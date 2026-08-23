@@ -33,30 +33,11 @@ class QwenAsrEngine:
         aligner_reference = resolve_model_reference(aligner_path, DEFAULT_FORCED_ALIGNER_MODEL, "Forced aligner model")
         model_local_path = download_model(model_reference, lambda value, downloaded, total: progress("asr", model_reference.rsplit("/", 1)[-1], value, downloaded, total)) if progress else model_reference
         aligner_local_path = download_model(aligner_reference, lambda value, downloaded, total: progress("aligner", aligner_reference.rsplit("/", 1)[-1], value, downloaded, total)) if progress else aligner_reference
-        try:
-            import torch
-            from qwen_asr import Qwen3ASRModel
-        except ImportError as exc:
-            raise RuntimeError("qwen-asr and PyTorch are required. Install asr-worker/requirements.txt.") from exc
-        requested_device = device.lower()
-        if requested_device == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError("CUDA was requested, but the installed PyTorch build cannot use CUDA.")
-        actual_device = "cuda:0" if requested_device in {"auto", "cuda"} and torch.cuda.is_available() else "cpu"
-        dtype_map = {
-            "float32": torch.float32,
-            "float16": torch.float16,
-            "bfloat16": torch.bfloat16,
-            "auto": torch.bfloat16 if actual_device.startswith("cuda") else torch.float32,
-        }
-        dtype = dtype_map.get(precision.lower(), dtype_map["auto"])
-        kwargs: dict[str, Any] = {"device_map": actual_device, "dtype": dtype, "max_inference_batch_size": 1}
-        kwargs["forced_aligner"] = aligner_local_path
-        kwargs["forced_aligner_kwargs"] = {"device_map": actual_device, "dtype": dtype}
         loading_finished = threading.Event()
         loading_thread: threading.Thread | None = None
+        loading_name = "Qwen3-ASR + ForcedAligner"
+        loading_started = time.monotonic()
         if progress:
-            loading_name = f"Qwen3-ASR + ForcedAligner ({actual_device})"
-            loading_started = time.monotonic()
             progress("loading", loading_name, 0.0, 0, 0)
 
             def report_loading_elapsed() -> None:
@@ -66,6 +47,28 @@ class QwenAsrEngine:
             loading_thread = threading.Thread(target=report_loading_elapsed, name="asr-model-loading-progress", daemon=True)
             loading_thread.start()
         try:
+            try:
+                import torch
+                from qwen_asr import Qwen3ASRModel
+            except ImportError as exc:
+                raise RuntimeError("qwen-asr and PyTorch are required. Install asr-worker/requirements.txt.") from exc
+            requested_device = device.lower()
+            if requested_device == "cuda" and not torch.cuda.is_available():
+                raise RuntimeError("CUDA was requested, but the installed PyTorch build cannot use CUDA.")
+            actual_device = "cuda:0" if requested_device in {"auto", "cuda"} and torch.cuda.is_available() else "cpu"
+            dtype_map = {
+                "float32": torch.float32,
+                "float16": torch.float16,
+                "bfloat16": torch.bfloat16,
+                "auto": torch.bfloat16 if actual_device.startswith("cuda") else torch.float32,
+            }
+            dtype = dtype_map.get(precision.lower(), dtype_map["auto"])
+            kwargs: dict[str, Any] = {"device_map": actual_device, "dtype": dtype, "max_inference_batch_size": 1}
+            kwargs["forced_aligner"] = aligner_local_path
+            kwargs["forced_aligner_kwargs"] = {"device_map": actual_device, "dtype": dtype}
+            loading_name = f"Qwen3-ASR + ForcedAligner ({actual_device})"
+            if progress:
+                progress("loading", loading_name, time.monotonic() - loading_started, 0, 0)
             self.model = Qwen3ASRModel.from_pretrained(model_local_path, **kwargs)
         finally:
             loading_finished.set()

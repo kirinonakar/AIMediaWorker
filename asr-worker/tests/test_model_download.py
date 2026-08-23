@@ -22,6 +22,25 @@ class ModelDownloadTests(unittest.TestCase):
         self.assertEqual(folder, result)
         self.assertEqual([(1.0, 0, 0)], updates)
 
+    def test_complete_cached_snapshot_is_used_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            cache = Path(folder)
+            repository = cache / "models--Test--Model"
+            snapshot = repository / "snapshots" / "revision-1"
+            snapshot.mkdir(parents=True)
+            (repository / "refs").mkdir()
+            (repository / "blobs").mkdir()
+            (repository / "refs" / "main").write_text("revision-1", encoding="utf-8")
+            (snapshot / "config.json").write_text("{}", encoding="utf-8")
+            (snapshot / "model.safetensors").write_bytes(b"weights")
+            updates: list[tuple[float, int, int]] = []
+
+            with patch.object(model_download, "MODEL_CACHE_DIR", cache):
+                result = model_download.download_model("Test/Model", lambda *value: updates.append(value))
+
+        self.assertEqual(str(snapshot), result)
+        self.assertEqual(1.0, updates[-1][0])
+
     def test_remote_download_reports_byte_progress(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             cache = Path(folder)
@@ -53,7 +72,7 @@ class ModelDownloadTests(unittest.TestCase):
 
         self.assertEqual(str(snapshot), result)
         self.assertEqual((1.0, 100, 100), updates[-1])
-        self.assertTrue(any(0 < value[0] < 1 for value in updates))
+        self.assertTrue(any(0 < value[0] < 0.99 for value in updates))
 
 
 if __name__ == "__main__":
