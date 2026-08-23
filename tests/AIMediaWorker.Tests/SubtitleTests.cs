@@ -68,8 +68,20 @@ public sealed class SubtitleTests
         var content = AssWriter.Write(track);
         var parsed = AssParser.Parse(content);
 
+        Assert.Contains("Style: Default,Noto Sans CJK JP,", content);
         Assert.Contains("자동 생성된 한글 자막입니다.", content);
         Assert.Equal("자동 생성된 한글 자막입니다.", parsed.ActiveTrack!.Cues[0].Text);
+    }
+
+    [Fact]
+    public void AssOverlayUsesConfiguredFontFamily()
+    {
+        var track = new SubtitleTrack { Format = "ass" };
+
+        var content = AssWriter.Write(track, "Noto Sans KR");
+
+        Assert.Contains("Style: Default,Noto Sans KR,", content);
+        Assert.DoesNotContain("Style: Default,Noto Sans CJK JP,", content);
     }
 
     [Fact]

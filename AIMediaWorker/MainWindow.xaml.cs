@@ -627,7 +627,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var targetFormat = System.IO.Path.GetExtension(path).ToLowerInvariant() switch { ".vtt" => "vtt", ".ass" or ".ssa" => "ass", _ => "srt" };
-            var text = targetFormat switch { "vtt" => VttWriter.Write(track), "ass" => AssWriter.Write(track), _ => SrtWriter.Write(track) };
+            var text = targetFormat switch { "vtt" => VttWriter.Write(track), "ass" => AssWriter.Write(track, _settings.Subtitle.FontFamily), _ => SrtWriter.Write(track) };
             var convertedWithStyleLoss = !track.Format.Equals(targetFormat, StringComparison.OrdinalIgnoreCase) && track.Cues.Any(cue => !string.IsNullOrWhiteSpace(cue.Style));
             await File.WriteAllTextAsync(path, text, ResolveSubtitleEncoding());
             track.Format = targetFormat;
@@ -1641,6 +1641,7 @@ public sealed partial class MainWindow : Window
                     _playback.ConfigurePreferredLanguages(settings.Playback.DefaultAudioLanguage, settings.Playback.DefaultSubtitleLanguage);
                     _playback.ConfigureSubtitleStyle(settings.Subtitle.FontFamily, settings.Subtitle.FontSize, settings.Subtitle.Color, settings.Subtitle.Background, settings.Subtitle.Outline, settings.Subtitle.BottomMargin);
                 });
+                ScheduleSubtitleOverlaySync();
             };
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Activate();
@@ -1949,7 +1950,7 @@ public sealed partial class MainWindow : Window
             await Task.Delay(150, cancellationToken);
             var track = _document.ActiveTrack;
             if (track is null) return;
-            var content = AssWriter.Write(track);
+            var content = AssWriter.Write(track, _settings.Subtitle.FontFamily);
             await File.WriteAllTextAsync(_editorOverlayPath, content, new System.Text.UTF8Encoding(false), cancellationToken);
             if (!cancellationToken.IsCancellationRequested) _playback.UpdateEditorSubtitle(_editorOverlayPath);
         }

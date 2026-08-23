@@ -64,8 +64,12 @@ public sealed class SettingsService
     private static AppSettings Normalize(AppSettings? settings)
     {
         settings ??= new AppSettings();
+        var loadedSchemaVersion = settings.SchemaVersion;
         settings.Playback ??= new PlaybackSettings();
         settings.Subtitle ??= new SubtitleSettings();
+        if (loadedSchemaVersion < 3 && string.Equals(settings.Subtitle.FontFamily?.Trim(), "Segoe UI", StringComparison.OrdinalIgnoreCase))
+            settings.Subtitle.FontFamily = SubtitleSettings.DefaultFontFamily;
+        settings.Subtitle.FontFamily = string.IsNullOrWhiteSpace(settings.Subtitle.FontFamily) ? SubtitleSettings.DefaultFontFamily : settings.Subtitle.FontFamily.Trim();
         settings.Subtitle.Segmentation ??= new SegmentationSettings();
         settings.Asr ??= new AsrSettings();
         settings.Asr.ModelPath = string.IsNullOrWhiteSpace(settings.Asr.ModelPath) ? AsrSettings.DefaultModelId : settings.Asr.ModelPath.Trim();
@@ -94,6 +98,7 @@ public sealed class SettingsService
         settings.Window.Height = Math.Clamp(settings.Window.Height, 420, 4320);
         settings.Window.RightPanelWidth = Math.Clamp(settings.Window.RightPanelWidth, 240, 1200);
         settings.Window.BottomPanelHeight = Math.Clamp(settings.Window.BottomPanelHeight, 100, 800);
+        settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
         return settings;
     }
 }

@@ -11,7 +11,8 @@ public enum ThinkingLevel { Default, Off, Low, Medium, High, XHigh, Max }
 
 public sealed class AppSettings
 {
-    public int SchemaVersion { get; set; } = 2;
+    public const int CurrentSchemaVersion = 3;
+    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public PlaybackSettings Playback { get; set; } = new();
     public SubtitleSettings Subtitle { get; set; } = new();
     public AsrSettings Asr { get; set; } = new();
@@ -38,7 +39,8 @@ public sealed class PlaybackSettings
 
 public sealed class SubtitleSettings
 {
-    public string FontFamily { get; set; } = "Segoe UI";
+    public const string DefaultFontFamily = "Noto Sans CJK JP";
+    public string FontFamily { get; set; } = DefaultFontFamily;
     public double FontSize { get; set; } = 42;
     public string Color { get; set; } = "#FFFFFFFF";
     public string Background { get; set; } = "#80000000";

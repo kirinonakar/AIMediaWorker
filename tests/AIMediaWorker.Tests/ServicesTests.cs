@@ -96,6 +96,19 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsMigrateLegacyDefaultSubtitleFont()
+    {
+        var path = Path.Combine(_folder, "settings-old-subtitle-font.json");
+        Directory.CreateDirectory(_folder);
+        await File.WriteAllTextAsync(path, "{\"SchemaVersion\":2,\"Subtitle\":{\"FontFamily\":\"Segoe UI\"}}");
+
+        var loaded = await new SettingsService(path).LoadAsync();
+
+        Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.SchemaVersion);
+        Assert.Equal(SubtitleSettings.DefaultFontFamily, loaded.Subtitle.FontFamily);
+    }
+
+    [Fact]
     public async Task RecentMediaDeduplicatesAndPersists()
     {
         var path = Path.Combine(_folder, "history.json");

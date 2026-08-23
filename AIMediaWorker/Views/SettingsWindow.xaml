@@ -34,7 +34,7 @@
                 <TabViewItem x:Uid="SubtitleExpander" Header="Subtitle" IsClosable="False"><ScrollViewer><StackPanel Spacing="12" Padding="0,8,0,8">
             <Expander x:Uid="SubtitleExpander" Header="Subtitle" IsExpanded="True"><Grid Padding="8" ColumnSpacing="12" RowSpacing="8">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                <TextBlock x:Uid="FontSetting" Text="Font" VerticalAlignment="Center" /><TextBox x:Name="SubtitleFontBox" Grid.Column="1" />
+                <TextBlock x:Uid="FontSetting" Text="Font" VerticalAlignment="Center" /><TextBox x:Name="SubtitleFontBox" Grid.Column="1" PlaceholderText="Noto Sans CJK JP" />
                 <TextBlock x:Uid="FontSizeSetting" Grid.Row="1" Text="Font size" VerticalAlignment="Center" /><NumberBox x:Name="SubtitleSizeBox" Grid.Row="1" Grid.Column="1" Minimum="8" Maximum="144" />
                 <TextBlock x:Uid="MaxCueDurationSetting" Grid.Row="2" Text="Maximum cue duration" VerticalAlignment="Center" /><NumberBox x:Name="CueDurationBox" Grid.Row="2" Grid.Column="1" Minimum="1" Maximum="20" />
             </Grid></Expander>
