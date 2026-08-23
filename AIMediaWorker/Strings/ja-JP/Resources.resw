@@ -34,4 +34,7 @@
   <data name="ProviderNoModelsMessage"><value>プロバイダーからモデルが返されませんでした。モデルIDを直接入力できます。</value></data><data name="ProviderModelsTitle"><value>{0}モデル</value></data><data name="UseSelectedButton"><value>選択項目を使用</value></data><data name="CachedModelsTitle"><value>キャッシュ済みモデル</value></data><data name="ModelSyncCachedMessage"><value>同期失敗: {0}&#xA;キャッシュ済みモデルを選ぶか、閉じて直接入力してください。</value></data><data name="ModelSyncFailedTitle"><value>モデル同期に失敗しました</value></data><data name="ModelSyncManualMessage"><value>{0} モデルIDを直接入力してください。</value></data><data name="CueDurationValidationMessage"><value>字幕の最小時間は最大時間を超えられません。</value></data><data name="PythonRequiredMessage"><value>Python実行ファイルが必要です。</value></data><data name="SettingsErrorTitle"><value>設定エラー</value></data>
   <data name="DeleteWebDavServerTitle"><value>WebDAVサーバーを削除</value></data><data name="DeleteWebDavServerMessage"><value>“{0}”サーバーと保存済み資格情報を削除しますか？</value></data><data name="DeleteButtonText"><value>削除</value></data>
   <data name="ClearApiKeyButton.Content"><value>保存済みキーを削除</value></data><data name="CredentialRemovedTitle"><value>資格情報を削除しました</value></data><data name="CredentialRemovedMessage"><value>{0}の保存済みキーを削除しました。</value></data>
+  <data name="ShowRightPanel.Text"><value>サイドパネルを表示</value></data>
+  <data name="ShowBottomPanel.Text"><value>タイムラインパネルを表示</value></data>
+  <data name="SubtitleVisibility.Text"><value>字幕を表示 (V)</value></data>
 </root>

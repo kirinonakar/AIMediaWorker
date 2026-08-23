@@ -31,6 +31,7 @@ public sealed partial class SettingsWindow : Window
     public SettingsWindow()
     {
         InitializeComponent();
+        Title = L("SettingsWindow.Title");
         var handle = WindowNative.GetWindowHandle(this);
         AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle))?.Resize(new SizeInt32(760, 820));
     }

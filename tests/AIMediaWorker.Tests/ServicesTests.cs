@@ -29,10 +29,21 @@ public sealed class ServicesTests : IDisposable
         var settings = new AppSettings();
         settings.Asr.Language = "ko";
         settings.Playback.DefaultVolume = 77;
+        settings.Window.HasPlacement = true;
+        settings.Window.X = 120;
+        settings.Window.Y = 80;
+        settings.Window.Width = 1440;
+        settings.Window.Height = 900;
+        settings.Window.IsMaximized = true;
+        settings.Window.RightPanelWidth = 440;
+        settings.Window.BottomPanelHeight = 220;
         await service.SaveAsync(settings);
         var loaded = await service.LoadAsync();
         Assert.Equal("ko", loaded.Asr.Language);
         Assert.Equal(77, loaded.Playback.DefaultVolume);
+        Assert.True(loaded.Window.HasPlacement);
+        Assert.Equal((120, 80, 1440, 900, true), (loaded.Window.X, loaded.Window.Y, loaded.Window.Width, loaded.Window.Height, loaded.Window.IsMaximized));
+        Assert.Equal((440, 220), (loaded.Window.RightPanelWidth, loaded.Window.BottomPanelHeight));
         await File.WriteAllTextAsync(path, "{ definitely broken");
         var recovered = await service.LoadAsync();
         Assert.Equal("auto", recovered.Asr.Language);
@@ -44,13 +55,17 @@ public sealed class ServicesTests : IDisposable
     {
         var path = Path.Combine(_folder, "settings-null-sections.json");
         Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(path, "{\"Playback\":null,\"General\":{\"Shortcuts\":null},\"Network\":null}");
+        await File.WriteAllTextAsync(path, "{\"Playback\":null,\"General\":{\"Shortcuts\":null},\"Network\":null,\"Window\":null}");
 
         var loaded = await new SettingsService(path).LoadAsync();
 
         Assert.NotNull(loaded.Playback);
         Assert.NotNull(loaded.Network);
+        Assert.NotNull(loaded.Window);
+        Assert.Equal(1280, loaded.Window.Width);
         Assert.Equal("Ctrl+Shift+S", loaded.General.Shortcuts[ShortcutActions.SaveSubtitleAs]);
+        Assert.Equal("Enter", loaded.General.Shortcuts[ShortcutActions.Fullscreen]);
+        Assert.Equal("V", loaded.General.Shortcuts[ShortcutActions.ToggleSubtitles]);
     }
 
     [Fact]

@@ -43,6 +43,11 @@ Last updated: 2026-08-23
 - Python segmenter tests that protect CJK text from truncation and enforce cancellation; C# shortcut/protocol regression tests.
 - Complete setup/usage/troubleshooting README.
 - Self-contained Windows App SDK deployment so the unpackaged executable starts without a separately registered Windows App Runtime.
+- Drag-and-drop and multi-file playlist opening, sibling-folder playlists, previous/next, repeat modes, deferred exact seeking, subtitle visibility toggle, and command-line autoplay.
+- Enter fullscreen toggle, Escape restore, frame-free fullscreen, edge-hover menu/controls/side panel, and independently hideable timeline and side panels.
+- Main side-panel Explorer, Playlist, WebDAV, and Subtitles tabs; connected WebDAV listings mirror into the main panel while server registration remains available in the WebDAV manager.
+- Persistent main-window position, size, maximized state, panel visibility, and user-resizable side/timeline panel dimensions with current-display bounds correction.
+- Unpackaged secondary-window localization crash fixed for WebDAV, Preferences, and Camera windows; all three activate together in the runtime smoke check without a new error log.
 
 ## Remaining Environment Validation
 
@@ -51,7 +56,7 @@ Last updated: 2026-08-23
 
 ## Known Issues
 
-- The current machine does not have verified `mpv-2.dll`, Qwen model weights, CUDA, a WebDAV test server, provider API keys or known camera/microphone fixtures, so those paths require environment-dependent manual validation.
+- The current machine has a verified x64 `mpv-2.dll` and passes local generated-video playback startup. Qwen model weights, CUDA, a WebDAV test server, provider API keys and known camera/microphone fixtures still require environment-dependent validation.
 - Qwen streaming inference is officially limited to the vLLM backend. The transformer worker therefore uses bounded rolling-window transcription for low-latency partial captions and reserves forced alignment for offline mode.
 - RTX Video Super Resolution activation is driver/profile controlled for the D3D11 video path; the application can detect compatible-class hardware but cannot independently prove the driver's per-frame enhancement state.
 - A language change fully applies after application restart; newly opened views use the updated resource qualifier immediately.

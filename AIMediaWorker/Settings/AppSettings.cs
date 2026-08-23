@@ -18,6 +18,7 @@ public sealed class AppSettings
     public CaptureSettings Capture { get; set; } = new();
     public LlmSettings Llm { get; set; } = new();
     public GeneralSettings General { get; set; } = new();
+    public WindowLayoutSettings Window { get; set; } = new();
 }
 
 public sealed class PlaybackSettings
@@ -114,4 +115,18 @@ public sealed class GeneralSettings
     public int RecentMediaCount { get; set; } = 20;
     public bool ResumePlayback { get; set; } = true;
     public Dictionary<string, string> Shortcuts { get; set; } = ShortcutActions.CreateDefaults();
+}
+
+public sealed class WindowLayoutSettings
+{
+    public bool HasPlacement { get; set; }
+    public int X { get; set; }
+    public int Y { get; set; }
+    public int Width { get; set; } = 1280;
+    public int Height { get; set; } = 820;
+    public bool IsMaximized { get; set; }
+    public bool IsRightPanelVisible { get; set; } = true;
+    public bool IsBottomPanelVisible { get; set; } = true;
+    public double RightPanelWidth { get; set; } = 360;
+    public double BottomPanelHeight { get; set; } = 160;
 }

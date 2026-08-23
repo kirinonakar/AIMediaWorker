@@ -7,6 +7,7 @@ namespace AIMediaWorker.Playback;
 public sealed class MpvPlaybackEngine : IPlaybackEngine
 {
     private readonly object _sync = new();
+    private readonly SemaphoreSlim _openLock = new(1, 1);
     private readonly List<MediaTrack> _tracks = [];
     private nint _context;
     private CancellationTokenSource? _eventLoopCancellation;
@@ -23,6 +24,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public double Volume { get; private set; } = 100;
     public double Rate { get; private set; } = 1;
     public bool IsMuted { get; private set; }
+    public bool AreSubtitlesVisible { get; private set; } = true;
     public IReadOnlyList<MediaTrack> Tracks { get { lock (_sync) return new ReadOnlyCollection<MediaTrack>(_tracks.ToArray()); } }
     public string? DecoderDescription { get; private set; }
     public string? LibraryVersion { get; private set; }
@@ -46,6 +48,8 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             SetOption("terminal", "no");
             SetOption("input-default-bindings", "no");
             SetOption("keep-open", "yes");
+            SetOption("idle", "yes");
+            TrySetOption("force-window", "immediate");
             SetOption("vo", string.IsNullOrWhiteSpace(renderer) ? "gpu-next" : renderer);
             SetOption("gpu-api", "d3d11");
             SetOption("hwdec", hardwareDecoder switch
@@ -58,8 +62,12 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             SetOption("sub-auto", "fuzzy");
             SetOption("sub-fonts-dir", ".");
             SetOption("audio-client-name", "AIMediaWorker");
+            TrySetOption("audio-buffer", "0.2");
+            TrySetOption("audio-pitch-correction", "yes");
             TrySetOption("cache", "yes");
             TrySetOption("cache-secs", "20");
+            TrySetOption("demuxer-readahead-secs", "20");
+            TrySetOption("cache-pause", "no");
             TrySetOption("stream-lavf-o", "reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=5");
             MpvInterop.EnsureSuccess(MpvInterop.mpv_initialize(_context), "initialize libmpv");
             LibraryVersion = GetString("mpv-version");
@@ -88,25 +96,34 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         return Task.CompletedTask;
     }
 
-    public Task OpenAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, CancellationToken cancellationToken = default)
+    public async Task OpenAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, CancellationToken cancellationToken = default)
     {
         EnsureAvailable();
         if (string.IsNullOrWhiteSpace(source)) throw new ArgumentException("A media source is required.", nameof(source));
-        cancellationToken.ThrowIfCancellationRequested();
-        SetState(PlaybackState.Loading);
-        CurrentSource = source;
-        Position = TimeSpan.Zero;
-        Duration = TimeSpan.Zero;
-        _editorSubtitlePath = null;
-        if (httpHeaders is null || httpHeaders.Count == 0) SetProperty("http-header-fields", string.Empty);
-        else
+        await _openLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            foreach (var header in httpHeaders)
-                if (header.Key.Any(c => c is '\r' or '\n' or ':' or ',') || header.Value.Any(c => c is '\r' or '\n' or ',')) throw new ArgumentException("Invalid HTTP header.", nameof(httpHeaders));
-            SetProperty("http-header-fields", string.Join(',', httpHeaders.Select(header => $"{header.Key}: {header.Value}")));
+            cancellationToken.ThrowIfCancellationRequested();
+            SetState(PlaybackState.Loading);
+            CurrentSource = source;
+            Position = TimeSpan.Zero;
+            Duration = TimeSpan.Zero;
+            _editorSubtitlePath = null;
+            await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (httpHeaders is null || httpHeaders.Count == 0) SetProperty("http-header-fields", string.Empty);
+                else
+                {
+                    foreach (var header in httpHeaders)
+                        if (header.Key.Any(c => c is '\r' or '\n' or ':' or ',') || header.Value.Any(c => c is '\r' or '\n' or ',')) throw new ArgumentException("Invalid HTTP header.", nameof(httpHeaders));
+                    SetProperty("http-header-fields", string.Join(',', httpHeaders.Select(header => $"{header.Key}: {header.Value}")));
+                }
+                Command("loadfile", source, "replace");
+                SetProperty("pause", "no");
+            }, cancellationToken).ConfigureAwait(false);
         }
-        Command("loadfile", source, "replace");
-        return Task.CompletedTask;
+        finally { _openLock.Release(); }
     }
 
     public void Play() { SetProperty("pause", "no"); SetState(PlaybackState.Playing); }
@@ -118,6 +135,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public void SeekRelative(TimeSpan offset) => Command("seek", offset.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture), "relative");
     public void SetVolume(double volume) { Volume = Math.Clamp(volume, 0, 130); SetProperty("volume", Volume.ToString("0.##", CultureInfo.InvariantCulture)); }
     public void SetMute(bool muted) { IsMuted = muted; SetProperty("mute", muted ? "yes" : "no"); }
+    public void SetSubtitleVisibility(bool visible) { AreSubtitlesVisible = visible; SetProperty("sub-visibility", visible ? "yes" : "no"); }
     public void SetRate(double rate) { Rate = Math.Clamp(rate, 0.25, 4); SetProperty("speed", Rate.ToString("0.###", CultureInfo.InvariantCulture)); }
     public void FrameStep(bool backwards = false) => Command(backwards ? "frame-back-step" : "frame-step");
 
@@ -218,17 +236,22 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 SetState(GetBool("pause") ? PlaybackState.Paused : PlaybackState.Playing);
                 break;
             case MpvInterop.MpvEventId.EndFile:
+                var endedNaturally = true;
                 if (mpvEvent.Data != 0)
                 {
                     var end = Marshal.PtrToStructure<MpvInterop.MpvEventEndFile>(mpvEvent.Data);
+                    endedNaturally = end.Reason == 0;
                     if (end.Error < 0)
                     {
                         var network = CurrentSource is not null && Uri.TryCreate(CurrentSource, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
                         RaiseError(network ? "NETWORK_ERROR" : "PLAYBACK_ERROR", MpvInterop.ErrorString(end.Error));
                     }
                 }
-                SetState(PlaybackState.Ended);
-                MediaEnded?.Invoke(this, EventArgs.Empty);
+                if (endedNaturally)
+                {
+                    SetState(PlaybackState.Ended);
+                    MediaEnded?.Invoke(this, EventArgs.Empty);
+                }
                 break;
             case MpvInterop.MpvEventId.VideoReconfig:
             case MpvInterop.MpvEventId.AudioReconfig:

@@ -30,6 +30,8 @@ using Windows.Storage;
 using WinRT.Interop;
 using Windows.ApplicationModel.DataTransfer;
 using System.Net;
+using System.Runtime.InteropServices;
+using Microsoft.UI.Dispatching;
 
 namespace AIMediaWorker;
 
@@ -44,7 +46,12 @@ public sealed partial class MainWindow : Window
     private NativeVideoHost? _videoHost;
     private AppWindow? _appWindow;
     private bool _updatingPosition;
+    private bool _positionSliderDragging;
     private bool _isFullscreen;
+    private bool _rightPanelVisible = true;
+    private bool _bottomPanelVisible = true;
+    private double _rightPanelWidth = 360;
+    private double _bottomPanelHeight = 160;
     private bool _initialized;
     private CameraWindow? _cameraWindow;
     private SettingsWindow? _settingsWindow;
@@ -68,22 +75,78 @@ public sealed partial class MainWindow : Window
     private TimeSpan? _abStart;
     private CancellationTokenSource? _overlaySyncCancellation;
     private bool _subtitleEditorHasFocus;
+    private readonly List<string> _playlist = [];
+    private int _playlistIndex = -1;
+    private RepeatMode _repeatMode;
+    private string _browserDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+    private Guid? _webDavPanelServerId;
+    private DispatcherQueueTimer? _fullscreenHoverTimer;
+    private DateTimeOffset _showFullscreenMenuUntil;
+    private DateTimeOffset _showFullscreenControlsUntil;
+    private DateTimeOffset _showFullscreenRightPanelUntil;
+    private string? _pendingLaunchSource;
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
 
-    public MainWindow()
+    public MainWindow() : this(null) { }
+
+    public MainWindow(string? initialSource)
     {
         InitializeComponent();
+        _pendingLaunchSource = initialSource;
         var handle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
         _appWindow?.Resize(new SizeInt32(1280, 820));
-        if (_appWindow is not null) _appWindow.Closing += OnAppWindowClosing;
+        if (_appWindow is not null) { _appWindow.Closing += OnAppWindowClosing; _appWindow.Changed += OnAppWindowChanged; }
         Closed += OnWindowClosed;
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnRootKeyDown), true);
+        PositionSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPositionSliderPointerPressed), true);
+        PositionSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
+        PositionSlider.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
         _playback.StateChanged += OnPlaybackStateChanged;
         _playback.PositionChanged += OnPlaybackPositionChanged;
         _playback.TracksChanged += OnTracksChanged;
         _playback.ErrorOccurred += OnPlaybackError;
+        _playback.MediaEnded += OnMediaEnded;
+        _fullscreenHoverTimer = DispatcherQueue.CreateTimer();
+        _fullscreenHoverTimer.Interval = TimeSpan.FromMilliseconds(100);
+        _fullscreenHoverTimer.Tick += OnFullscreenHoverTick;
         BindDocument(new SubtitleDocument());
+    }
+
+    public void ApplySavedWindowPlacement(WindowLayoutSettings layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        _rightPanelVisible = layout.IsRightPanelVisible;
+        _bottomPanelVisible = layout.IsBottomPanelVisible;
+        _rightPanelWidth = Math.Clamp(layout.RightPanelWidth, 240, 1200);
+        _bottomPanelHeight = Math.Clamp(layout.BottomPanelHeight, 100, 800);
+        ApplyPanelVisibility();
+        if (_appWindow is null || !layout.HasPlacement) return;
+        var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
+        var workArea = display.WorkArea;
+        var width = Math.Clamp(layout.Width, 640, Math.Max(640, workArea.Width));
+        var height = Math.Clamp(layout.Height, 420, Math.Max(420, workArea.Height));
+        var x = Math.Clamp(layout.X, workArea.X - width + 120, workArea.X + workArea.Width - 120);
+        var y = Math.Clamp(layout.Y, workArea.Y, workArea.Y + workArea.Height - 80);
+        _appWindow.MoveAndResize(new RectInt32(x, y, width, height));
+        if (layout.IsMaximized && _appWindow.Presenter is OverlappedPresenter presenter) presenter.Maximize();
+    }
+
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        if (!_initialized || _isFullscreen || sender.Presenter is not OverlappedPresenter presenter || presenter.State == OverlappedPresenterState.Minimized) return;
+        CaptureWindowPlacement(sender, presenter);
+    }
+
+    private void CaptureWindowPlacement(AppWindow window, OverlappedPresenter presenter)
+    {
+        _settings.Window.IsMaximized = presenter.State == OverlappedPresenterState.Maximized;
+        if (presenter.State != OverlappedPresenterState.Restored) return;
+        _settings.Window.HasPlacement = true;
+        _settings.Window.X = window.Position.X;
+        _settings.Window.Y = window.Position.Y;
+        _settings.Window.Width = window.Size.Width;
+        _settings.Window.Height = window.Size.Height;
     }
 
     private async void OnRootLoaded(object sender, RoutedEventArgs e)
@@ -93,6 +156,12 @@ public sealed partial class MainWindow : Window
         try
         {
             _settings = await SettingsService.CreateDefault().LoadAsync();
+            _rightPanelVisible = _settings.Window.IsRightPanelVisible;
+            _bottomPanelVisible = _settings.Window.IsBottomPanelVisible;
+            _rightPanelWidth = Math.Clamp(_settings.Window.RightPanelWidth, 240, 1200);
+            _bottomPanelHeight = Math.Clamp(_settings.Window.BottomPanelHeight, 100, 800);
+            ClampPanelSizesToAvailable();
+            ApplyPanelVisibility();
             await _historyService.LoadAsync();
             RebuildRecentMenu();
             RebuildFavoritesMenu();
@@ -108,18 +177,35 @@ public sealed partial class MainWindow : Window
             }
             RateCombo.ItemsSource = new[] { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0 };
             RateCombo.SelectedItem = RateCombo.Items.Cast<double>().OrderBy(value => Math.Abs(value - _settings.Playback.PlaybackRate)).First();
+            SeekBackButton.Content = $"−{_settings.Playback.SeekIntervalSeconds:0.#}s";
+            SeekForwardButton.Content = $"+{_settings.Playback.SeekIntervalSeconds:0.#}s";
+            await RefreshBrowserAsync(_browserDirectory);
+            UpdatePlaylistButtons();
             StatusText.Text = _playback.IsAvailable ? L("StatusLibmpvReady") : L("StatusPlaybackUnavailable");
+            if (_playback.IsAvailable && _pendingLaunchSource is { Length: > 0 } launchSource)
+            {
+                _pendingLaunchSource = null;
+                await OpenMediaAsync(launchSource);
+            }
         }
         catch (Exception exception) { StatusText.Text = exception.Message; }
     }
 
     private async void OnOpenMediaClick(object sender, RoutedEventArgs e)
     {
-        var picker = new FileOpenPicker();
-        picker.FileTypeFilter.Add("*");
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        var file = await picker.PickSingleFileAsync();
-        if (file is not null) await OpenMediaAsync(file.Path);
+        try
+        {
+            var picker = new FileOpenPicker();
+            picker.FileTypeFilter.Add("*");
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var files = await picker.PickMultipleFilesAsync();
+            if (files.Count > 0) await OpenFilesAsPlaylistAsync(files.Select(file => file.Path));
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "file-picker", "OPEN_MEDIA_PICKER_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
+        }
     }
 
     private async void OnOpenUrlClick(object sender, RoutedEventArgs e)
@@ -135,11 +221,52 @@ public sealed partial class MainWindow : Window
         await OpenMediaAsync(uri.AbsoluteUri);
     }
 
-    private async Task OpenMediaAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, IMediaSource? mediaSource = null)
+    private void OnRootDragOver(object sender, DragEventArgs e)
+    {
+        if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            e.AcceptedOperation = DataPackageOperation.Copy;
+            e.DragUIOverride.Caption = L("OpenMedia.Text");
+            e.DragUIOverride.IsCaptionVisible = true;
+        }
+        else if (e.DataView.Contains(StandardDataFormats.Text)) e.AcceptedOperation = DataPackageOperation.Link;
+    }
+
+    private async void OnRootDrop(object sender, DragEventArgs e)
+    {
+        try
+        {
+            if (e.DataView.Contains(StandardDataFormats.StorageItems))
+            {
+                var items = await e.DataView.GetStorageItemsAsync();
+                await OpenFilesAsPlaylistAsync(items.OfType<StorageFile>().Select(file => file.Path));
+                return;
+            }
+            if (e.DataView.Contains(StandardDataFormats.Text))
+            {
+                var value = (await e.DataView.GetTextAsync()).Trim();
+                if (File.Exists(value)) await OpenFilesAsPlaylistAsync([value]);
+                else if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") await OpenMediaAsync(uri.AbsoluteUri);
+            }
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "drag-drop", "DROP_OPEN_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
+        }
+    }
+
+    private async Task OpenMediaAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, IMediaSource? mediaSource = null, bool preservePlaylist = false)
     {
         if (!await ConfirmDiscardChangesAsync(L("ActionOpenMedia"))) return;
         try
         {
+            if (!preservePlaylist)
+            {
+                _playlist.Clear();
+                if (File.Exists(source)) { _playlist.Add(Path.GetFullPath(source)); _playlistIndex = 0; }
+                else _playlistIndex = -1;
+            }
             RememberCurrentPosition();
             await _playback.OpenAsync(source, httpHeaders);
             _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
@@ -152,17 +279,82 @@ public sealed partial class MainWindow : Window
             VideoStatusText.Visibility = Visibility.Collapsed;
             if (httpHeaders is null || httpHeaders.Count == 0) _ = GenerateWaveformAsync(source);
             else { _waveform = WaveformData.Empty; DrawWaveform(); }
+            UpdatePlaylistButtons();
+            if (!preservePlaylist && File.Exists(source)) _ = PopulateSiblingPlaylistAsync(source);
         }
         catch (Exception exception) { await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message); }
     }
 
+    private async Task OpenFilesAsPlaylistAsync(IEnumerable<string> paths)
+    {
+        var files = paths.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (files.Length == 0) return;
+        if (files.Length == 1 && IsSubtitlePath(files[0])) { await LoadSubtitleFromPathAsync(files[0]); return; }
+        _playlist.Clear();
+        _playlist.AddRange(files.Where(path => !IsSubtitlePath(path)));
+        if (_playlist.Count == 0) return;
+        _playlistIndex = 0;
+        await OpenMediaAsync(_playlist[0], preservePlaylist: true);
+    }
+
+    private static bool IsSubtitlePath(string path) => Path.GetExtension(path).ToLowerInvariant() is ".srt" or ".vtt" or ".ass" or ".ssa";
+
+    private async Task PopulateSiblingPlaylistAsync(string currentPath)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(currentPath);
+            var directory = Path.GetDirectoryName(fullPath);
+            if (directory is null) return;
+            var siblings = await Task.Run(() => Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase).Take(5000).Select(Path.GetFullPath).ToArray());
+            if (!string.Equals(_playback.CurrentSource, fullPath, StringComparison.OrdinalIgnoreCase)) return;
+            var index = Array.FindIndex(siblings, path => path.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
+            if (index < 0) return;
+            _playlist.Clear(); _playlist.AddRange(siblings); _playlistIndex = index; UpdatePlaylistButtons();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+    }
+
     private void OnPlayPauseClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.TogglePause);
     private void OnStopClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.Stop);
+    private async void OnPreviousMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(-1);
+    private async void OnNextMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(1);
     private void OnFrameStepClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.FrameStep());
     private void OnSeekBackClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.SeekRelative(TimeSpan.FromSeconds(-_settings.Playback.SeekIntervalSeconds)));
     private void OnSeekForwardClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.SeekRelative(TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds)));
     private void OnMuteClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.SetMute(!_playback.IsMuted));
+    private void OnToggleSubtitleVisibilityClick(object sender, RoutedEventArgs e)
+    {
+        var visible = SubtitleVisibilityMenuItem.IsChecked;
+        TryPlayback(() => _playback.SetSubtitleVisibility(visible));
+        SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
+    }
     private void OnRateChanged(object sender, SelectionChangedEventArgs e) { if (RateCombo.SelectedItem is double rate && _playback.IsAvailable) TryPlayback(() => _playback.SetRate(rate)); }
+    private void OnRepeatClick(object sender, RoutedEventArgs e)
+    {
+        _repeatMode = _repeatMode switch { RepeatMode.Off => RepeatMode.One, RepeatMode.One => RepeatMode.All, _ => RepeatMode.Off };
+        RepeatButton.Content = _repeatMode switch { RepeatMode.One => "↻1", RepeatMode.All => "↻∞", _ => "↪" };
+        ToolTipService.SetToolTip(RepeatButton, _repeatMode switch { RepeatMode.One => "Repeat current media", RepeatMode.All => "Repeat playlist", _ => "Repeat off" });
+        UpdatePlaylistButtons();
+    }
+
+    private async Task OpenAdjacentMediaAsync(int direction)
+    {
+        if (_playlist.Count == 0) return;
+        var next = _playlistIndex + Math.Sign(direction);
+        if (_repeatMode == RepeatMode.All) next = (next + _playlist.Count) % _playlist.Count;
+        if (next < 0 || next >= _playlist.Count) return;
+        _playlistIndex = next;
+        await OpenMediaAsync(_playlist[_playlistIndex], preservePlaylist: true);
+    }
+
+    private void UpdatePlaylistButtons()
+    {
+        PreviousButton.IsEnabled = _playlist.Count > 1 && (_playlistIndex > 0 || _repeatMode == RepeatMode.All);
+        NextButton.IsEnabled = _playlist.Count > 1 && (_playlistIndex < _playlist.Count - 1 || _repeatMode == RepeatMode.All);
+        PlaylistList.ItemsSource = _playlist.Select(path => new PlaylistEntry(path)).ToArray();
+        PlaylistList.SelectedIndex = _playlistIndex;
+    }
     private void OnSetAbStartClick(object sender, RoutedEventArgs e)
     {
         _abStart = _playback.Position;
@@ -184,30 +376,50 @@ public sealed partial class MainWindow : Window
 
     private void OnPositionSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        if (!_updatingPosition && _playback.IsAvailable && PositionSlider.Maximum > 0) TryPlayback(() => _playback.Seek(TimeSpan.FromSeconds(e.NewValue)));
+        if (!_updatingPosition && !_positionSliderDragging && _playback.IsAvailable && PositionSlider.Maximum > 0) TryPlayback(() => _playback.Seek(TimeSpan.FromSeconds(e.NewValue)));
+    }
+
+    private void OnPositionSliderPointerPressed(object sender, PointerRoutedEventArgs e) => _positionSliderDragging = true;
+    private void OnPositionSliderPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_positionSliderDragging) return;
+        _positionSliderDragging = false;
+        if (_playback.IsAvailable) TryPlayback(() => _playback.Seek(TimeSpan.FromSeconds(PositionSlider.Value), true));
     }
 
     private async void OnLoadSubtitleClick(object sender, RoutedEventArgs e)
     {
-        if (!await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"))) return;
-        var picker = new FileOpenPicker();
-        foreach (var extension in new[] { ".srt", ".vtt", ".ass", ".ssa" }) picker.FileTypeFilter.Add(extension);
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        var file = await picker.PickSingleFileAsync();
-        if (file is null) return;
         try
         {
-            var text = await File.ReadAllTextAsync(file.Path, ResolveSubtitleEncoding());
-            var document = System.IO.Path.GetExtension(file.Path).ToLowerInvariant() switch
+            var picker = new FileOpenPicker();
+            foreach (var extension in new[] { ".srt", ".vtt", ".ass", ".ssa" }) picker.FileTypeFilter.Add(extension);
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var file = await picker.PickSingleFileAsync();
+            if (file is not null) await LoadSubtitleFromPathAsync(file.Path);
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "file-picker", "OPEN_SUBTITLE_PICKER_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message);
+        }
+    }
+
+    private async Task LoadSubtitleFromPathAsync(string path)
+    {
+        if (!await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"))) return;
+        try
+        {
+            var text = await File.ReadAllTextAsync(path, ResolveSubtitleEncoding());
+            var document = Path.GetExtension(path).ToLowerInvariant() switch
             {
                 ".srt" => SrtParser.Parse(text),
                 ".vtt" => VttParser.Parse(text),
                 ".ass" or ".ssa" => AssParser.Parse(text),
                 _ => throw new InvalidDataException("Unsupported subtitle format.")
             };
-            document.MarkSaved(file.Path);
+            document.MarkSaved(path);
             BindDocument(document);
-            if (_playback.IsAvailable) _playback.LoadSubtitle(file.Path);
+            if (_playback.IsAvailable) _playback.LoadSubtitle(path);
             StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
         }
         catch (Exception exception) { await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message); }
@@ -221,13 +433,21 @@ public sealed partial class MainWindow : Window
 
     private async Task SaveSubtitleAsAsync()
     {
-        var picker = new FileSavePicker { SuggestedFileName = System.IO.Path.GetFileNameWithoutExtension(_playback.CurrentSource ?? "subtitles") };
-        picker.FileTypeChoices.Add(L("SubRipFileType"), [".srt"]);
-        picker.FileTypeChoices.Add(L("WebVttFileType"), [".vtt"]);
-        picker.FileTypeChoices.Add(L("AssFileType"), [".ass"]);
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        var file = await picker.PickSaveFileAsync();
-        if (file is not null) await SaveSubtitleAsync(file.Path);
+        try
+        {
+            var picker = new FileSavePicker { SuggestedFileName = System.IO.Path.GetFileNameWithoutExtension(_playback.CurrentSource ?? "subtitles") };
+            picker.FileTypeChoices.Add(L("SubRipFileType"), [".srt"]);
+            picker.FileTypeChoices.Add(L("WebVttFileType"), [".vtt"]);
+            picker.FileTypeChoices.Add(L("AssFileType"), [".ass"]);
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var file = await picker.PickSaveFileAsync();
+            if (file is not null) await SaveSubtitleAsync(file.Path);
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "file-picker", "SAVE_SUBTITLE_PICKER_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message);
+        }
     }
 
     private async Task SaveSubtitleAsync(string path)
@@ -514,11 +734,20 @@ public sealed partial class MainWindow : Window
     });
     private void OnPlaybackPositionChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
-        _updatingPosition = true; PositionSlider.Maximum = Math.Max(1, _playback.Duration.TotalSeconds); PositionSlider.Value = Math.Clamp(_playback.Position.TotalSeconds, 0, PositionSlider.Maximum); _updatingPosition = false;
+        _updatingPosition = true; PositionSlider.Maximum = Math.Max(1, _playback.Duration.TotalSeconds); if (!_positionSliderDragging) PositionSlider.Value = Math.Clamp(_playback.Position.TotalSeconds, 0, PositionSlider.Maximum); _updatingPosition = false;
         PositionText.Text = $"{FormatTime(_playback.Position)} / {FormatTime(_playback.Duration)}"; DecoderText.Text = _playback.DecoderDescription ?? string.Empty;
         var cue = _document.FindActiveCue((long)(_playback.Position.TotalMilliseconds * 1000));
         if (!_subtitleEditorHasFocus && cue is not null && !SubtitleList.SelectedItems.Contains(cue)) SubtitleList.SelectedItem = cue;
         DrawTimeline();
+    });
+    private void OnMediaEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(async () =>
+    {
+        if (_repeatMode == RepeatMode.One)
+        {
+            TryPlayback(() => { _playback.Seek(TimeSpan.Zero, true); _playback.Play(); });
+            return;
+        }
+        if (_playlistIndex >= 0 && (_playlistIndex < _playlist.Count - 1 || _repeatMode == RepeatMode.All)) await OpenAdjacentMediaAsync(1);
     });
     private void OnTracksChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
@@ -539,10 +768,19 @@ public sealed partial class MainWindow : Window
         var shift = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         var alt = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         var key = e.Key.ToString();
+        if (e.Key == Windows.System.VirtualKey.Escape && _isFullscreen) { ExitFullscreen(); e.Handled = true; return; }
+        var isTextInput = e.OriginalSource is TextBox or PasswordBox;
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Enter) { ToggleFullscreen(); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.F) { ToggleFullscreen(); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.M) { OnMuteClick(this, new RoutedEventArgs()); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Up) { TryPlayback(() => _playback.SetVolume(_playback.Volume + 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Down) { TryPlayback(() => _playback.SetVolume(_playback.Volume - 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Home) { TryPlayback(() => _playback.Seek(TimeSpan.Zero, true)); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.End) { TryPlayback(() => _playback.Seek(_playback.Duration, true)); e.Handled = true; return; }
         bool Is(string action) => _settings.General.Shortcuts.TryGetValue(action, out var gesture) && ShortcutGesture.Matches(gesture, key, ctrl, shift, alt);
         var save = Is(ShortcutActions.SaveSubtitle);
         var saveAs = Is(ShortcutActions.SaveSubtitleAs);
-        if (e.OriginalSource is TextBox && !save && !saveAs) return;
+        if (isTextInput && !save && !saveAs) return;
         if (saveAs) OnSaveSubtitleAsClick(this, new RoutedEventArgs());
         else if (save) OnSaveSubtitleClick(this, new RoutedEventArgs());
         else if (Is(ShortcutActions.PlayPause)) OnPlayPauseClick(this, new RoutedEventArgs());
@@ -554,6 +792,7 @@ public sealed partial class MainWindow : Window
         else if (Is(ShortcutActions.Redo)) OnRedoClick(this, new RoutedEventArgs());
         else if (Is(ShortcutActions.DeleteCue)) OnDeleteCueClick(this, new RoutedEventArgs());
         else if (Is(ShortcutActions.Fullscreen)) ToggleFullscreen();
+        else if (Is(ShortcutActions.ToggleSubtitles)) { SubtitleVisibilityMenuItem.IsChecked = !_playback.AreSubtitlesVisible; OnToggleSubtitleVisibilityClick(this, new RoutedEventArgs()); }
         else return;
         e.Handled = true;
     }
@@ -565,7 +804,139 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnFullscreenClick(object sender, RoutedEventArgs e) => ToggleFullscreen();
-    private void ToggleFullscreen() { if (_appWindow is null) return; _isFullscreen = !_isFullscreen; _appWindow.SetPresenter(_isFullscreen ? AppWindowPresenterKind.FullScreen : AppWindowPresenterKind.Default); }
+    private void OnVideoDoubleTapped(object sender, DoubleTappedRoutedEventArgs e) { ToggleFullscreen(); e.Handled = true; }
+    private void OnToggleRightPanelClick(object sender, RoutedEventArgs e) { _rightPanelVisible = ShowRightPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
+    private void OnToggleBottomPanelClick(object sender, RoutedEventArgs e) { _bottomPanelVisible = ShowBottomPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
+
+    private void ToggleFullscreen()
+    {
+        if (_isFullscreen) ExitFullscreen(); else EnterFullscreen();
+    }
+
+    private void EnterFullscreen()
+    {
+        if (_appWindow is null || _isFullscreen) return;
+        try
+        {
+            _isFullscreen = true;
+            MainMenuBar.Visibility = Visibility.Collapsed;
+            PlaybackControls.Visibility = Visibility.Collapsed;
+            VisualizationPanel.Visibility = Visibility.Collapsed;
+            StatusPanel.Visibility = Visibility.Collapsed;
+            SubtitlePanel.Visibility = Visibility.Collapsed;
+            RightPanelSplitter.Visibility = Visibility.Collapsed;
+            RightPanelSplitterColumn.Width = new GridLength(0);
+            RightPanelColumn.Width = new GridLength(0);
+            BottomPanelSplitter.Visibility = Visibility.Collapsed;
+            BottomPanelRow.Height = new GridLength(0);
+            VideoPlaceholder.Margin = new Thickness(0);
+            _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+            _fullscreenHoverTimer?.Start();
+        }
+        catch (Exception exception)
+        {
+            _isFullscreen = false;
+            ApplyPanelVisibility();
+            StatusText.Text = exception.Message;
+        }
+    }
+
+    private void ExitFullscreen()
+    {
+        if (_appWindow is null || !_isFullscreen) return;
+        try { _appWindow.SetPresenter(AppWindowPresenterKind.Default); }
+        finally
+        {
+            _fullscreenHoverTimer?.Stop();
+            _isFullscreen = false;
+            MainMenuBar.Visibility = Visibility.Visible;
+            PlaybackControls.Visibility = Visibility.Visible;
+            VideoPlaceholder.Margin = new Thickness(8, 4, 4, 4);
+            ApplyPanelVisibility();
+        }
+    }
+
+    private void ApplyPanelVisibility()
+    {
+        if (_isFullscreen) return;
+        SubtitlePanel.Visibility = _rightPanelVisible ? Visibility.Visible : Visibility.Collapsed;
+        RightPanelSplitter.Visibility = _rightPanelVisible ? Visibility.Visible : Visibility.Collapsed;
+        RightPanelSplitterColumn.Width = _rightPanelVisible ? new GridLength(6) : new GridLength(0);
+        RightPanelColumn.Width = _rightPanelVisible ? new GridLength(_rightPanelWidth) : new GridLength(0);
+        VisualizationPanel.Visibility = _bottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
+        BottomPanelSplitter.Visibility = _bottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
+        BottomPanelRow.Height = _bottomPanelVisible ? new GridLength(_bottomPanelHeight) : new GridLength(0);
+        StatusPanel.Visibility = _bottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
+        ShowRightPanelMenuItem.IsChecked = _rightPanelVisible;
+        ShowBottomPanelMenuItem.IsChecked = _bottomPanelVisible;
+        if (_initialized)
+        {
+            _settings.Window.IsRightPanelVisible = _rightPanelVisible;
+            _settings.Window.IsBottomPanelVisible = _bottomPanelVisible;
+            _settings.Window.RightPanelWidth = _rightPanelWidth;
+            _settings.Window.BottomPanelHeight = _bottomPanelHeight;
+        }
+    }
+
+    private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_isFullscreen) return;
+        var previousRightWidth = _rightPanelWidth;
+        var previousBottomHeight = _bottomPanelHeight;
+        ClampPanelSizesToAvailable();
+        if (Math.Abs(previousRightWidth - _rightPanelWidth) > 0.1 || Math.Abs(previousBottomHeight - _bottomPanelHeight) > 0.1)
+            ApplyPanelVisibility();
+    }
+
+    private void ClampPanelSizesToAvailable()
+    {
+        if (MainContentGrid.ActualWidth > 0)
+            _rightPanelWidth = Math.Min(_rightPanelWidth, Math.Max(240, MainContentGrid.ActualWidth - 326));
+        if (RootGrid.ActualHeight > 0)
+            _bottomPanelHeight = Math.Min(_bottomPanelHeight, Math.Max(100, RootGrid.ActualHeight - 320));
+    }
+
+    private void OnRightPanelSplitterDragDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (_isFullscreen || !_rightPanelVisible) return;
+        var maximum = Math.Max(240, MainContentGrid.ActualWidth - 320 - RightPanelSplitterColumn.ActualWidth);
+        _rightPanelWidth = Math.Clamp(_rightPanelWidth - e.HorizontalChange, 240, Math.Min(1200, maximum));
+        RightPanelColumn.Width = new GridLength(_rightPanelWidth);
+        if (_initialized) _settings.Window.RightPanelWidth = _rightPanelWidth;
+    }
+
+    private void OnBottomPanelSplitterDragDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (_isFullscreen || !_bottomPanelVisible) return;
+        var maximum = Math.Max(100, RootGrid.ActualHeight - 320);
+        _bottomPanelHeight = Math.Clamp(_bottomPanelHeight - e.VerticalChange, 100, Math.Min(800, maximum));
+        BottomPanelRow.Height = new GridLength(_bottomPanelHeight);
+        if (_initialized) _settings.Window.BottomPanelHeight = _bottomPanelHeight;
+    }
+
+    private void OnFullscreenHoverTick(DispatcherQueueTimer sender, object args)
+    {
+        if (!_isFullscreen || _appWindow is null) return;
+        var handle = WindowNative.GetWindowHandle(this);
+        if (!GetCursorPos(out var cursor) || !GetWindowRect(handle, out var window)) return;
+        var now = DateTimeOffset.UtcNow;
+        var inside = cursor.X >= window.Left && cursor.X < window.Right && cursor.Y >= window.Top && cursor.Y < window.Bottom;
+        if (inside)
+        {
+            if (cursor.Y <= window.Top + 10 || MainMenuBar.Visibility == Visibility.Visible && cursor.Y <= window.Top + 70) _showFullscreenMenuUntil = now.AddSeconds(1.5);
+            if (cursor.Y >= window.Bottom - 12 || PlaybackControls.Visibility == Visibility.Visible && cursor.Y >= window.Bottom - 150) _showFullscreenControlsUntil = now.AddSeconds(1.5);
+            if (cursor.X >= window.Right - 12 || SubtitlePanel.Visibility == Visibility.Visible && cursor.X >= window.Right - _rightPanelWidth - 40) _showFullscreenRightPanelUntil = now.AddSeconds(1.5);
+        }
+        MainMenuBar.Visibility = now < _showFullscreenMenuUntil ? Visibility.Visible : Visibility.Collapsed;
+        var showControls = now < _showFullscreenControlsUntil;
+        PlaybackControls.Visibility = showControls ? Visibility.Visible : Visibility.Collapsed;
+        StatusPanel.Visibility = showControls ? Visibility.Visible : Visibility.Collapsed;
+        var showRight = now < _showFullscreenRightPanelUntil;
+        SubtitlePanel.Visibility = showRight ? Visibility.Visible : Visibility.Collapsed;
+        RightPanelSplitter.Visibility = showRight ? Visibility.Visible : Visibility.Collapsed;
+        RightPanelSplitterColumn.Width = showRight ? new GridLength(6) : new GridLength(0);
+        RightPanelColumn.Width = showRight ? new GridLength(_rightPanelWidth) : new GridLength(0);
+    }
     private async void OnDiagnosticsClick(object sender, RoutedEventArgs e)
     {
         StatusText.Text = L("StatusCollectingDiagnostics");
@@ -708,51 +1079,88 @@ public sealed partial class MainWindow : Window
         ShowWebDavWindow();
     }
 
-    private void ShowWebDavWindow(Guid? serverId = null, Uri? directory = null)
+    private async void ShowWebDavWindow(Guid? serverId = null, Uri? directory = null)
     {
-        if (_webDavWindow is not null)
+        try
         {
-            if (serverId is null) { _webDavWindow.Activate(); return; }
-            _webDavWindow.Close();
-        }
-        _webDavWindow = new WebDavWindow(serverId, directory);
-        _webDavWindow.MediaSelected += async (_, selection) => { await OpenMediaAsync(selection.Uri.AbsoluteUri, selection.Headers, new WebDavMediaSource(selection.ServerId, selection.Uri, selection.Name)); _webDavWindow?.Close(); };
-        _webDavWindow.FolderFavoriteRequested += async (_, selection) =>
-        {
-            _historyService.AddFavorite(new WebDavMediaSource(selection.ServerId, selection.Uri, selection.Name), true);
-            await _historyService.SaveAsync();
-            RebuildFavoritesMenu();
-        };
-        _webDavWindow.Closed += (_, _) => _webDavWindow = null;
-        _webDavWindow.Activate();
-    }
-    private void OnCameraClick(object sender, RoutedEventArgs e)
-    {
-        _cameraWindow = new CameraWindow();
-        _cameraWindow.Closed += (_, _) => _cameraWindow = null;
-        _cameraWindow.Activate();
-    }
-    private void OnSettingsClick(object sender, RoutedEventArgs e)
-    {
-        if (_settingsWindow is not null) { _settingsWindow.Activate(); return; }
-        _settingsWindow = new SettingsWindow();
-        _settingsWindow.SettingsSaved += (_, settings) =>
-        {
-            _settings = settings;
-            LocalizationService.Apply(settings.General.Language);
-            ApplyTheme(settings.General.Theme);
-            if (!_playback.IsAvailable) return;
-            TryPlayback(() =>
+            if (_webDavWindow is not null)
             {
-                _playback.SetVolume(settings.Playback.DefaultVolume);
-                _playback.SetRate(settings.Playback.PlaybackRate);
-                _playback.ConfigureNetwork(TimeSpan.FromSeconds(settings.Network.TimeoutSeconds), settings.Network.Proxy);
-                _playback.ConfigurePreferredLanguages(settings.Playback.DefaultAudioLanguage, settings.Playback.DefaultSubtitleLanguage);
-                _playback.ConfigureSubtitleStyle(settings.Subtitle.FontFamily, settings.Subtitle.FontSize, settings.Subtitle.Color, settings.Subtitle.Background, settings.Subtitle.Outline, settings.Subtitle.BottomMargin);
-            });
-        };
-        _settingsWindow.Closed += (_, _) => _settingsWindow = null;
-        _settingsWindow.Activate();
+                if (serverId is null) { _webDavWindow.Activate(); return; }
+                _webDavWindow.Close();
+            }
+            _webDavWindow = new WebDavWindow(serverId, directory);
+            _webDavWindow.DirectoryListed += (_, snapshot) =>
+            {
+                _webDavPanelServerId = snapshot.ServerId;
+                WebDavPanelPathText.Text = snapshot.Directory.AbsoluteUri;
+                WebDavPanelEntryList.ItemsSource = snapshot.Entries;
+                RightPanelTabs.SelectedIndex = 2;
+            };
+            _webDavWindow.MediaSelected += async (_, selection) => { await OpenMediaAsync(selection.Uri.AbsoluteUri, selection.Headers, new WebDavMediaSource(selection.ServerId, selection.Uri, selection.Name)); _webDavWindow?.Close(); };
+            _webDavWindow.FolderFavoriteRequested += async (_, selection) =>
+            {
+                _historyService.AddFavorite(new WebDavMediaSource(selection.ServerId, selection.Uri, selection.Name), true);
+                await _historyService.SaveAsync();
+                RebuildFavoritesMenu();
+            };
+            _webDavWindow.Closed += (_, _) => _webDavWindow = null;
+            _webDavWindow.Activate();
+        }
+        catch (Exception exception)
+        {
+            _webDavWindow = null;
+            await AppLog.WriteAsync("error", "webdav", "WEBDAV_WINDOW_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("NetworkErrorTitle"), exception.Message);
+        }
+    }
+    private async void OnCameraClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (_cameraWindow is not null) { _cameraWindow.Activate(); return; }
+            _cameraWindow = new CameraWindow();
+            _cameraWindow.Closed += (_, _) => _cameraWindow = null;
+            _cameraWindow.Activate();
+        }
+        catch (Exception exception)
+        {
+            _cameraWindow = null;
+            await AppLog.WriteAsync("error", "camera", "CAMERA_WINDOW_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("CameraErrorTitle"), exception.Message);
+        }
+    }
+    private async void OnSettingsClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (_settingsWindow is not null) { _settingsWindow.Activate(); return; }
+            _settingsWindow = new SettingsWindow();
+            _settingsWindow.SettingsSaved += (_, settings) =>
+            {
+                _settings = settings;
+                LocalizationService.Apply(settings.General.Language);
+                ApplyTheme(settings.General.Theme);
+                SeekBackButton.Content = $"−{settings.Playback.SeekIntervalSeconds:0.#}s";
+                SeekForwardButton.Content = $"+{settings.Playback.SeekIntervalSeconds:0.#}s";
+                if (!_playback.IsAvailable) return;
+                TryPlayback(() =>
+                {
+                    _playback.SetVolume(settings.Playback.DefaultVolume);
+                    _playback.SetRate(settings.Playback.PlaybackRate);
+                    _playback.ConfigureNetwork(TimeSpan.FromSeconds(settings.Network.TimeoutSeconds), settings.Network.Proxy);
+                    _playback.ConfigurePreferredLanguages(settings.Playback.DefaultAudioLanguage, settings.Playback.DefaultSubtitleLanguage);
+                    _playback.ConfigureSubtitleStyle(settings.Subtitle.FontFamily, settings.Subtitle.FontSize, settings.Subtitle.Color, settings.Subtitle.Background, settings.Subtitle.Outline, settings.Subtitle.BottomMargin);
+                });
+            };
+            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+            _settingsWindow.Activate();
+        }
+        catch (Exception exception)
+        {
+            _settingsWindow = null;
+            await AppLog.WriteAsync("error", "settings", "SETTINGS_WINDOW_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("SettingsErrorTitle"), exception.Message);
+        }
     }
 
     private void ApplyTheme(AppTheme theme) => RootGrid.RequestedTheme = theme switch { AppTheme.Light => ElementTheme.Light, AppTheme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
@@ -768,16 +1176,111 @@ public sealed partial class MainWindow : Window
 
     private async void OnAddFavoriteFolderClick(object sender, RoutedEventArgs e)
     {
-        var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.VideosLibrary };
-        picker.FileTypeFilter.Add("*");
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        var folder = await picker.PickSingleFolderAsync();
-        if (folder is null) return;
-        _historyService.AddFavorite(new LocalMediaSource(folder.Path), true);
-        await _historyService.SaveAsync();
-        RebuildFavoritesMenu();
-        StatusText.Text = F("StatusAddedFavoriteFolder", folder.Name);
+        try
+        {
+            var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.VideosLibrary };
+            picker.FileTypeFilter.Add("*");
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is null) return;
+            _historyService.AddFavorite(new LocalMediaSource(folder.Path), true);
+            await _historyService.SaveAsync();
+            RebuildFavoritesMenu();
+            StatusText.Text = F("StatusAddedFavoriteFolder", folder.Name);
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "file-picker", "FOLDER_PICKER_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("FolderUnavailableTitle"), exception.Message);
+        }
     }
+
+    private async void OnChooseBrowserFolderClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.VideosLibrary };
+            picker.FileTypeFilter.Add("*");
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is not null) await RefreshBrowserAsync(folder.Path);
+        }
+        catch (Exception exception) { await ShowMessageAsync(L("FolderUnavailableTitle"), exception.Message); }
+    }
+
+    private async void OnBrowserParentClick(object sender, RoutedEventArgs e)
+    {
+        var parent = Directory.GetParent(_browserDirectory);
+        if (parent is not null) await RefreshBrowserAsync(parent.FullName);
+    }
+
+    private async void OnBrowserRefreshClick(object sender, RoutedEventArgs e) => await RefreshBrowserAsync(_browserDirectory);
+
+    private async Task RefreshBrowserAsync(string directory)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                directory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                if (!Directory.Exists(directory)) return;
+            }
+            var entries = await Task.Run(() =>
+            {
+                var result = new List<BrowserEntry>();
+                foreach (var path in Directory.EnumerateDirectories(directory).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase))
+                {
+                    try { result.Add(BrowserEntry.FromDirectory(path)); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+                }
+                foreach (var path in Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase))
+                {
+                    try { result.Add(BrowserEntry.FromFile(path)); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+                }
+                return result.ToArray();
+            });
+            _browserDirectory = Path.GetFullPath(directory);
+            BrowserPathBox.Text = _browserDirectory;
+            FolderEntryList.ItemsSource = entries;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            StatusText.Text = exception.Message;
+        }
+    }
+
+    private async void OnFolderEntryDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (FolderEntryList.SelectedItem is not BrowserEntry entry) return;
+        if (entry.IsDirectory) { await RefreshBrowserAsync(entry.Path); return; }
+        var files = (FolderEntryList.ItemsSource as IEnumerable<BrowserEntry>)?.Where(item => !item.IsDirectory).Select(item => item.Path).ToArray() ?? [entry.Path];
+        _playlist.Clear(); _playlist.AddRange(files); _playlistIndex = Math.Max(0, _playlist.FindIndex(path => path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase)));
+        await OpenMediaAsync(entry.Path, preservePlaylist: true);
+    }
+
+    private async void OnPlaylistDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (PlaylistList.SelectedItem is not PlaylistEntry entry) return;
+        var index = _playlist.FindIndex(path => path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) return;
+        _playlistIndex = index;
+        await OpenMediaAsync(entry.Path, preservePlaylist: true);
+    }
+
+    private void OnClearPlaylistClick(object sender, RoutedEventArgs e) { _playlist.Clear(); _playlistIndex = -1; UpdatePlaylistButtons(); }
+
+    private async void OnWebDavPanelEntryDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (WebDavPanelEntryList.SelectedItem is not WebDavEntry entry || _webDavPanelServerId is not { } serverId) return;
+        if (entry.IsCollection) { ShowWebDavWindow(serverId, entry.Uri); return; }
+        var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == serverId);
+        if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("RecentServerMissingMessage")); return; }
+        using var client = new WebDavClient(new WindowsCredentialService());
+        using var request = client.CreateMediaRequest(server, entry.Uri);
+        var headers = request.Headers.Authorization is { } authorization ? new Dictionary<string, string> { ["Authorization"] = authorization.ToString() } : null;
+        await OpenMediaAsync(entry.Uri.AbsoluteUri, headers, new WebDavMediaSource(server.Id, entry.Uri, entry.Name));
+    }
+
+    private static bool IsPlayableMediaPath(string path) => Path.GetExtension(path).ToLowerInvariant() is ".mp4" or ".mkv" or ".webm" or ".avi" or ".mov" or ".wmv" or ".m4v" or ".ts" or ".m2ts" or ".mp3" or ".flac" or ".wav" or ".m4a" or ".aac" or ".ogg" or ".opus";
 
     private void RebuildFavoritesMenu()
     {
@@ -894,6 +1397,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
+        if (!_isFullscreen && sender.Presenter is OverlappedPresenter presenter && presenter.State != OverlappedPresenterState.Minimized) CaptureWindowPlacement(sender, presenter);
         if (_allowClose || !_document.IsDirty) return;
         args.Cancel = true;
         var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("UnsavedChangesTitle"), Content = L("UnsavedChangesCloseMessage"), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
@@ -936,7 +1440,56 @@ public sealed partial class MainWindow : Window
             ? new System.Text.UTF8Encoding(false, true)
             : System.Text.Encoding.GetEncoding(name, System.Text.EncoderFallback.ExceptionFallback, System.Text.DecoderFallback.ExceptionFallback);
     }
-    private async void OnWindowClosed(object sender, WindowEventArgs args) { RememberCurrentPosition(); await _historyService.SaveAsync(); _waveformCancellation?.Cancel(); _waveformCancellation?.Dispose(); _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose(); _aiOperationCancellation?.Cancel(); _aiOperationCancellation?.Dispose(); await _asrEngine.DisposeAsync(); await _playback.DisposeAsync(); _videoHost?.Dispose(); try { File.Delete(_editorOverlayPath); } catch (IOException) { } }
+    private async void OnWindowClosed(object sender, WindowEventArgs args)
+    {
+        _fullscreenHoverTimer?.Stop();
+        if (_appWindow is not null)
+        {
+            _appWindow.Changed -= OnAppWindowChanged;
+        }
+        RememberCurrentPosition();
+        try { await _historyService.SaveAsync(); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "HISTORY_SAVE_ERROR", exception.Message, exception); }
+        try { await SettingsService.CreateDefault().SaveAsync(_settings); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "SETTINGS_SAVE_ERROR", exception.Message, exception); }
+        _waveformCancellation?.Cancel(); _waveformCancellation?.Dispose();
+        _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose();
+        _aiOperationCancellation?.Cancel(); _aiOperationCancellation?.Dispose();
+        try { await _asrEngine.DisposeAsync(); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "ASR_DISPOSE_ERROR", exception.Message, exception); }
+        try { await _playback.DisposeAsync(); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "PLAYBACK_DISPOSE_ERROR", exception.Message, exception); }
+        _videoHost?.Dispose();
+        try { File.Delete(_editorOverlayPath); } catch (IOException) { }
+    }
+
+    private sealed record PlaylistEntry(string Path)
+    {
+        public string DisplayName => System.IO.Path.GetFileName(Path);
+    }
+
+    private sealed record BrowserEntry(string Path, bool IsDirectory, long? Length)
+    {
+        public string Name => System.IO.Path.GetFileName(Path.TrimEnd(System.IO.Path.DirectorySeparatorChar));
+        public string IconGlyph => IsDirectory ? "\uE8B7" : "\uE8A5";
+        public string Details => IsDirectory || Length is null ? string.Empty : FormatBytes(Length.Value);
+        public static BrowserEntry FromDirectory(string path) => new(path, true, null);
+        public static BrowserEntry FromFile(string path) => new(path, false, new FileInfo(path).Length);
+        private static string FormatBytes(long bytes)
+        {
+            string[] units = ["B", "KB", "MB", "GB", "TB"];
+            var display = (double)Math.Max(0, bytes);
+            var unit = 0;
+            while (display >= 1024 && unit < units.Length - 1) { display /= 1024; unit++; }
+            return $"{display:0.##} {units[unit]}";
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)] private struct NativePoint { public int X; public int Y; }
+    [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left; public int Top; public int Right; public int Bottom; }
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out NativePoint point);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(nint window, out NativeRect rect);
 
     private enum TimelineDragMode { None, Move, ResizeStart, ResizeEnd }
+    private enum RepeatMode { Off, One, All }
 }

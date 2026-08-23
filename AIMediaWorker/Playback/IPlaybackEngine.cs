@@ -10,6 +10,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     double Volume { get; }
     double Rate { get; }
     bool IsMuted { get; }
+    bool AreSubtitlesVisible { get; }
     IReadOnlyList<MediaTrack> Tracks { get; }
     string? DecoderDescription { get; }
     string? LibraryVersion { get; }
@@ -30,6 +31,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     void SeekRelative(TimeSpan offset);
     void SetVolume(double volume);
     void SetMute(bool muted);
+    void SetSubtitleVisibility(bool visible);
     void SetRate(double rate);
     void FrameStep(bool backwards = false);
     void SetAbLoop(TimeSpan? start, TimeSpan? end);

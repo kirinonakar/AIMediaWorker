@@ -6,7 +6,20 @@ using AIMediaWorker.Settings;
 
 namespace AIMediaWorker.Network;
 
-public sealed record WebDavEntry(string Name, Uri Uri, bool IsCollection, long? ContentLength, DateTimeOffset? LastModified, string? ContentType);
+public sealed record WebDavEntry(string Name, Uri Uri, bool IsCollection, long? ContentLength, DateTimeOffset? LastModified, string? ContentType)
+{
+    public string IconGlyph => IsCollection ? "\uE8B7" : "\uE8A5";
+    public string SizeText => IsCollection || ContentLength is null ? string.Empty : FormatBytes(ContentLength.Value);
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var display = (double)Math.Max(0, bytes);
+        var unit = 0;
+        while (display >= 1024 && unit < units.Length - 1) { display /= 1024; unit++; }
+        return $"{display:0.##} {units[unit]}";
+    }
+}
 
 public sealed class WebDavException(string code, string message, HttpStatusCode? statusCode = null, Exception? innerException = null) : Exception(message, innerException)
 {

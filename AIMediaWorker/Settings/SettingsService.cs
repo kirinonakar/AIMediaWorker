@@ -74,11 +74,16 @@ public sealed class SettingsService
         settings.Llm ??= new LlmSettings();
         settings.Llm.CachedModels ??= [];
         settings.General ??= new GeneralSettings();
+        settings.Window ??= new WindowLayoutSettings();
         settings.General.Shortcuts ??= [];
         foreach (var item in ShortcutActions.CreateDefaults()) settings.General.Shortcuts.TryAdd(item.Key, item.Value);
         settings.General.RecentMediaCount = Math.Clamp(settings.General.RecentMediaCount, 1, 100);
         settings.Network.TimeoutSeconds = Math.Clamp(settings.Network.TimeoutSeconds, 5, 300);
         settings.Playback.SeekIntervalSeconds = Math.Clamp(settings.Playback.SeekIntervalSeconds, 1, 60);
+        settings.Window.Width = Math.Clamp(settings.Window.Width, 640, 7680);
+        settings.Window.Height = Math.Clamp(settings.Window.Height, 420, 4320);
+        settings.Window.RightPanelWidth = Math.Clamp(settings.Window.RightPanelWidth, 240, 1200);
+        settings.Window.BottomPanelHeight = Math.Clamp(settings.Window.BottomPanelHeight, 100, 800);
         return settings;
     }
 }

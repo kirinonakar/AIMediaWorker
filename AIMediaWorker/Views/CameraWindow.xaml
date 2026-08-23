@@ -3,7 +3,7 @@
     x:Class="AIMediaWorker.Views.CameraWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    x:Uid="CameraWindow" Title="Camera and live captions">
+    Title="Camera and live captions">
     <Grid x:Name="Root" Padding="12" RowSpacing="10" Loaded="OnLoaded">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <Grid ColumnSpacing="8" RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>

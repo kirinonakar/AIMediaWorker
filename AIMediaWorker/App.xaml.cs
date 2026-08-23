@@ -52,7 +52,10 @@ namespace AIMediaWorker
             {
                 var settings = await SettingsService.CreateDefault().LoadAsync();
                 LocalizationService.Apply(settings.General.Language);
-                _window = new MainWindow();
+                var launchSource = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(value => File.Exists(value) || Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https");
+                var mainWindow = new MainWindow(launchSource);
+                mainWindow.ApplySavedWindowPlacement(settings.Window);
+                _window = mainWindow;
                 _window.Activate();
             }
             catch (Exception exception)

@@ -4,6 +4,8 @@ AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation b
 
 It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; edits SRT/WebVTT/ASS subtitles on a timeline; generates bounded-memory waveforms; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
+Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs. Drag the divider beside the side panel or above the timeline to resize either panel. The bottom playback toolbar provides previous/next media, seek, play/pause, stop, progress, time, volume, speed, and repeat controls. Window size, position, maximized state, panel visibility, and panel dimensions are restored on the next launch.
+
 ## Requirements
 
 - Windows 10 version 1809 or newer; Windows 11 is recommended.
@@ -108,7 +110,7 @@ The subtitle encoding setting supports UTF-8 and installed Windows code pages. E
 
 ## WebDAV and remote media
 
-Open **Tools → WebDAV browser** to add, edit, or remove servers. Server metadata is stored in settings; passwords are stored separately in Windows Credential Manager. Supported operations include directory listing, parent navigation, refresh, direct remote playback, and saving the current WebDAV folder as a favorite.
+Open **Tools → WebDAV browser** to add, edit, or remove servers. Server metadata is stored in settings; passwords are stored separately in Windows Credential Manager. Supported operations include directory listing, parent navigation, refresh, direct remote playback, and saving the current WebDAV folder as a favorite. Connected directory results are also mirrored into the main window's WebDAV side-panel tab.
 
 Local folders, media items, WebDAV folders, and remote URLs can be opened or removed from the Favorites menu. Recent items retain source type and playback position. Missing local paths or removed servers do not prevent startup.
 
@@ -141,13 +143,21 @@ Select a provider in Preferences, store its API key, synchronize the real model 
 |---|---|
 | Space | Play/pause |
 | Left / Right | Seek by the configured interval |
+| Up / Down | Volume ±5 |
+| M | Mute/unmute |
+| V | Show/hide subtitles |
 | Ctrl+Left / Ctrl+Right | Previous/next subtitle |
 | Ctrl+S / Ctrl+Shift+S | Save/Save As |
 | Ctrl+Z / Ctrl+Y | Undo/redo |
 | Delete | Delete selected cues |
-| F11 | Fullscreen |
+| Enter | Toggle fullscreen |
+| Esc | Leave fullscreen |
+| F | Toggle fullscreen |
+| Home / End | Seek to start/end |
 
 Text boxes retain ordinary editing shortcuts. Shortcut gestures are persisted as a declarative action-to-gesture map in `settings.json`, so custom configuration UI can be added without changing command routing.
+
+In fullscreen mode the window frame and panels are hidden. Hover at the top, bottom, or right edge to reveal the menu, playback toolbar, or side panel respectively.
 
 ## Settings, data, and diagnostics
 

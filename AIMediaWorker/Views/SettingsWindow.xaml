@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Window x:Class="AIMediaWorker.Views.SettingsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Uid="SettingsWindow" Title="Preferences">
+<Window x:Class="AIMediaWorker.Views.SettingsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Preferences">
     <Grid x:Name="Root" Padding="16" RowSpacing="12" Loaded="OnLoaded">
         <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <ScrollViewer><StackPanel Spacing="12">

@@ -12,6 +12,7 @@ namespace AIMediaWorker.Views;
 
 public sealed record RemoteMediaSelection(Guid ServerId, Uri Uri, string Name, IReadOnlyDictionary<string, string> Headers);
 public sealed record RemoteFolderSelection(Guid ServerId, Uri Uri, string Name);
+public sealed record RemoteDirectorySnapshot(Guid ServerId, Uri Directory, IReadOnlyList<WebDavEntry> Entries);
 
 public sealed partial class WebDavWindow : Window
 {
@@ -20,15 +21,18 @@ public sealed partial class WebDavWindow : Window
     private readonly WebDavClient _client;
     private AppSettings _settings = new();
     private Uri? _currentDirectory;
+    private Guid? _currentServerId;
     private CancellationTokenSource? _listingCancellation;
     private readonly Guid? _initialServerId;
     private readonly Uri? _initialDirectory;
     public event EventHandler<RemoteMediaSelection>? MediaSelected;
     public event EventHandler<RemoteFolderSelection>? FolderFavoriteRequested;
+    public event EventHandler<RemoteDirectorySnapshot>? DirectoryListed;
 
     public WebDavWindow(Guid? initialServerId = null, Uri? initialDirectory = null)
     {
         InitializeComponent();
+        Title = L("WebDavWindow.Title");
         _initialServerId = initialServerId;
         _initialDirectory = initialDirectory;
         _client = new WebDavClient(_credentials);
@@ -39,17 +43,22 @@ public sealed partial class WebDavWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _settings = await _settingsService.LoadAsync();
-        ServerList.ItemsSource = _settings.Network.WebDavServers;
-        var initialServer = _initialServerId is { } id ? _settings.Network.WebDavServers.FirstOrDefault(server => server.Id == id) : null;
-        if (initialServer is not null && _initialDirectory is not null) _currentDirectory = EnsureDirectoryUri(_initialDirectory);
-        ServerList.SelectedItem = initialServer ?? _settings.Network.WebDavServers.FirstOrDefault();
+        try
+        {
+            _settings = await _settingsService.LoadAsync();
+            ServerList.ItemsSource = _settings.Network.WebDavServers;
+            var initialServer = _initialServerId is { } id ? _settings.Network.WebDavServers.FirstOrDefault(server => server.Id == id) : null;
+            if (initialServer is not null && _initialDirectory is not null) { _currentDirectory = EnsureDirectoryUri(_initialDirectory); _currentServerId = initialServer.Id; }
+            ServerList.SelectedItem = initialServer ?? _settings.Network.WebDavServers.FirstOrDefault();
+        }
+        catch (Exception exception) { SetStatus(L("NetworkErrorTitle"), exception.Message, InfoBarSeverity.Error); }
     }
 
     private async void OnServerChanged(object sender, SelectionChangedEventArgs e)
     {
         if (ServerList.SelectedItem is not WebDavServerSettings server || !Uri.TryCreate(server.Url, UriKind.Absolute, out var root)) return;
-        if (_currentDirectory is null || _initialServerId != server.Id) _currentDirectory = EnsureDirectoryUri(root);
+        if (_currentDirectory is null || _currentServerId != server.Id) _currentDirectory = EnsureDirectoryUri(root);
+        _currentServerId = server.Id;
         await RefreshAsync();
     }
 
@@ -57,16 +66,21 @@ public sealed partial class WebDavWindow : Window
     {
         if (ServerList.SelectedItem is not WebDavServerSettings server || _currentDirectory is null) return;
         _listingCancellation?.Cancel(); _listingCancellation?.Dispose(); _listingCancellation = new CancellationTokenSource();
-        StatusBar.Title = L("ConnectingTitle"); StatusBar.Message = server.Name; StatusBar.Severity = InfoBarSeverity.Informational;
+        var operation = _listingCancellation;
+        EntryList.IsEnabled = false;
+        SetStatus(L("ConnectingTitle"), server.Name, InfoBarSeverity.Informational);
         try
         {
-            var entries = await _client.ListAsync(server, _currentDirectory, _listingCancellation.Token);
+            var entries = await _client.ListAsync(server, _currentDirectory, operation.Token);
+            if (operation.IsCancellationRequested) return;
             EntryList.ItemsSource = entries; PathText.Text = _currentDirectory.AbsoluteUri;
-            StatusBar.Title = L("ConnectedTitle"); StatusBar.Message = F("WebDavItemsCount", entries.Count); StatusBar.Severity = InfoBarSeverity.Success;
+            DirectoryListed?.Invoke(this, new RemoteDirectorySnapshot(server.Id, _currentDirectory, entries));
+            SetStatus(L("ConnectedTitle"), F("WebDavItemsCount", entries.Count), InfoBarSeverity.Success);
         }
         catch (OperationCanceledException) { }
-        catch (WebDavException exception) { StatusBar.Title = exception.Code; StatusBar.Message = exception.Message; StatusBar.Severity = exception.Code == "AUTH_ERROR" ? InfoBarSeverity.Warning : InfoBarSeverity.Error; }
-        catch (Exception exception) { StatusBar.Title = L("NetworkErrorTitle"); StatusBar.Message = exception.Message; StatusBar.Severity = InfoBarSeverity.Error; }
+        catch (WebDavException exception) { SetStatus(exception.Code, exception.Message, exception.Code == "AUTH_ERROR" ? InfoBarSeverity.Warning : InfoBarSeverity.Error); }
+        catch (Exception exception) { SetStatus(L("NetworkErrorTitle"), exception.Message, InfoBarSeverity.Error); }
+        finally { if (ReferenceEquals(_listingCancellation, operation)) EntryList.IsEnabled = true; }
     }
 
     private async void OnEntryClick(object sender, ItemClickEventArgs e)
@@ -103,14 +117,23 @@ public sealed partial class WebDavWindow : Window
         StatusBar.Message = displayName;
         StatusBar.Severity = InfoBarSeverity.Success;
     }
-    private async void OnAddServerClick(object sender, RoutedEventArgs e) { var server = new WebDavServerSettings(); if (await EditServerAsync(server, true)) { _settings.Network.WebDavServers.Add(server); await SaveAndRefreshServersAsync(server); } }
-    private async void OnEditServerClick(object sender, RoutedEventArgs e) { if (ServerList.SelectedItem is WebDavServerSettings server && await EditServerAsync(server, false)) await SaveAndRefreshServersAsync(server); }
+    private async void OnAddServerClick(object sender, RoutedEventArgs e)
+    {
+        try { var server = new WebDavServerSettings(); if (await EditServerAsync(server, true)) { _settings.Network.WebDavServers.Add(server); await SaveAndRefreshServersAsync(server); } }
+        catch (Exception exception) { SetStatus(L("NetworkErrorTitle"), exception.Message, InfoBarSeverity.Error); }
+    }
+    private async void OnEditServerClick(object sender, RoutedEventArgs e)
+    {
+        try { if (ServerList.SelectedItem is WebDavServerSettings server && await EditServerAsync(server, false)) await SaveAndRefreshServersAsync(server); }
+        catch (Exception exception) { SetStatus(L("NetworkErrorTitle"), exception.Message, InfoBarSeverity.Error); }
+    }
     private async void OnDeleteServerClick(object sender, RoutedEventArgs e)
     {
         if (ServerList.SelectedItem is not WebDavServerSettings server) return;
         var confirmation = new ContentDialog { XamlRoot = Root.XamlRoot, Title = L("DeleteWebDavServerTitle"), Content = F("DeleteWebDavServerMessage", server.Name), PrimaryButtonText = L("DeleteButtonText"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Close };
         if (await confirmation.ShowAsync() != ContentDialogResult.Primary) return;
-        _settings.Network.WebDavServers.Remove(server); _credentials.Delete(CredentialIdentifier.ForWebDav(server.Id)); await _settingsService.SaveAsync(_settings); ServerList.ItemsSource = null; ServerList.ItemsSource = _settings.Network.WebDavServers; EntryList.ItemsSource = null;
+        _listingCancellation?.Cancel();
+        _settings.Network.WebDavServers.Remove(server); _credentials.Delete(CredentialIdentifier.ForWebDav(server.Id)); await _settingsService.SaveAsync(_settings); ServerList.ItemsSource = null; ServerList.ItemsSource = _settings.Network.WebDavServers; EntryList.ItemsSource = null; _currentDirectory = null; _currentServerId = null; PathText.Text = string.Empty;
     }
 
     private async Task<bool> EditServerAsync(WebDavServerSettings server, bool isNew)
@@ -130,10 +153,11 @@ public sealed partial class WebDavWindow : Window
 
     private async Task SaveAndRefreshServersAsync(WebDavServerSettings selected)
     {
-        await _settingsService.SaveAsync(_settings); ServerList.ItemsSource = null; ServerList.ItemsSource = _settings.Network.WebDavServers; ServerList.SelectedItem = selected;
+        await _settingsService.SaveAsync(_settings); ServerList.ItemsSource = null; ServerList.ItemsSource = _settings.Network.WebDavServers; _currentDirectory = null; _currentServerId = null; ServerList.SelectedItem = selected;
     }
     private static Uri EnsureDirectoryUri(Uri uri) => uri.AbsoluteUri.EndsWith('/') ? uri : new Uri(uri.AbsoluteUri + "/");
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
+    private void SetStatus(string title, string message, InfoBarSeverity severity) { StatusBar.Title = title; StatusBar.Message = message; StatusBar.Severity = severity; StatusBar.IsOpen = true; }
     private void OnClosed(object sender, WindowEventArgs args) { _listingCancellation?.Cancel(); _listingCancellation?.Dispose(); _client.Dispose(); }
 }

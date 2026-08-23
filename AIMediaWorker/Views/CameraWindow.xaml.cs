@@ -10,6 +10,7 @@ using Windows.Storage.Pickers;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
 using AIMediaWorker.Localization;
+using AIMediaWorker.Diagnostics;
 
 namespace AIMediaWorker.Views;
 
@@ -26,6 +27,7 @@ public sealed partial class CameraWindow : Window
     public CameraWindow()
     {
         InitializeComponent();
+        Title = L("CameraWindow.Title");
         _liveAsr = new LiveAsrController(_audio, _asr);
         _liveAsr.CaptionReceived += OnCaptionReceived;
         _liveAsr.Failed += OnLiveFailed;
@@ -177,10 +179,14 @@ public sealed partial class CameraWindow : Window
     private async void OnClosed(object sender, WindowEventArgs args)
     {
         if (_closing) return; _closing = true;
-        Preview.SetMediaPlayer(null);
-        if (_camera.IsRecording) await _camera.StopRecordingAsync();
-        await _liveAsr.DisposeAsync();
-        await _asr.DisposeAsync();
-        await _camera.DisposeAsync();
+        try
+        {
+            Preview.SetMediaPlayer(null);
+            if (_camera.IsRecording) await _camera.StopRecordingAsync();
+            await _liveAsr.DisposeAsync();
+            await _asr.DisposeAsync();
+            await _camera.DisposeAsync();
+        }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "camera", "CAMERA_SHUTDOWN_ERROR", exception.Message, exception); }
     }
 }
