@@ -156,12 +156,12 @@
         <Grid x:Name="PlaybackControls" Grid.Row="5" Padding="8,4" ColumnSpacing="6">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="120" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="95" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <Button x:Name="BeginningButton" Grid.Column="0" Style="{StaticResource PlaybackControlButtonStyle}" Content="↤" Click="OnGoToBeginningClick" ToolTipService.ToolTip="Go to beginning (Home)" />
-            <Button x:Name="PreviousButton" Grid.Column="1" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏮" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media" />
+            <Button x:Name="PreviousButton" Grid.Column="1" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏮" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media (Ctrl+B)" />
             <Button x:Name="SeekBackButton" Grid.Column="2" Style="{StaticResource PlaybackControlButtonStyle}" Content="−5s" Click="OnSeekBackClick" ToolTipService.ToolTip="Seek backward" />
             <Button x:Name="PlayPauseButton" Grid.Column="3" Style="{StaticResource PlaybackControlButtonStyle}" Content="▶" Click="OnPlayPauseClick" ToolTipService.ToolTip="Play / Pause (Space)" />
             <Button Grid.Column="4" Style="{StaticResource PlaybackControlButtonStyle}" Content="■" Click="OnStopClick" ToolTipService.ToolTip="Stop" />
             <Button x:Name="SeekForwardButton" Grid.Column="5" Style="{StaticResource PlaybackControlButtonStyle}" Content="+5s" Click="OnSeekForwardClick" ToolTipService.ToolTip="Seek forward" />
-            <Button x:Name="NextButton" Grid.Column="6" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏭" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media" />
+            <Button x:Name="NextButton" Grid.Column="6" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏭" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media (Ctrl+F)" />
             <Slider x:Name="PositionSlider" Grid.Column="7" Minimum="0" Maximum="1" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
             <TextBlock x:Name="PositionText" Grid.Column="8" Text="00:00 / 00:00" VerticalAlignment="Center" FontFamily="Consolas" />
             <Slider x:Name="VolumeSlider" Grid.Column="9" Minimum="0" Maximum="130" Value="100" ValueChanged="OnVolumeChanged" />

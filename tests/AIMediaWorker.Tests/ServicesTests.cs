@@ -78,8 +78,21 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal("Ctrl+W", loaded.General.Shortcuts[ShortcutActions.CloseWindow]);
         Assert.Equal("Ctrl+P", loaded.General.Shortcuts[ShortcutActions.PlayPauseAlternate]);
         Assert.Equal("Ctrl+Shift+N", loaded.General.Shortcuts[ShortcutActions.PlayFromBeginning]);
-        Assert.Equal("Ctrl+F", loaded.General.Shortcuts[ShortcutActions.PreviousMedia]);
-        Assert.Equal("Ctrl+B", loaded.General.Shortcuts[ShortcutActions.NextMedia]);
+        Assert.Equal("Ctrl+B", loaded.General.Shortcuts[ShortcutActions.PreviousMedia]);
+        Assert.Equal("Ctrl+F", loaded.General.Shortcuts[ShortcutActions.NextMedia]);
+    }
+
+    [Fact]
+    public async Task SettingsMigrateReversedMediaShortcuts()
+    {
+        var path = Path.Combine(_folder, "settings-old-media-shortcuts.json");
+        Directory.CreateDirectory(_folder);
+        await File.WriteAllTextAsync(path, "{\"General\":{\"Shortcuts\":{\"PreviousMedia\":\"Ctrl+F\",\"NextMedia\":\"Ctrl+B\"}}}");
+
+        var loaded = await new SettingsService(path).LoadAsync();
+
+        Assert.Equal("Ctrl+B", loaded.General.Shortcuts[ShortcutActions.PreviousMedia]);
+        Assert.Equal("Ctrl+F", loaded.General.Shortcuts[ShortcutActions.NextMedia]);
     }
 
     [Fact]

@@ -78,6 +78,14 @@ public sealed class SettingsService
         settings.General ??= new GeneralSettings();
         settings.Window ??= new WindowLayoutSettings();
         settings.General.Shortcuts ??= [];
+        if (settings.General.Shortcuts.TryGetValue(ShortcutActions.PreviousMedia, out var previousMedia) &&
+            settings.General.Shortcuts.TryGetValue(ShortcutActions.NextMedia, out var nextMedia) &&
+            string.Equals(previousMedia, "Ctrl+F", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(nextMedia, "Ctrl+B", StringComparison.OrdinalIgnoreCase))
+        {
+            settings.General.Shortcuts[ShortcutActions.PreviousMedia] = "Ctrl+B";
+            settings.General.Shortcuts[ShortcutActions.NextMedia] = "Ctrl+F";
+        }
         foreach (var item in ShortcutActions.CreateDefaults()) settings.General.Shortcuts.TryAdd(item.Key, item.Value);
         settings.General.RecentMediaCount = Math.Clamp(settings.General.RecentMediaCount, 1, 100);
         settings.Network.TimeoutSeconds = Math.Clamp(settings.Network.TimeoutSeconds, 5, 300);
