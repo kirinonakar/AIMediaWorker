@@ -847,11 +847,21 @@ public sealed partial class MainWindow : Window
                 if (left > TimelineCanvas.ActualWidth) break;
                 var border = new Border
                 {
-                    Width = Math.Max(3, right - left), Height = Math.Max(20, TimelineCanvas.ActualHeight - 16),
+                    Width = Math.Max(3, right - left), Height = Math.Max(20, TimelineCanvas.ActualHeight - 8),
                     Background = ThemeBrush("AccentFillColorDefaultBrush", Windows.UI.Color.FromArgb(255, 40, 130, 220)), CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 2, 4, 2),
-                    Child = new TextBlock { Text = cue.Text.Replace('\n', ' '), TextTrimming = TextTrimming.CharacterEllipsis, Foreground = ThemeBrush("TextOnAccentFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255)) }, Tag = cue
+                    Child = new TextBlock
+                    {
+                        Text = cue.Text,
+                        TextWrapping = TextWrapping.Wrap,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        MaxLines = 2,
+                        FontSize = 11,
+                        LineHeight = 14,
+                        Foreground = ThemeBrush("TextOnAccentFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255))
+                    },
+                    Tag = cue
                 };
-                Canvas.SetLeft(border, left); Canvas.SetTop(border, 8); TimelineCanvas.Children.Add(border);
+                Canvas.SetLeft(border, left); Canvas.SetTop(border, 4); TimelineCanvas.Children.Add(border);
             }
         }
         var playheadX = _timelineTransform.TimeToX(Math.Max(0, _playback.Position.Ticks / 10));

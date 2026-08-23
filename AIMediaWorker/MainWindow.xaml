@@ -172,7 +172,7 @@
         </Grid>
         <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="3" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
         <Grid x:Name="VisualizationPanel" Grid.Row="4" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="48" /></Grid.RowDefinitions>
             <Canvas x:Name="WaveformCanvas" Grid.Row="0" SizeChanged="OnVisualizationSizeChanged" />
             <Canvas x:Name="TimelineCanvas" Grid.Row="1" Background="Transparent" SizeChanged="OnVisualizationSizeChanged" PointerPressed="OnTimelinePointerPressed" PointerMoved="OnTimelinePointerMoved" PointerReleased="OnTimelinePointerReleased" PointerCanceled="OnTimelinePointerReleased" PointerWheelChanged="OnTimelinePointerWheelChanged" />
         </Grid>

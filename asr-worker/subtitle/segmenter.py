@@ -29,6 +29,7 @@ class SubtitleSegmenter:
         segments: list[SubtitleSegment] = []
         current: list[WordTimestamp] = []
         max_chars = self.options.maximum_lines * self.options.target_characters_per_line
+        words = self._restore_text_boundaries(words, fallback_text)
         words = self._expand_long_words(words, max_chars)
         for word in words:
             if not current:
@@ -73,6 +74,31 @@ class SubtitleSegmenter:
         return results
 
     @staticmethod
+    def _restore_text_boundaries(words: list[WordTimestamp], fallback_text: str) -> list[WordTimestamp]:
+        source = fallback_text.strip()
+        if not source or not words:
+            return words
+        matches: list[tuple[int, int]] = []
+        cursor = 0
+        for word in words:
+            token = word.text.strip()
+            if not token:
+                return words
+            start = source.find(token, cursor)
+            if start < 0:
+                return words
+            end = start + len(token)
+            matches.append((start, end))
+            cursor = end
+
+        restored: list[WordTimestamp] = []
+        for index, word in enumerate(words):
+            start = 0 if index == 0 else matches[index][0]
+            end = matches[index + 1][0] if index + 1 < len(matches) else len(source)
+            restored.append(WordTimestamp(word.start_us, word.end_us, source[start:end]))
+        return restored
+
+    @staticmethod
     def _expand_long_words(words: list[WordTimestamp], maximum_characters: int) -> list[WordTimestamp]:
         expanded: list[WordTimestamp] = []
         maximum_characters = max(1, maximum_characters)
@@ -90,10 +116,36 @@ class SubtitleSegmenter:
 
     @staticmethod
     def _join(words: list[WordTimestamp]) -> str:
-        text = "".join(word.text for word in words)
-        if any(char.isspace() for word in words for char in word.text):
-            text = " ".join(word.text.strip() for word in words if word.text.strip())
-        return text.strip()
+        raw_tokens = [word.text for word in words if word.text.strip()]
+        if not raw_tokens:
+            return ""
+        tokens = [token.strip() for token in raw_tokens]
+        text = tokens[0]
+        for index, token in enumerate(tokens[1:], start=1):
+            previous = tokens[index - 1]
+            explicit_space = raw_tokens[index - 1][-1:].isspace() or raw_tokens[index][:1].isspace()
+            if SubtitleSegmenter._needs_space(previous, token, explicit_space):
+                text += " "
+            text += token
+        return text
+
+    @staticmethod
+    def _needs_space(previous: str, current: str, explicit_space: bool) -> bool:
+        if not previous or not current:
+            return False
+        left, right = previous[-1], current[0]
+        no_space_before = ",.!?;:%)]}>，。！？：；、…"
+        no_space_after = "([{<“‘"
+        word_joiners = "'’-/"
+        if right in no_space_before or right in word_joiners:
+            return False
+        if left in no_space_after or left in word_joiners:
+            return False
+        if explicit_space:
+            return True
+        if left.isascii() and left.isalnum() and right.isascii() and right.isalnum():
+            return True
+        return left in no_space_before and right.isascii() and right.isalnum()
 
     def _wrap(self, text: str) -> str:
         target = self.options.target_characters_per_line

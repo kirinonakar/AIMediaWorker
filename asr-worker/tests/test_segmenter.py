@@ -33,6 +33,38 @@ class SubtitleSegmenterTests(unittest.TestCase):
         self.assertEqual(text, "".join(segment.text.replace("\n", "") for segment in segments))
         self.assertGreater(len(segments), 1)
 
+    def test_english_word_tokens_restore_spaces_without_spacing_punctuation(self) -> None:
+        words = [
+            WordTimestamp(0, 400_000, "Hello"),
+            WordTimestamp(400_000, 800_000, "world"),
+            WordTimestamp(900_000, 1_200_000, "this"),
+            WordTimestamp(1_200_000, 1_400_000, "is"),
+            WordTimestamp(1_400_000, 1_800_000, "English"),
+        ]
+        segmenter = SubtitleSegmenter(SegmentationOptions(maximum_duration_seconds=10, target_characters_per_line=100, maximum_characters_per_second=100))
+
+        segments = segmenter.segment(words, "Hello world, this is English.")
+
+        self.assertEqual("Hello world, this is English.", "".join(segment.text.replace("\n", "") for segment in segments))
+
+    def test_korean_morpheme_tokens_restore_original_word_spacing(self) -> None:
+        words = [
+            WordTimestamp(0, 300_000, "안녕"),
+            WordTimestamp(300_000, 700_000, "하세요"),
+            WordTimestamp(700_000, 1_100_000, "여러분"),
+        ]
+        segmenter = SubtitleSegmenter(SegmentationOptions(maximum_characters_per_second=100))
+
+        segments = segmenter.segment(words, "안녕하세요 여러분")
+
+        self.assertEqual("안녕하세요 여러분", "".join(segment.text.replace("\n", "") for segment in segments))
+
+    def test_cjk_character_tokens_remain_unspaced(self) -> None:
+        words = [WordTimestamp(0, 300_000, "日"), WordTimestamp(300_000, 600_000, "本"), WordTimestamp(600_000, 900_000, "語")]
+        segmenter = SubtitleSegmenter(SegmentationOptions(maximum_characters_per_second=100))
+
+        self.assertEqual("日本語", segmenter.segment(words)[0].text)
+
 
 if __name__ == "__main__":
     unittest.main()
