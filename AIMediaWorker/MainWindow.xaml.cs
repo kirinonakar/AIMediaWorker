@@ -22,6 +22,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Rectangle = Microsoft.UI.Xaml.Shapes.Rectangle;
 using Line = Microsoft.UI.Xaml.Shapes.Line;
 using Windows.Graphics;
@@ -559,7 +560,7 @@ public sealed partial class MainWindow : Window
     private void OnMuteClick(object sender, RoutedEventArgs e)
     {
         TryPlayback(() => _playback.SetMute(!_playback.IsMuted));
-        MuteIcon.UriSource = PlaybackIconUri(_playback.IsMuted ? "mute" : "volume");
+        MuteIcon.Source = PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
     }
     private void OnToggleSubtitleVisibilityClick(object sender, RoutedEventArgs e)
     {
@@ -572,7 +573,7 @@ public sealed partial class MainWindow : Window
     private void OnRepeatClick(object sender, RoutedEventArgs e)
     {
         _repeatMode = _repeatMode switch { RepeatMode.Off => RepeatMode.One, RepeatMode.One => RepeatMode.All, _ => RepeatMode.Off };
-        RepeatIcon.UriSource = PlaybackIconUri(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.All => "repeat-all", _ => "repeat" });
+        RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.All => "repeat-all", _ => "repeat" });
         ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.All => "TooltipRepeatPlaylist", _ => "TooltipRepeatOff" }));
         UpdatePlaylistButtons();
     }
@@ -1037,7 +1038,7 @@ public sealed partial class MainWindow : Window
 
     private void OnPlaybackStateChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
-        PlayPauseIcon.UriSource = PlaybackIconUri(_playback.State == PlaybackState.Playing ? "pause" : "play");
+        PlayPauseIcon.Source = PlaybackIconSource(_playback.State == PlaybackState.Playing ? "pause" : "play");
         StatusText.Text = L(_playback.State switch
         {
             PlaybackState.Playing => "PlaybackStatePlaying",
@@ -2153,11 +2154,32 @@ public sealed partial class MainWindow : Window
     {
         RootGrid.RequestedTheme = theme switch { AppTheme.Light => ElementTheme.Light, AppTheme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
         ApplyTitleBarTheme(RootGrid.ActualTheme);
+        UpdatePlaybackIcons();
     }
 
-    private static Uri PlaybackIconUri(string name) => new($"ms-appx:///Assets/Playback/{name}.svg");
+    private SvgImageSource PlaybackIconSource(string name) => new()
+    {
+        UriSource = new Uri($"ms-appx:///Assets/Playback/{name}{(RootGrid.ActualTheme == ElementTheme.Dark ? "-dark" : string.Empty)}.svg")
+    };
 
-    private void OnRootActualThemeChanged(FrameworkElement sender, object args) => ApplyTitleBarTheme(sender.ActualTheme);
+    private void UpdatePlaybackIcons()
+    {
+        BeginningIcon.Source = PlaybackIconSource("beginning");
+        PreviousIcon.Source = PlaybackIconSource("previous");
+        SeekBackIcon.Source = PlaybackIconSource("seek-back");
+        PlayPauseIcon.Source = PlaybackIconSource(_playback.State == PlaybackState.Playing ? "pause" : "play");
+        StopIcon.Source = PlaybackIconSource("stop");
+        SeekForwardIcon.Source = PlaybackIconSource("seek-forward");
+        NextIcon.Source = PlaybackIconSource("next");
+        MuteIcon.Source = PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
+        RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.All => "repeat-all", _ => "repeat" });
+    }
+
+    private void OnRootActualThemeChanged(FrameworkElement sender, object args)
+    {
+        ApplyTitleBarTheme(sender.ActualTheme);
+        UpdatePlaybackIcons();
+    }
 
     private void ApplyTitleBarTheme(ElementTheme theme)
     {
