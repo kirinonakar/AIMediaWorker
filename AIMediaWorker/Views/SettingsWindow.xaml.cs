@@ -343,6 +343,7 @@ public sealed partial class SettingsWindow : Window
     private void OnCancelClick(object sender, RoutedEventArgs e) => Close();
     private static void RestartApplication()
     {
+        try { AppInstance.GetCurrent().UnregisterKey(); } catch { }
         try
         {
             AppInstance.Restart(string.Empty);

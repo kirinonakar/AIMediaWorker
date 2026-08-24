@@ -6,12 +6,14 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
+using Microsoft.UI.Dispatching;
 using Microsoft.Windows.AppLifecycle;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Threading;
 using Windows.ApplicationModel;
 using Windows.ApplicationModel.Activation;
 using Windows.Foundation;
@@ -51,6 +53,51 @@ namespace AIMediaWorker
             UnhandledException += (_, eventArgs) => _ = AppLog.WriteAsync("critical", "application", "UNHANDLED_EXCEPTION", eventArgs.Message, eventArgs.Exception);
         }
 
+        private const string SingleInstanceKey = "AIMediaWorker.SingleInstance";
+
+        /// <summary>
+        /// Custom entry point. Enforces a single running instance: a secondary launch
+        /// redirects its activation (for example a file opened from Explorer) to the
+        /// already running instance and then exits immediately.
+        /// </summary>
+        [STAThread]
+        public static void Main(string[] args)
+        {
+            WinRT.ComWrappersSupport.InitializeComWrappers();
+
+            Microsoft.Windows.AppLifecycle.AppInstance primaryInstance;
+            try { primaryInstance = Microsoft.Windows.AppLifecycle.AppInstance.FindOrRegisterForKey(SingleInstanceKey); }
+            catch { primaryInstance = Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent(); }
+
+            if (!primaryInstance.IsCurrent)
+            {
+                try
+                {
+                    // RedirectActivationToAsync must run to completion before this process exits,
+                    // and blocking the STA thread is discouraged, so redirect on a worker thread
+                    // and wait for it to finish.
+                    var activationArgs = Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs();
+                    using var redirectCompleted = new ManualResetEventSlim(false);
+                    ThreadPool.QueueUserWorkItem(_ =>
+                    {
+                        try { primaryInstance.RedirectActivationToAsync(activationArgs).AsTask().Wait(); }
+                        catch { }
+                        finally { redirectCompleted.Set(); }
+                    });
+                    redirectCompleted.Wait(TimeSpan.FromSeconds(5));
+                }
+                catch { /* The running instance may not accept redirection; exit anyway. */ }
+                return;
+            }
+
+            Microsoft.UI.Xaml.Application.Start(_ =>
+            {
+                var context = new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread());
+                SynchronizationContext.SetSynchronizationContext(context);
+                new App();
+            });
+        }
+
         /// <summary>
         /// Invoked when the application is launched.
         /// </summary>
@@ -67,6 +114,14 @@ namespace AIMediaWorker
                 mainWindow.ApplySavedWindowPlacement(settings.Window);
                 _window = mainWindow;
                 _window.Activate();
+                Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += (_, args) =>
+                {
+                    if (_window is not MainWindow window) return;
+                    var filePaths = args.Kind == ExtendedActivationKind.File && args.Data is IFileActivatedEventArgs fileActivation
+                        ? fileActivation.Files.OfType<StorageFile>().Select(file => file.Path).ToArray()
+                        : Array.Empty<string>();
+                    window.DispatcherQueue.TryEnqueue(() => window.ActivateFromExternalLaunch(filePaths));
+                };
                 _ = MigrateWebDavCredentialsAsync(settings);
             }
             catch (Exception exception)

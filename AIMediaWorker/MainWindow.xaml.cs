@@ -378,6 +378,44 @@ public sealed partial class MainWindow : Window
         await OpenFilesAsPlaylistAsync(files);
     }
 
+    /// <summary>
+    /// Handles a launch redirected from a secondary app instance: brings this window
+    /// to the foreground and opens the forwarded files.
+    /// </summary>
+    public void ActivateFromExternalLaunch(IReadOnlyList<string>? filePaths)
+    {
+        BringToFront();
+        if (filePaths is not { Count: > 0 }) return;
+        if (_initialized && _playback.IsAvailable)
+        {
+            _ = OpenForwardedFilesAsync(filePaths);
+        }
+        else
+        {
+            _pendingDroppedFiles = filePaths.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            _pendingLaunchSource = null;
+            StatusText.Text = L("StatusPreparingDroppedMedia");
+        }
+    }
+
+    private async Task OpenForwardedFilesAsync(IReadOnlyList<string> filePaths)
+    {
+        try { await HandleDroppedFilesAsync(filePaths); }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "activation", "REDIRECTED_OPEN_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
+        }
+    }
+
+    private void BringToFront()
+    {
+        var handle = WindowNative.GetWindowHandle(this);
+        if (_appWindow?.Presenter is OverlappedPresenter presenter && presenter.State == OverlappedPresenterState.Minimized) presenter.Restore();
+        ShowWindow(handle, 9); // SW_RESTORE
+        SetForegroundWindow(handle);
+    }
+
     private async Task OpenMediaAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, IMediaSource? mediaSource = null, bool preservePlaylist = false)
     {
         // Cancelling an active ASR/translation request can take a second or two while its
@@ -3058,6 +3096,8 @@ public sealed partial class MainWindow : Window
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)] private static extern int GetWindowLong(nint window, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)] private static extern int SetWindowLong(nint window, int index, int value);
     [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
 
     private enum TimelineDragMode { None, Move, ResizeStart, ResizeEnd }
     private enum RepeatMode { Off, One, All }
