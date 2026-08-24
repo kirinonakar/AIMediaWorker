@@ -122,4 +122,17 @@
   <data name="ScreenRecordingErrorTitle"><value>画面録画エラー</value></data>
   <data name="RegionSelectionInstruction"><value>ドラッグして録画範囲を選択 · Escでキャンセル</value></data>
   <data name="HelpMenu.Title"><value>ヘルプ</value></data><data name="About.Text"><value>バージョン情報</value></data><data name="AboutTitle"><value>AIMediaWorker について</value></data><data name="AboutVersion"><value>バージョン {0}</value></data><data name="AboutThirdPartyLicenses"><value>サードパーティライセンス</value></data>
+  <data name="SettingsAssociationsSection.Text"><value>関連付け</value></data>
+  <data name="FileAssociationsHeading.Text"><value>ファイルの関連付け</value></data>
+  <data name="FileAssociationsDescription.Text"><value>AIMediaWorkerをWindowsに登録してから、メディア拡張子ごとの既定のアプリを選択します。登録すると、右クリックの「プログラムから開く」にもAIMediaWorkerが表示されます。</value></data>
+  <data name="RegisterAssociationsButton.Content"><value>Windowsにアプリを登録</value></data>
+  <data name="OpenDefaultAppsButton.Content"><value>Windowsの既定のアプリを開く</value></data>
+  <data name="FileAssociationsPackagedStatus"><value>インストールパッケージが対応拡張子をWindowsに登録しました。</value></data>
+  <data name="FileAssociationsRegisteredStatus"><value>このユーザーの利用可能なアプリとして登録されています。</value></data>
+  <data name="FileAssociationsNotRegisteredStatus"><value>このユーザーの利用可能なアプリとしてまだ登録されていません。</value></data>
+  <data name="FileAssociationsRegisteredTitle"><value>アプリを登録しました</value></data>
+  <data name="FileAssociationsRegisteredMessage"><value>選択した拡張子にAIMediaWorkerを登録しました。「プログラムから開く」で選択するか、既定のアプリに設定できます。</value></data>
+  <data name="FileAssociationsErrorTitle"><value>ファイルの関連付けエラー</value></data>
+  <data name="FileAssociationsSelectionRequiredMessage"><value>拡張子を1つ以上選択してください。</value></data>
+  <data name="DefaultAppsOpenFailedMessage"><value>Windowsの既定のアプリ設定を開けませんでした。</value></data>
 </root>

@@ -32,6 +32,7 @@
                             </Style>
                         </ListView.ItemContainerStyle>
                         <ListViewItem><TextBlock x:Uid="SettingsGeneralSection" Text="General" Padding="10,8" /></ListViewItem>
+                        <ListViewItem><TextBlock x:Uid="SettingsAssociationsSection" Text="File associations" Padding="10,8" TextWrapping="Wrap" /></ListViewItem>
                         <ListViewItem><TextBlock x:Uid="SettingsPlaybackSection" Text="Playback" Padding="10,8" /></ListViewItem>
                         <ListViewItem><TextBlock x:Uid="SettingsSubtitleSection" Text="Subtitle" Padding="10,8" /></ListViewItem>
                         <ListViewItem><TextBlock x:Uid="SettingsAsrSection" Text="Speech recognition" Padding="10,8" TextWrapping="Wrap" /></ListViewItem>
@@ -51,6 +52,21 @@
                 <CheckBox x:Uid="ResumeSetting" x:Name="ResumeCheck" Grid.Row="3" Grid.Column="1" Content="Resume playback position" />
                 <TextBlock x:Uid="DefaultFolderSetting" Grid.Row="4" Text="Default folder" VerticalAlignment="Center" /><Grid Grid.Row="4" Grid.Column="1" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Button x:Uid="BrowseDefaultFolderButton" Grid.Column="1" Content="Browse…" Click="OnBrowseDefaultFolderClick" /><Button x:Uid="ClearDefaultFolderButton" Grid.Column="2" Content="Clear" Click="OnClearDefaultFolderClick" /></Grid><TextBox x:Uid="DefaultFolderBox" x:Name="DefaultFolderBox" Grid.Row="5" Grid.ColumnSpan="2" PlaceholderText="No default folder — opens Videos on startup" />
             </Grid></StackPanel></Border>
+                </StackPanel></ScrollViewer>
+                <ScrollViewer x:Name="AssociationsSection" Visibility="Collapsed"><StackPanel Spacing="16" Padding="0,0,12,12">
+            <Border Style="{StaticResource SettingsCardStyle}"><StackPanel Spacing="14">
+                <TextBlock x:Uid="FileAssociationsHeading" Text="File associations" Style="{StaticResource SettingsCardTitleStyle}" Margin="0" />
+                <TextBlock x:Uid="FileAssociationsDescription" Text="Register AIMediaWorker with Windows, then choose the default app for each media extension. Registration also adds AIMediaWorker to Open with." TextWrapping="Wrap" Opacity="0.78" />
+                <ItemsControl x:Name="AssociationOptionsList" ItemsSource="{x:Bind AssociationOptions}">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="4" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate><DataTemplate><CheckBox Content="{Binding Extension}" IsChecked="{Binding IsSelected, Mode=TwoWay}" MinWidth="92" Margin="0,2,12,2" /></DataTemplate></ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock x:Name="AssociationStateText" TextWrapping="Wrap" Opacity="0.78" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Uid="RegisterAssociationsButton" x:Name="RegisterAssociationsButton" Content="Register with Windows" Click="OnRegisterAssociationsClick" />
+                    <Button x:Uid="OpenDefaultAppsButton" Content="Open Windows default apps" Style="{StaticResource AccentButtonStyle}" Click="OnOpenDefaultAppsClick" />
+                </StackPanel>
+            </StackPanel></Border>
                 </StackPanel></ScrollViewer>
                 <ScrollViewer x:Name="PlaybackSection" Visibility="Collapsed"><StackPanel Spacing="16" Padding="0,0,12,12">
             <Border Style="{StaticResource SettingsCardStyle}"><StackPanel><TextBlock Text="{x:Bind PlaybackHeading}" Style="{StaticResource SettingsCardTitleStyle}" /><Grid ColumnSpacing="20" RowSpacing="12">

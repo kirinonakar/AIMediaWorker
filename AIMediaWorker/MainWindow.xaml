@@ -97,7 +97,7 @@
             <Border x:Name="VideoPlaceholder" Grid.Column="0" Background="Black" Margin="8,4,4,4" DoubleTapped="OnVideoDoubleTapped">
                 <Grid>
                     <TextBlock x:Uid="InitialVideoStatus" x:Name="VideoStatusText" Text="Open a local file or stream URL" Foreground="White" Opacity="0.72" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    <Button x:Name="VideoFocusTarget" Width="1" Height="1" Opacity="0" IsTabStop="False" IsHitTestVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top" />
+                    <Button x:Name="VideoFocusTarget" Width="1" Height="1" Opacity="0" IsTabStop="True" IsHitTestVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top" />
                 </Grid>
             </Border>
             <primitives:Thumb x:Name="RightPanelSplitter" Grid.Column="1" DragDelta="OnRightPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />

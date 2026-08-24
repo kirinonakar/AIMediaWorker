@@ -43,8 +43,10 @@ namespace AIMediaWorker
         public App()
         {
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+            var settingsService = SettingsService.CreateDefault();
+            LocalizationService.Apply(settingsService.LoadLanguage());
             InitializeComponent();
-            _settingsLoadTask = SettingsService.CreateDefault().LoadAsync();
+            _settingsLoadTask = settingsService.LoadAsync();
             _ = MpvPlaybackEngine.PreloadAsync();
             UnhandledException += (_, eventArgs) => _ = AppLog.WriteAsync("critical", "application", "UNHANDLED_EXCEPTION", eventArgs.Message, eventArgs.Exception);
         }

@@ -43,6 +43,7 @@ public sealed class NativeVideoHost : IDisposable
     public nint Handle => _handle;
     public bool IsVisible => _visible;
     public event EventHandler<FilesDroppedEventArgs>? FilesDropped;
+    public event EventHandler? Clicked;
     public event EventHandler? DoubleClicked;
 
     public nint Create()
@@ -106,6 +107,7 @@ public sealed class NativeVideoHost : IDisposable
         if (message == WmLeftButtonDown)
         {
             SetCapture(window);
+            Clicked?.Invoke(this, EventArgs.Empty);
             return 0;
         }
         if (message == WmLeftButtonDoubleClick)

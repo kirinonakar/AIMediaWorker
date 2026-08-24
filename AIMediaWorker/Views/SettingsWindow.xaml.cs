@@ -11,6 +11,8 @@ using WinRT.Interop;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Llm;
 using AIMediaWorker.Localization;
+using AIMediaWorker.WindowsIntegration;
+using System.ComponentModel;
 
 namespace AIMediaWorker.Views;
 
@@ -19,6 +21,7 @@ public sealed partial class SettingsWindow : Window
     public IReadOnlyList<string> CaptionPositions { get; } = ["Top", "Center", "Bottom"];
     private readonly SettingsService _service = SettingsService.CreateDefault();
     private readonly WindowsCredentialService _credentials = new();
+    private readonly WindowsFileAssociationService _fileAssociations = new();
     private AppSettings _settings = new();
     private AppWindow? _appWindow;
     public Array Languages { get; } = Enum.GetValues<AppLanguage>();
@@ -28,6 +31,7 @@ public sealed partial class SettingsWindow : Window
     public Array AsrDevices { get; } = Enum.GetValues<AsrDevice>();
     public Array Precisions { get; } = Enum.GetValues<AsrPrecision>();
     public Array ThinkingLevels { get; } = Enum.GetValues<ThinkingLevel>();
+    public IReadOnlyList<FileAssociationOption> AssociationOptions { get; } = WindowsFileAssociationService.SupportedExtensions.Select(extension => new FileAssociationOption(extension)).ToArray();
     public string[] Providers { get; } = ["Unsloth Desktop", "Google", "OllamaCloud", "OpenCodeGo", "OpenCodeZen"];
     public string GeneralHeading { get; } = L("GeneralExpander.Header");
     public string PlaybackHeading { get; } = L("PlaybackExpander.Header");
@@ -63,8 +67,8 @@ public sealed partial class SettingsWindow : Window
 
     private void OnSettingsSectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        var selectedIndex = Math.Clamp(SettingsSectionList.SelectedIndex, 0, 6);
-        FrameworkElement[] sections = [GeneralSection, PlaybackSection, SubtitleSection, AsrSection, NetworkSection, CaptureSection, LlmSection];
+        var selectedIndex = Math.Clamp(SettingsSectionList.SelectedIndex, 0, 7);
+        FrameworkElement[] sections = [GeneralSection, AssociationsSection, PlaybackSection, SubtitleSection, AsrSection, NetworkSection, CaptureSection, LlmSection];
         for (var index = 0; index < sections.Length; index++) sections[index].Visibility = index == selectedIndex ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -121,6 +125,63 @@ public sealed partial class SettingsWindow : Window
         var rtx = new GraphicsCapabilityService().DetectRtxVideoSuperResolution();
         RtxStatusText.Text = rtx.Status;
         if (!rtx.IsSupported) { RtxCombo.SelectedItem = RtxVideoSuperResolutionMode.Off; RtxCombo.IsEnabled = false; RtxQualityBox.IsEnabled = false; }
+        var isPackaged = _fileAssociations.IsPackaged;
+        var registeredExtensions = isPackaged
+            ? AssociationOptions.Select(option => option.Extension).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : AssociationOptions.Where(option => _fileAssociations.IsRegistered(option.Extension)).Select(option => option.Extension).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!isPackaged && registeredExtensions.Count > 0)
+            foreach (var option in AssociationOptions) option.IsSelected = registeredExtensions.Contains(option.Extension);
+        RegisterAssociationsButton.IsEnabled = !isPackaged;
+        AssociationOptionsList.IsEnabled = !isPackaged;
+        AssociationStateText.Text = isPackaged
+            ? L("FileAssociationsPackagedStatus")
+            : registeredExtensions.Count > 0
+                ? L("FileAssociationsRegisteredStatus")
+                : L("FileAssociationsNotRegisteredStatus");
+    }
+
+    private void OnRegisterAssociationsClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _fileAssociations.Register(GetSelectedAssociationExtensions());
+            AssociationStateText.Text = L("FileAssociationsRegisteredStatus");
+            StatusBar.Title = L("FileAssociationsRegisteredTitle");
+            StatusBar.Message = L("FileAssociationsRegisteredMessage");
+            StatusBar.Severity = InfoBarSeverity.Success;
+            StatusBar.IsOpen = true;
+        }
+        catch (Exception exception)
+        {
+            StatusBar.Title = L("FileAssociationsErrorTitle");
+            StatusBar.Message = exception.Message;
+            StatusBar.Severity = InfoBarSeverity.Error;
+            StatusBar.IsOpen = true;
+        }
+    }
+
+    private async void OnOpenDefaultAppsClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (!_fileAssociations.IsPackaged) _fileAssociations.Register(GetSelectedAssociationExtensions());
+            if (!await Windows.System.Launcher.LaunchUriAsync(_fileAssociations.GetDefaultAppsSettingsUri()))
+                throw new InvalidOperationException(L("DefaultAppsOpenFailedMessage"));
+        }
+        catch (Exception exception)
+        {
+            StatusBar.Title = L("FileAssociationsErrorTitle");
+            StatusBar.Message = exception.Message;
+            StatusBar.Severity = InfoBarSeverity.Error;
+            StatusBar.IsOpen = true;
+        }
+    }
+
+    private string[] GetSelectedAssociationExtensions()
+    {
+        var selected = AssociationOptions.Where(option => option.IsSelected).Select(option => option.Extension).ToArray();
+        if (selected.Length == 0) throw new InvalidOperationException(L("FileAssociationsSelectionRequiredMessage"));
+        return selected;
     }
 
     private void OnProviderChanged(object sender, SelectionChangedEventArgs e)
@@ -238,4 +299,24 @@ public sealed partial class SettingsWindow : Window
     private static string? EmptyToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
+}
+
+public sealed class FileAssociationOption : INotifyPropertyChanged
+{
+    private bool _isSelected = true;
+
+    public FileAssociationOption(string extension) => Extension = extension;
+    public string Extension { get; }
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value) return;
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }

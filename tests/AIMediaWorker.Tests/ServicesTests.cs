@@ -35,6 +35,7 @@ public sealed class ServicesTests : IDisposable
         var path = Path.Combine(_folder, "settings.json");
         var service = new SettingsService(path);
         var settings = new AppSettings();
+        settings.General.Language = AppLanguage.Japanese;
         settings.Asr.Language = "ko";
         settings.Playback.DefaultVolume = 77;
         settings.Playback.ShowSubtitles = false;
@@ -47,7 +48,9 @@ public sealed class ServicesTests : IDisposable
         settings.Window.RightPanelWidth = 440;
         settings.Window.BottomPanelHeight = 220;
         await service.SaveAsync(settings);
+        Assert.Equal(AppLanguage.Japanese, service.LoadLanguage());
         var loaded = await service.LoadAsync();
+        Assert.Equal(AppLanguage.Japanese, loaded.General.Language);
         Assert.Equal("ko", loaded.Asr.Language);
         Assert.Equal(77, loaded.Playback.DefaultVolume);
         Assert.False(loaded.Playback.ShowSubtitles);
@@ -55,6 +58,7 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal((120, 80, 1440, 900, true), (loaded.Window.X, loaded.Window.Y, loaded.Window.Width, loaded.Window.Height, loaded.Window.IsMaximized));
         Assert.Equal((440, 220), (loaded.Window.RightPanelWidth, loaded.Window.BottomPanelHeight));
         await File.WriteAllTextAsync(path, "{ definitely broken");
+        Assert.Equal(AppLanguage.Default, service.LoadLanguage());
         var recovered = await service.LoadAsync();
         Assert.Equal("auto", recovered.Asr.Language);
         Assert.NotEmpty(Directory.GetFiles(_folder, "settings.json.corrupt-*"));

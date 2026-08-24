@@ -122,4 +122,17 @@
   <data name="ScreenRecordingErrorTitle"><value>화면 녹화 오류</value></data>
   <data name="RegionSelectionInstruction"><value>드래그하여 녹화 영역 지정 · Esc로 취소</value></data>
   <data name="HelpMenu.Title"><value>도움말</value></data><data name="About.Text"><value>정보</value></data><data name="AboutTitle"><value>AIMediaWorker 정보</value></data><data name="AboutVersion"><value>버전 {0}</value></data><data name="AboutThirdPartyLicenses"><value>타사 라이선스</value></data>
+  <data name="SettingsAssociationsSection.Text"><value>연결</value></data>
+  <data name="FileAssociationsHeading.Text"><value>파일 연결</value></data>
+  <data name="FileAssociationsDescription.Text"><value>AIMediaWorker를 Windows에 등록한 뒤 미디어 확장자별 기본 앱을 선택하세요. 등록하면 우클릭의 '연결 프로그램'에도 AIMediaWorker가 표시됩니다.</value></data>
+  <data name="RegisterAssociationsButton.Content"><value>Windows에 앱 등록</value></data>
+  <data name="OpenDefaultAppsButton.Content"><value>Windows 기본 앱 열기</value></data>
+  <data name="FileAssociationsPackagedStatus"><value>설치 패키지에서 지원 확장자를 Windows에 등록했습니다.</value></data>
+  <data name="FileAssociationsRegisteredStatus"><value>이 사용자 계정의 연결 프로그램에 등록되어 있습니다.</value></data>
+  <data name="FileAssociationsNotRegisteredStatus"><value>아직 이 사용자 계정의 연결 프로그램에 등록되지 않았습니다.</value></data>
+  <data name="FileAssociationsRegisteredTitle"><value>앱 등록 완료</value></data>
+  <data name="FileAssociationsRegisteredMessage"><value>선택한 확장자에 AIMediaWorker를 등록했습니다. 이제 연결 프로그램에서 선택하거나 기본 앱으로 지정할 수 있습니다.</value></data>
+  <data name="FileAssociationsErrorTitle"><value>파일 연결 오류</value></data>
+  <data name="FileAssociationsSelectionRequiredMessage"><value>하나 이상의 확장자를 선택하세요.</value></data>
+  <data name="DefaultAppsOpenFailedMessage"><value>Windows 기본 앱 설정을 열 수 없습니다.</value></data>
 </root>

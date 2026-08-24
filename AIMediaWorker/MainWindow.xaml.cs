@@ -227,6 +227,7 @@ public sealed partial class MainWindow : Window
             var historyLoad = _historyLoadTask ??= _historyService.LoadAsync();
             _videoHost = new NativeVideoHost(this, VideoPlaceholder);
             _videoHost.FilesDropped += OnNativeVideoFilesDropped;
+            _videoHost.Clicked += OnNativeVideoClicked;
             _videoHost.DoubleClicked += OnNativeVideoDoubleClicked;
             var playbackInitialization = _playback.InitializeAsync(_videoHost.Create(), _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
             await playbackInitialization;
@@ -349,6 +350,9 @@ public sealed partial class MainWindow : Window
         if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) TryPlayback(_playback.TogglePause);
     }
 
+    private void OnNativeVideoClicked(object? sender, EventArgs e)
+        => DispatcherQueue.TryEnqueue(FocusPlaybackSurface);
+
     private async Task HandleDroppedFilesAsync(IEnumerable<string> paths)
     {
         var files = paths.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -386,6 +390,7 @@ public sealed partial class MainWindow : Window
             VideoStatusText.Visibility = Visibility.Collapsed;
             QueuePostOpenWork(source, !preservePlaylist);
             UpdatePlaylistButtons();
+            FocusPlaybackSurface();
         }
         catch (Exception exception)
         {
@@ -1127,7 +1132,9 @@ public sealed partial class MainWindow : Window
     private void FocusPlaybackSurface()
     {
         VideoFocusTarget.Focus(FocusState.Programmatic);
-        DispatcherQueue.TryEnqueue(() => VideoFocusTarget.Focus(FocusState.Programmatic));
+        DispatcherQueue.TryEnqueue(
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            () => VideoFocusTarget.Focus(FocusState.Programmatic));
     }
 
     private void OnRootKeyDown(object sender, KeyRoutedEventArgs e)
@@ -1280,6 +1287,7 @@ public sealed partial class MainWindow : Window
             _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
             ApplyFullscreenWindowStyle();
             _fullscreenHoverTimer?.Start();
+            FocusPlaybackSurface();
         }
         catch (Exception exception)
         {
@@ -2875,6 +2883,7 @@ public sealed partial class MainWindow : Window
         if (_videoHost is not null)
         {
             _videoHost.FilesDropped -= OnNativeVideoFilesDropped;
+            _videoHost.Clicked -= OnNativeVideoClicked;
             _videoHost.DoubleClicked -= OnNativeVideoDoubleClicked;
             _videoHost.Dispose();
         }

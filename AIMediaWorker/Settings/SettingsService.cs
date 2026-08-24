@@ -21,6 +21,20 @@ public sealed class SettingsService
         return new SettingsService(Path.Combine(folder, "settings.json"));
     }
 
+    public AppLanguage LoadLanguage()
+    {
+        if (!File.Exists(_path)) return AppLanguage.Default;
+        try
+        {
+            using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return JsonSerializer.Deserialize<AppSettings>(stream, _jsonOptions)?.General?.Language ?? AppLanguage.Default;
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return AppLanguage.Default;
+        }
+    }
+
     public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default)
     {
         if (!File.Exists(_path)) return new AppSettings();
