@@ -18,8 +18,8 @@ namespace AIMediaWorker.Views;
 
 public sealed partial class SettingsWindow : Window
 {
-    private const int PreferredWidth = 1680;
-    private const int PreferredHeight = 1080;
+    private const int FixedWidth = 1490;
+    private const int FixedHeight = 1080;
 
     public IReadOnlyList<string> CaptionPositions { get; } = ["Top", "Center", "Bottom"];
     private readonly SettingsService _service = SettingsService.CreateDefault();
@@ -65,8 +65,8 @@ public sealed partial class SettingsWindow : Window
         if (_appWindow?.Presenter is OverlappedPresenter presenter)
         {
             presenter.SetBorderAndTitleBar(true, false);
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = true;
+            presenter.IsResizable = false;
+            presenter.IsMaximizable = false;
         }
         SettingsSectionList.SelectionChanged += OnSettingsSectionChanged;
         SettingsSectionList.SelectedIndex = 0;
@@ -82,8 +82,8 @@ public sealed partial class SettingsWindow : Window
         var ownerHandle = WindowNative.GetWindowHandle(owner);
         var ownerWindowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(ownerHandle);
         var workArea = DisplayArea.GetFromWindowId(ownerWindowId, DisplayAreaFallback.Nearest).WorkArea;
-        var width = Math.Min(PreferredWidth, workArea.Width);
-        var height = Math.Min(PreferredHeight, workArea.Height);
+        const int width = FixedWidth;
+        const int height = FixedHeight;
         var x = workArea.X + (workArea.Width - width) / 2;
         var y = workArea.Y + (workArea.Height - height) / 2;
 
