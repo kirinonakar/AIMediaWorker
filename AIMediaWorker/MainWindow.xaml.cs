@@ -105,7 +105,7 @@ public sealed partial class MainWindow : Window
     private string? _renderedOverlayFontFamily;
     private OverlayCueSnapshot[] _renderedOverlayCues = [];
     private bool _subtitleEditorHasFocus;
-    private readonly List<string> _playlist = [];
+    private readonly List<PlaylistEntry> _playlist = [];
     private int _playlistIndex = -1;
     private RepeatMode _repeatMode;
     private string _browserDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
@@ -437,7 +437,7 @@ public sealed partial class MainWindow : Window
             if (!preservePlaylist)
             {
                 _playlist.Clear();
-                if (File.Exists(source)) { _playlist.Add(Path.GetFullPath(source)); _playlistIndex = 0; }
+                if (File.Exists(source)) { _playlist.Add(PlaylistEntry.FromLocal(source)); _playlistIndex = 0; }
                 else _playlistIndex = -1;
             }
             RememberCurrentPosition();
@@ -574,10 +574,10 @@ public sealed partial class MainWindow : Window
         if (files.Length == 0) return;
         if (files.Length == 1 && IsSubtitlePath(files[0])) { await LoadSubtitleFromPathAsync(files[0]); return; }
         _playlist.Clear();
-        _playlist.AddRange(files.Where(path => !IsSubtitlePath(path)));
+        _playlist.AddRange(files.Where(path => !IsSubtitlePath(path)).Select(PlaylistEntry.FromLocal));
         if (_playlist.Count == 0) return;
         _playlistIndex = 0;
-        await OpenMediaAsync(_playlist[0], preservePlaylist: true);
+        await OpenPlaylistEntryAsync(_playlist[0]);
     }
 
     private static bool IsSubtitlePath(string path) => Path.GetExtension(path).ToLowerInvariant() is ".srt" or ".vtt" or ".ass" or ".ssa";
@@ -595,7 +595,7 @@ public sealed partial class MainWindow : Window
             if (!string.Equals(_playback.CurrentSource, fullPath, StringComparison.OrdinalIgnoreCase)) return;
             var index = Array.FindIndex(siblings, path => path.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
             if (index < 0) return;
-            _playlist.Clear(); _playlist.AddRange(siblings); _playlistIndex = index; UpdatePlaylistButtons();
+            _playlist.Clear(); _playlist.AddRange(siblings.Select(PlaylistEntry.FromLocal)); _playlistIndex = index; UpdatePlaylistButtons();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
     }
@@ -681,14 +681,17 @@ public sealed partial class MainWindow : Window
         if (_repeatMode == RepeatMode.All) next = (next + _playlist.Count) % _playlist.Count;
         if (next < 0 || next >= _playlist.Count) return;
         _playlistIndex = next;
-        await OpenMediaAsync(_playlist[_playlistIndex], preservePlaylist: true);
+        await OpenPlaylistEntryAsync(_playlist[_playlistIndex]);
     }
+
+    private Task OpenPlaylistEntryAsync(PlaylistEntry entry) =>
+        OpenMediaAsync(entry.Path, entry.HttpHeaders, entry.MediaSource, preservePlaylist: true);
 
     private void UpdatePlaylistButtons()
     {
         PreviousButton.IsEnabled = _playlist.Count > 1 && (_playlistIndex > 0 || _repeatMode == RepeatMode.All);
         NextButton.IsEnabled = _playlist.Count > 1 && (_playlistIndex < _playlist.Count - 1 || _repeatMode == RepeatMode.All);
-        PlaylistList.ItemsSource = _playlist.Select(path => new PlaylistEntry(path)).ToArray();
+        PlaylistList.ItemsSource = _playlist.ToArray();
         PlaylistList.SelectedIndex = _playlistIndex;
     }
     private void OnSetAbStartClick(object sender, RoutedEventArgs e)
@@ -2595,8 +2598,8 @@ public sealed partial class MainWindow : Window
         if (e.ClickedItem is not BrowserEntry entry) return;
         if (entry.IsDirectory) { await RefreshBrowserAsync(entry.Path); return; }
         var files = (FolderEntryList.ItemsSource as IEnumerable<BrowserEntry>)?.Where(item => !item.IsDirectory).Select(item => item.Path).ToArray() ?? [entry.Path];
-        _playlist.Clear(); _playlist.AddRange(files); _playlistIndex = Math.Max(0, _playlist.FindIndex(path => path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase)));
-        await OpenMediaAsync(entry.Path, preservePlaylist: true);
+        _playlist.Clear(); _playlist.AddRange(files.Select(PlaylistEntry.FromLocal)); _playlistIndex = Math.Max(0, _playlist.FindIndex(item => item.Path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase)));
+        await OpenPlaylistEntryAsync(_playlist[_playlistIndex]);
     }
 
     private async void OnBrowserBreadcrumbItemClick(BreadcrumbBar sender, BreadcrumbBarItemClickedEventArgs e)
@@ -2694,10 +2697,10 @@ public sealed partial class MainWindow : Window
     private async void OnPlaylistDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (PlaylistList.SelectedItem is not PlaylistEntry entry) return;
-        var index = _playlist.FindIndex(path => path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase));
+        var index = _playlist.IndexOf(entry);
         if (index < 0) return;
         _playlistIndex = index;
-        await OpenMediaAsync(entry.Path, preservePlaylist: true);
+        await OpenPlaylistEntryAsync(entry);
     }
 
     private void OnClearPlaylistClick(object sender, RoutedEventArgs e) { _playlist.Clear(); _playlistIndex = -1; UpdatePlaylistButtons(); }
@@ -2713,10 +2716,45 @@ public sealed partial class MainWindow : Window
         }
         var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == serverId);
         if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("RecentServerMissingMessage")); return; }
-        using var request = _webDavClient.CreateMediaRequest(server, entry.Uri);
-        var headers = request.Headers.Authorization is { } authorization ? new Dictionary<string, string> { ["Authorization"] = authorization.ToString() } : null;
-        await OpenMediaAsync(entry.Uri.AbsoluteUri, headers, new WebDavMediaSource(server.Id, entry.Uri, entry.Name));
+        await OpenWebDavMediaAsync(server, entry, (WebDavPanelEntryList.ItemsSource as IEnumerable<WebDavEntry>)?.ToArray());
     }
+
+    private async Task OpenWebDavMediaAsync(WebDavServerSettings server, WebDavEntry entry, IReadOnlyList<WebDavEntry>? siblings = null)
+    {
+        using var request = _webDavClient.CreateMediaRequest(server, entry.Uri);
+        IReadOnlyDictionary<string, string>? headers = request.Headers.Authorization is { } authorization
+            ? new Dictionary<string, string> { ["Authorization"] = authorization.ToString() }
+            : null;
+
+        if (siblings is null)
+        {
+            try { siblings = await _webDavClient.ListAsync(server, new Uri(entry.Uri, ".")); }
+            catch (Exception exception)
+            {
+                await AppLog.WriteAsync("warning", "webdav", "WEBDAV_SIBLING_LIST_ERROR", exception.Message, exception);
+            }
+        }
+
+        var mediaEntries = (siblings ?? [])
+            .Where(IsPlayableWebDavEntry)
+            .ToList();
+        if (!mediaEntries.Any(candidate => UrisEqual(candidate.Uri, entry.Uri))) mediaEntries.Add(entry);
+
+        _playlist.Clear();
+        _playlist.AddRange(mediaEntries.Select(candidate => PlaylistEntry.FromWebDav(server.Id, candidate, headers)));
+        _playlistIndex = _playlist.FindIndex(item => UrisEqual(new Uri(item.Path), entry.Uri));
+        if (_playlistIndex < 0) _playlistIndex = 0;
+        await OpenPlaylistEntryAsync(_playlist[_playlistIndex]);
+    }
+
+    private static bool IsPlayableWebDavEntry(WebDavEntry entry) =>
+        !entry.IsCollection &&
+        (IsPlayableMediaPath(Uri.UnescapeDataString(entry.Uri.AbsolutePath)) ||
+         entry.ContentType?.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) == true ||
+         entry.ContentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true);
+
+    private static bool UrisEqual(Uri left, Uri right) =>
+        left.AbsoluteUri.Equals(right.AbsoluteUri, StringComparison.OrdinalIgnoreCase);
 
     private void OnWebDavEntryRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
@@ -2824,19 +2862,17 @@ public sealed partial class MainWindow : Window
 
     private async Task OpenRecentAsync(RecentMediaItem recent)
     {
-        IReadOnlyDictionary<string, string>? headers = null;
-        IMediaSource source;
         if (recent.SourceType == MediaSourceKind.WebDav)
         {
             var server = FindWebDavServerForLocation(recent.Location);
             if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("RecentServerMissingMessage")); return; }
-            using var client = new WebDavClient(new WindowsCredentialService());
-            using var request = client.CreateMediaRequest(server, new Uri(recent.Location));
-            headers = request.Headers.Authorization is { } authorization ? new Dictionary<string, string> { ["Authorization"] = authorization.ToString() } : null;
-            source = new WebDavMediaSource(server.Id, new Uri(recent.Location), recent.DisplayName);
+            var uri = new Uri(recent.Location);
+            await OpenWebDavMediaAsync(server, new WebDavEntry(recent.DisplayName, uri, false, null, null, null));
         }
-        else source = MediaSourceFactory.Parse(recent.Location);
-        await OpenMediaAsync(recent.Location, headers, source);
+        else
+        {
+            await OpenMediaAsync(recent.Location, mediaSource: MediaSourceFactory.Parse(recent.Location));
+        }
         if (_settings.General.ResumePlayback && recent.LastPlaybackPositionMicroseconds > 0)
         {
             var resumePosition = TimeSpan.FromTicks(recent.LastPlaybackPositionMicroseconds * 10);
@@ -3096,9 +3132,16 @@ public sealed partial class MainWindow : Window
         Application.Current.Exit();
     }
 
-    private sealed record PlaylistEntry(string Path)
+    private sealed record PlaylistEntry(string Path, string DisplayName, IReadOnlyDictionary<string, string>? HttpHeaders = null, IMediaSource? MediaSource = null)
     {
-        public string DisplayName => System.IO.Path.GetFileName(Path);
+        public static PlaylistEntry FromLocal(string path)
+        {
+            var fullPath = System.IO.Path.GetFullPath(path);
+            return new PlaylistEntry(fullPath, System.IO.Path.GetFileName(fullPath));
+        }
+
+        public static PlaylistEntry FromWebDav(Guid serverId, WebDavEntry entry, IReadOnlyDictionary<string, string>? headers) =>
+            new(entry.Uri.AbsoluteUri, entry.Name, headers, new WebDavMediaSource(serverId, entry.Uri, entry.Name));
     }
 
     private sealed record FavoriteListEntry(FavoriteItem Item, string RemoveLabel)
