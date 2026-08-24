@@ -27,7 +27,7 @@ public sealed class MediaHistoryService
             await using var stream = File.OpenRead(_path);
             var data = await JsonSerializer.DeserializeAsync<HistoryData>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
             Recent = (data?.Recent ?? []).Take(MaximumRecentItems).ToList();
-            Favorites = data?.Favorites ?? [];
+            Favorites = PutFoldersFirst(data?.Favorites ?? []);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
@@ -50,10 +50,27 @@ public sealed class MediaHistoryService
     {
         var key = Normalize(source.Location);
         if (Favorites.Any(item => Normalize(item.Location) == key)) return;
-        Favorites.Add(new FavoriteItem(source.Kind, source.DisplayName, source.Location, isFolder, DateTimeOffset.UtcNow));
+        var favorite = new FavoriteItem(source.Kind, source.DisplayName, source.Location, isFolder, DateTimeOffset.UtcNow);
+        var insertionIndex = isFolder ? Favorites.FindIndex(item => !item.IsFolder) : -1;
+        if (insertionIndex < 0) Favorites.Add(favorite);
+        else Favorites.Insert(insertionIndex, favorite);
     }
 
     public bool RemoveFavorite(string location) => Favorites.RemoveAll(item => Normalize(item.Location) == Normalize(location)) > 0;
+
+    public void ReorderFavorites(IEnumerable<string> orderedLocations)
+    {
+        var favoritesByLocation = Favorites.ToDictionary(item => Normalize(item.Location));
+        var reordered = new List<FavoriteItem>(Favorites.Count);
+
+        foreach (var location in orderedLocations)
+        {
+            if (favoritesByLocation.Remove(Normalize(location), out var favorite)) reordered.Add(favorite);
+        }
+
+        reordered.AddRange(Favorites.Where(item => favoritesByLocation.ContainsKey(Normalize(item.Location))));
+        Favorites = PutFoldersFirst(reordered);
+    }
 
     public async Task SaveAsync(CancellationToken cancellationToken = default)
     {
@@ -66,6 +83,12 @@ public sealed class MediaHistoryService
             File.Move(temp, _path, true);
         }
         finally { _lock.Release(); }
+    }
+
+    private static List<FavoriteItem> PutFoldersFirst(IEnumerable<FavoriteItem> favorites)
+    {
+        var items = favorites.ToList();
+        return items.Where(item => item.IsFolder).Concat(items.Where(item => !item.IsFolder)).ToList();
     }
 
     private static string Normalize(string location) => Uri.TryCreate(location, UriKind.Absolute, out var uri) && !uri.IsFile ? uri.GetComponents(UriComponents.HttpRequestUrl, UriFormat.UriEscaped).TrimEnd('/').ToUpperInvariant() : Path.GetFullPath(location).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant();

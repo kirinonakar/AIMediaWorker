@@ -35,6 +35,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
+using System.Collections.ObjectModel;
 
 namespace AIMediaWorker;
 
@@ -87,6 +88,7 @@ public sealed partial class MainWindow : Window
     private readonly WaveformGenerator _waveformGenerator = new();
     private readonly WaveformCache _waveformCache = new(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIMediaWorker", "Waveforms"));
     private readonly MediaHistoryService _historyService = new(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIMediaWorker", "history.json"));
+    private readonly ObservableCollection<FavoriteListEntry> _favoriteEntries = [];
     private IMediaSource? _currentMediaSource;
     private IReadOnlyDictionary<string, string>? _currentHttpHeaders;
     private SubtitleCue? _dragCue;
@@ -445,6 +447,8 @@ public sealed partial class MainWindow : Window
             await aiPipelineCancellation;
             _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
             _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
+            UpdateWindowTitle(_currentMediaSource.DisplayName);
+            if (_currentMediaSource is WebDavMediaSource webDavSource) SelectWebDavEntry(webDavSource.ServerId, webDavSource.Uri);
             _ = SaveHistoryAfterOpenAsync(_currentMediaSource);
             var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
             _subtitleGenerationCompletedForCurrentMedia = false;
@@ -473,6 +477,14 @@ public sealed partial class MainWindow : Window
             RebuildRecentMenu();
         }
         catch (Exception exception) { await AppLog.WriteAsync("error", "history", "HISTORY_SAVE_AFTER_OPEN_ERROR", exception.Message, exception); }
+    }
+
+    private void UpdateWindowTitle(string displayName)
+    {
+        var title = string.IsNullOrWhiteSpace(displayName) ? "AIMediaWorker" : $"{displayName} - AIMediaWorker";
+        Title = title;
+        if (_appWindow is not null) _appWindow.Title = title;
+        AppTitleText.Text = title;
     }
 
     private void QueuePostOpenWork(string source, bool populateSiblingPlaylist, bool showInExplorer)
@@ -2728,7 +2740,11 @@ public sealed partial class MainWindow : Window
 
         if (siblings is null)
         {
-            try { siblings = await _webDavClient.ListAsync(server, new Uri(entry.Uri, ".")); }
+            try
+            {
+                siblings = await _webDavClient.ListAsync(server, new Uri(entry.Uri, "."));
+                SynchronizeWebDavPanel(server, entry.Uri, siblings);
+            }
             catch (Exception exception)
             {
                 await AppLog.WriteAsync("warning", "webdav", "WEBDAV_SIBLING_LIST_ERROR", exception.Message, exception);
@@ -2756,6 +2772,28 @@ public sealed partial class MainWindow : Window
     private static bool UrisEqual(Uri left, Uri right) =>
         left.AbsoluteUri.Equals(right.AbsoluteUri, StringComparison.OrdinalIgnoreCase);
 
+    private void SynchronizeWebDavPanel(WebDavServerSettings server, Uri mediaUri, IReadOnlyList<WebDavEntry> entries)
+    {
+        var directory = EnsureWebDavDirectoryUri(new Uri(mediaUri, "."));
+        var changedDirectory = _webDavPanelServerId != server.Id || _webDavPanelDirectory is null || !UrisEqual(_webDavPanelDirectory, directory);
+        _webDavPanelServerId = server.Id;
+        _webDavPanelDirectory = directory;
+        WebDavServerList.SelectedItem = server;
+        if (changedDirectory) WebDavFilterBox.Text = string.Empty;
+        _webDavEntries = entries.ToArray();
+        UpdateWebDavBreadcrumbs(server);
+        ApplyWebDavEntryView();
+    }
+
+    private void SelectWebDavEntry(Guid serverId, Uri uri)
+    {
+        if (_webDavPanelServerId != serverId || WebDavPanelEntryList.ItemsSource is not IEnumerable<WebDavEntry> entries) return;
+        var selectedEntry = entries.FirstOrDefault(entry => UrisEqual(entry.Uri, uri));
+        if (selectedEntry is null) return;
+        WebDavPanelEntryList.SelectedItem = selectedEntry;
+        WebDavPanelEntryList.ScrollIntoView(selectedEntry);
+    }
+
     private void OnWebDavEntryRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: WebDavEntry entry }) WebDavPanelEntryList.SelectedItem = entry;
@@ -2779,13 +2817,21 @@ public sealed partial class MainWindow : Window
 
     private void RefreshFavoritesList()
     {
-        var entries = _historyService.Favorites
-            .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-            .Select(item => new FavoriteListEntry(item, L("RemoveFavoriteButton")))
-            .ToArray();
-        FavoriteList.ItemsSource = entries;
-        FavoritesEmptyText.Visibility = entries.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (!ReferenceEquals(FavoriteList.ItemsSource, _favoriteEntries)) FavoriteList.ItemsSource = _favoriteEntries;
+        _favoriteEntries.Clear();
+        foreach (var item in _historyService.Favorites)
+        {
+            _favoriteEntries.Add(new FavoriteListEntry(item, L("RemoveFavoriteButton")));
+        }
+        FavoritesEmptyText.Visibility = _favoriteEntries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateFavoriteCommands();
+    }
+
+    private async void OnFavoriteDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
+    {
+        _historyService.ReorderFavorites(_favoriteEntries.Select(entry => entry.Item.Location));
+        RefreshFavoritesList();
+        await _historyService.SaveAsync();
     }
 
     private void OnFavoriteSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateFavoriteCommands();

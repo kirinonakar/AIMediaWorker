@@ -40,14 +40,15 @@
             <RowDefinition x:Name="BottomPanelSplitterRow" Height="6" /><RowDefinition x:Name="BottomPanelRow" Height="160" /><RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <Grid x:Name="AppTitleBarArea" Grid.Row="0" Height="32" Background="Transparent">
-            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0">
+            <Grid ColumnSpacing="8" VerticalAlignment="Center" Margin="12,0,140,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                 <Image Width="18" Height="18">
                     <Image.Source>
                         <BitmapImage UriSource="ms-appx:///Assets/app.png" />
                     </Image.Source>
                 </Image>
-                <TextBlock Text="AIMediaWorker" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
-            </StackPanel>
+                <TextBlock x:Name="AppTitleText" Grid.Column="1" Text="AIMediaWorker" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            </Grid>
         </Grid>
         <MenuBar x:Name="MainMenuBar" Grid.Row="1">
             <MenuBarItem x:Uid="FileMenu" Title="File">
@@ -185,7 +186,7 @@
                                 <AppBarButton x:Uid="RemoveSelectedFavoritesButton" x:Name="RemoveSelectedFavoritesButton" Icon="Delete" Label="Remove from favorites" Click="OnRemoveSelectedFavoritesClick" IsEnabled="False" />
                             </CommandBar>
                             <Grid Grid.Row="1">
-                                <ListView x:Name="FavoriteList" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnFavoriteItemClick" SelectionChanged="OnFavoriteSelectionChanged">
+                                <ListView x:Name="FavoriteList" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnFavoriteItemClick" SelectionChanged="OnFavoriteSelectionChanged" CanDragItems="True" CanReorderItems="True" AllowDrop="True" DragItemsCompleted="OnFavoriteDragItemsCompleted">
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <Grid Padding="6" ColumnSpacing="8">

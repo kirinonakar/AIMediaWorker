@@ -184,6 +184,33 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
+    public async Task FavoriteFoldersStayAboveFilesAndDraggedOrderPersists()
+    {
+        var path = Path.Combine(_folder, "favorite-order.json");
+        var history = new MediaHistoryService(path);
+        var firstFile = new HttpMediaSource(new Uri("https://example.test/first.mp4"));
+        var secondFile = new HttpMediaSource(new Uri("https://example.test/second.mp4"));
+        var firstFolder = new LocalMediaSource(Path.Combine(_folder, "FirstFolder"));
+        var secondFolder = new LocalMediaSource(Path.Combine(_folder, "SecondFolder"));
+
+        history.AddFavorite(firstFile);
+        history.AddFavorite(firstFolder, true);
+        history.AddFavorite(secondFile);
+        history.AddFavorite(secondFolder, true);
+
+        Assert.Equal([firstFolder.Location, secondFolder.Location, firstFile.Location, secondFile.Location], history.Favorites.Select(item => item.Location));
+
+        history.ReorderFavorites([secondFile.Location, secondFolder.Location, firstFile.Location, firstFolder.Location]);
+        Assert.Equal([secondFolder.Location, firstFolder.Location, secondFile.Location, firstFile.Location], history.Favorites.Select(item => item.Location));
+
+        await history.SaveAsync();
+        var loaded = new MediaHistoryService(path);
+        await loaded.LoadAsync();
+
+        Assert.Equal([secondFolder.Location, firstFolder.Location, secondFile.Location, firstFile.Location], loaded.Favorites.Select(item => item.Location));
+    }
+
+    [Fact]
     public void WebDavUriResolutionAndCredentialIdentifiersAreStable()
     {
         var directory = new Uri("https://dav.example.test/root/folder/");
