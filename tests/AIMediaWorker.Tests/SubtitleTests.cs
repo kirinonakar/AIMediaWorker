@@ -50,6 +50,19 @@ public sealed class SubtitleTests
     }
 
     [Fact]
+    public void SmiParsesSyncBlocksMarkupAndHtmlEntities()
+    {
+        const string input = "<SAMI><BODY><SYNC Start=1000><P Class=KRCC>첫 줄<br>둘째 &amp; 줄<SYNC Start='3500'><P Class=KRCC>&nbsp;<SYNC Start=5000><P>마지막</BODY></SAMI>";
+
+        var document = SmiParser.Parse(input);
+
+        Assert.Equal(2, document.ActiveTrack!.Cues.Count);
+        Assert.Equal((1_000_000, 3_500_000, "첫 줄\n둘째 & 줄"), (document.ActiveTrack.Cues[0].StartMicroseconds, document.ActiveTrack.Cues[0].EndMicroseconds, document.ActiveTrack.Cues[0].Text));
+        Assert.Equal((5_000_000, 7_000_000, "마지막"), (document.ActiveTrack.Cues[1].StartMicroseconds, document.ActiveTrack.Cues[1].EndMicroseconds, document.ActiveTrack.Cues[1].Text));
+        Assert.Equal("smi", document.ActiveTrack.Format);
+    }
+
+    [Fact]
     public void AssRoundTripKeepsBasicStyle()
     {
         var track = new SubtitleTrack { Format = "ass" };

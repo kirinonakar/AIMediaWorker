@@ -69,6 +69,15 @@ public sealed class WebDavClient : IDisposable
         return request;
     }
 
+    public async Task<byte[]> DownloadAsync(WebDavServerSettings server, Uri uri, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateMediaRequest(server, uri);
+        using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) throw new WebDavException("AUTH_ERROR", "WebDAV authentication failed.", response.StatusCode);
+        if (!response.IsSuccessStatusCode) throw new WebDavException("NETWORK_ERROR", $"WebDAV download failed with HTTP {(int)response.StatusCode}.", response.StatusCode);
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public static Uri ResolveChild(Uri directory, string href)
     {
         if (!directory.IsAbsoluteUri) throw new ArgumentException("The directory URI must be absolute.", nameof(directory));

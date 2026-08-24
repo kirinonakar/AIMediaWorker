@@ -343,6 +343,26 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("user:password")), mediaRequest.Headers.Authorization?.Parameter);
     }
 
+    [Fact]
+    public async Task WebDavSubtitleDownloadUsesStoredAuthentication()
+    {
+        var handler = new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.UTF8.GetBytes("<SAMI><SYNC Start=0><P>caption"))
+        });
+        using var http = new HttpClient(handler);
+        var credentials = new MemoryCredentials();
+        var server = new WebDavServerSettings();
+        new WebDavCredentialStore(credentials).Save(server.Id, new WebDavConnectionCredential("https://dav.example/root/", 443, "user", "password"));
+        using var client = new WebDavClient(credentials, http);
+
+        var bytes = await client.DownloadAsync(server, new Uri("https://dav.example/root/movie.smi"));
+
+        Assert.Contains("caption", Encoding.UTF8.GetString(bytes));
+        Assert.Equal("Basic", handler.Authorization?.Scheme);
+        Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("user:password")), handler.Authorization?.Parameter);
+    }
+
     private sealed class MemoryCredentials : ICredentialService
     {
         private readonly Dictionary<string, (string Username, string Secret)> _values = [];
@@ -354,6 +374,17 @@ public sealed class ServicesTests : IDisposable
     private sealed class StaticHandler(HttpResponseMessage response) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => Task.FromResult(response);
+    }
+
+    private sealed class CapturingHandler(HttpResponseMessage response) : HttpMessageHandler
+    {
+        public System.Net.Http.Headers.AuthenticationHeaderValue? Authorization { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Authorization = request.Headers.Authorization;
+            return Task.FromResult(response);
+        }
     }
 
     public void Dispose()

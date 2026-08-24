@@ -652,7 +652,7 @@ public sealed partial class MainWindow : Window
         await OpenPlaylistEntryAsync(_playlist[0]);
     }
 
-    private static bool IsSubtitlePath(string path) => Path.GetExtension(path).ToLowerInvariant() is ".srt" or ".vtt" or ".ass" or ".ssa";
+    private static bool IsSubtitlePath(string path) => Path.GetExtension(path).ToLowerInvariant() is ".srt" or ".vtt" or ".ass" or ".ssa" or ".smi";
 
     private async Task PopulateSiblingPlaylistAsync(string currentPath)
     {
@@ -811,7 +811,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var picker = new FileOpenPicker();
-            foreach (var extension in new[] { ".srt", ".vtt", ".ass", ".ssa" }) picker.FileTypeFilter.Add(extension);
+            foreach (var extension in new[] { ".srt", ".vtt", ".ass", ".ssa", ".smi" }) picker.FileTypeFilter.Add(extension);
             InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
             var file = await picker.PickSingleFileAsync();
             if (file is not null) await LoadSubtitleFromPathAsync(file.Path);
@@ -830,14 +830,11 @@ public sealed partial class MainWindow : Window
         try
         {
             var text = await File.ReadAllTextAsync(path, ResolveSubtitleEncoding());
-            var document = Path.GetExtension(path).ToLowerInvariant() switch
-            {
-                ".srt" => SrtParser.Parse(text),
-                ".vtt" => VttParser.Parse(text),
-                ".ass" or ".ssa" => AssParser.Parse(text),
-                _ => throw new InvalidDataException("Unsupported subtitle format.")
-            };
-            document.MarkSaved(path);
+            var document = ParseSubtitle(path, text);
+            // SAMI import is editable but this application does not write SAMI. Keep it
+            // detached from the source so Save uses a supported output format instead of
+            // overwriting the .smi file with another subtitle syntax.
+            document.MarkSaved(Path.GetExtension(path).Equals(".smi", StringComparison.OrdinalIgnoreCase) ? null : path);
             BindDocument(document);
             _translationCompletedForCurrentMedia = false;
             if (_playback.IsAvailable) _playback.LoadSubtitle(path);
@@ -845,6 +842,15 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception) { await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message); }
     }
+
+    private static SubtitleDocument ParseSubtitle(string pathOrUri, string text) => Path.GetExtension(pathOrUri).ToLowerInvariant() switch
+    {
+        ".srt" => SrtParser.Parse(text),
+        ".vtt" => VttParser.Parse(text),
+        ".ass" or ".ssa" => AssParser.Parse(text),
+        ".smi" => SmiParser.Parse(text),
+        _ => throw new InvalidDataException("Unsupported subtitle format.")
+    };
 
     private async void OnSaveSubtitleClick(object sender, RoutedEventArgs e)
     {
@@ -2774,7 +2780,36 @@ public sealed partial class MainWindow : Window
         }
         var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == serverId);
         if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("RecentServerMissingMessage")); return; }
+        if (IsSubtitlePath(Uri.UnescapeDataString(entry.Uri.AbsolutePath)))
+        {
+            await LoadWebDavSubtitleAsync(server, entry);
+            return;
+        }
         await OpenWebDavMediaAsync(server, entry, (WebDavPanelEntryList.ItemsSource as IEnumerable<WebDavEntry>)?.ToArray());
+    }
+
+    private async Task LoadWebDavSubtitleAsync(WebDavServerSettings server, WebDavEntry entry)
+    {
+        await CancelAiPipelineAsync();
+        if (!await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"))) return;
+        try
+        {
+            var bytes = await _webDavClient.DownloadAsync(server, entry.Uri);
+            using var stream = new MemoryStream(bytes, writable: false);
+            using var reader = new StreamReader(stream, ResolveSubtitleEncoding(), detectEncodingFromByteOrderMarks: true);
+            var document = ParseSubtitle(Uri.UnescapeDataString(entry.Uri.AbsolutePath), await reader.ReadToEndAsync());
+            document.MarkSaved();
+            BindDocument(document);
+            _translationCompletedForCurrentMedia = false;
+            ScheduleSubtitleOverlaySync();
+            ShowRightPanelSection(RightPanelSection.Subtitles);
+            StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "webdav", exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_SUBTITLE_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message);
+        }
     }
 
     private async Task OpenWebDavMediaAsync(WebDavServerSettings server, WebDavEntry entry, IReadOnlyList<WebDavEntry>? siblings = null)

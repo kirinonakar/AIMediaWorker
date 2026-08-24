@@ -2,7 +2,7 @@
 
 AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 10, libmpv, FFmpeg, and a separately restartable Python Qwen3-ASR worker.
 
-It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; edits SRT/WebVTT/ASS subtitles on a timeline; captures still video frames and window/region screen recordings with system audio; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
+It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures still video frames and window/region screen recordings with system audio; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
 Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs; Explorer and WebDAV entries support name filtering and cyclic name/newest/oldest sorting. Drag the divider beside the side panel or above the timeline to resize either panel. The bottom playback toolbar provides previous/next media, seek, play/pause, stop, current-frame PNG capture, progress, time, volume, speed, and repeat controls. Window size, position, maximized state, panel visibility, and panel dimensions are restored on the next launch.
 
@@ -109,7 +109,7 @@ The subtitle encoding setting supports UTF-8 and installed Windows code pages. E
 
 ## WebDAV and remote media
 
-Open **Tools → WebDAV browser** to add, edit, or remove servers. Server metadata is stored in settings; passwords are stored separately in Windows Credential Manager. Supported operations include directory listing, parent navigation, refresh, direct remote playback, and saving the current WebDAV folder as a favorite. Connected directory results are also mirrored into the main window's WebDAV side-panel tab.
+Open **Tools → WebDAV browser** to add, edit, or remove servers. Server metadata is stored in settings; passwords are stored separately in Windows Credential Manager. Supported operations include directory listing, parent navigation, refresh, direct remote playback, authenticated subtitle import (including `.smi`/SAMI), and saving the current WebDAV folder as a favorite. Connected directory results are also mirrored into the main window's WebDAV side-panel tab.
 
 Local folders, media items, WebDAV folders, and remote URLs can be opened or removed from the Favorites menu. Recent items retain source type and playback position. Missing local paths or removed servers do not prevent startup.
 
