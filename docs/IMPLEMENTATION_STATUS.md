@@ -23,6 +23,7 @@ Last updated: 2026-08-23
 - Windows Credential Manager storage for WebDAV and LLM secrets; no secrets in settings JSON.
 - Recent local/HTTP/WebDAV media, playback-position resume and media favorites persistence.
 - Camera/microphone enumeration, Media Foundation camera preview, MP4 camera capture, WASAPI microphone capture, bounded buffering, 16 kHz mono resampling, live ASR and live caption overlay.
+- Current-frame PNG capture plus FFmpeg window/region screen recording with drag-region selection, WASAPI system-audio loopback, MP4 finalization, cancellation and temporary-file cleanup.
 - LLM abstraction and capability model with Google Gemini, Ollama Cloud, OpenCode Go, OpenCode Zen and Unsloth Studio HTTP providers.
 - ID-mapped chunked subtitle translation and hierarchical short/detailed/chapter summarization with progress and cancellation.
 - JSON settings with atomic replacement, corruption recovery, separate Preferences UI, System/Light/Dark theme selection and core shortcut handling.
@@ -50,6 +51,7 @@ Last updated: 2026-08-23
 - Fullscreen targets the window's current display, repairs its presenter/chrome after multi-monitor topology or display moves, and uses virtual-screen coordinates plus an expanded shared-edge hover zone for the right overlay.
 - First-open work uses asynchronous libmpv commands, deferred history/Explorer synchronization, throttled waveform progress, and bounded folder enumeration; the unpackaged title bar explicitly loads the shipped application icon.
 - Main side-panel Explorer, Playlist, WebDAV, and Subtitles tabs; connected WebDAV listings mirror into the main panel while server registration remains available in the WebDAV manager.
+- Explorer and WebDAV name filtering plus cyclic name/newest/oldest sorting with state-specific icons.
 - Persistent main-window position, size, maximized state, panel visibility, and user-resizable side/timeline panel dimensions with current-display bounds correction.
 - Unpackaged secondary-window localization crash fixed for WebDAV, Preferences, and Camera windows; all three activate together in the runtime smoke check without a new error log.
 

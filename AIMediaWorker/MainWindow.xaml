@@ -39,6 +39,7 @@
             <MenuBarItem x:Uid="PlaybackMenu" Title="Playback">
                 <MenuFlyoutItem x:Uid="PlayPause" x:Name="PlayPauseMenuItem" Text="Play / Pause" Click="OnPlayPauseClick" /><MenuFlyoutItem x:Uid="Stop" Text="Stop" Click="OnStopClick" />
                 <MenuFlyoutItem x:Uid="FrameStep" Text="Frame step" Click="OnFrameStepClick" />
+                <MenuFlyoutItem x:Uid="SaveScreenshot" Text="Save current frame…" Click="OnSaveScreenshotClick" />
                 <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="SetAPoint" Text="Set A point" Click="OnSetAbStartClick" /><MenuFlyoutItem x:Uid="SetBPoint" Text="Set B point" Click="OnSetAbEndClick" /><MenuFlyoutItem x:Uid="ClearAb" Text="Clear A/B repeat" Click="OnClearAbClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SubtitleMenu" Title="Subtitle">
@@ -64,6 +65,7 @@
             </MenuBarItem>
             <MenuBarItem x:Uid="ToolsMenu" Title="Tools">
                 <MenuFlyoutItem x:Uid="AddWebDavServerMenu" Text="Add WebDAV server…" Click="OnAddWebDavServerClick" /><MenuFlyoutItem x:Uid="CameraCaptions" Text="Camera and live captions…" Click="OnCameraClick" />
+                <MenuFlyoutItem x:Uid="ScreenRecording" Text="Screen recording…" Click="OnScreenRecordingClick" />
                 <MenuFlyoutItem x:Uid="Diagnostics" Text="Diagnostics…" Click="OnDiagnosticsClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SettingsMenu" Title="Settings"><MenuFlyoutItem x:Uid="Preferences" Text="Preferences…" Click="OnSettingsClick" /></MenuBarItem>
@@ -79,18 +81,20 @@
             <primitives:Thumb x:Name="RightPanelSplitter" Grid.Column="1" DragDelta="OnRightPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
             <Grid x:Name="SubtitlePanel" Grid.Column="2" Margin="4,4,8,4">
                 <Grid ColumnSpacing="4">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="56" /></Grid.ColumnDefinitions>
                     <Grid>
                     <Grid x:Name="ExplorerSection">
                         <Grid RowSpacing="6">
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                             <CommandBar DefaultLabelPosition="Collapsed">
                                 <AppBarButton x:Uid="BrowserChooseFolder" Icon="OpenFile" Label="Choose folder" Click="OnChooseBrowserFolderClick" />
                                 <AppBarButton x:Uid="BrowserParentFolder" Icon="Back" Label="Parent folder" Click="OnBrowserParentClick" />
                                 <AppBarButton x:Uid="BrowserRefresh" Icon="Refresh" Label="Refresh" Click="OnBrowserRefreshClick" />
+                                <AppBarButton x:Uid="BrowserSort" x:Name="BrowserSortButton" Label="Sort by name" Click="OnBrowserSortClick"><AppBarButton.Icon><FontIcon x:Name="BrowserSortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon></AppBarButton>
                             </CommandBar>
                             <TextBox x:Name="BrowserPathBox" Grid.Row="1" IsReadOnly="True" />
-                            <ListView x:Name="FolderEntryList" Grid.Row="2" SelectionMode="Single" DoubleTapped="OnFolderEntryDoubleTapped">
+                            <TextBox x:Uid="BrowserFilter" x:Name="BrowserFilterBox" Grid.Row="2" PlaceholderText="Filter by name" TextChanged="OnBrowserFilterTextChanged" />
+                            <ListView x:Name="FolderEntryList" Grid.Row="3" SelectionMode="Single" DoubleTapped="OnFolderEntryDoubleTapped">
                                 <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnBrowserEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddBrowserFavorite" Text="Add to favorites" Click="OnAddBrowserFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding Details}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
                         </Grid>
@@ -101,6 +105,7 @@
                     <Grid x:Name="WebDavSection" Visibility="Collapsed">
                         <Grid RowSpacing="6">
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -126,6 +131,7 @@
                                 <AppBarButton x:Uid="WebDavAddServerCommand" Icon="Add" Label="Add WebDAV server" Click="OnAddWebDavServerClick" />
                                 <AppBarButton x:Uid="ParentButton" x:Name="WebDavParentButton" Icon="Back" Label="Parent folder" Click="OnWebDavParentClick" IsEnabled="False" />
                                 <AppBarButton x:Uid="RefreshCommand" x:Name="WebDavRefreshButton" Icon="Refresh" Label="Refresh" Click="OnWebDavRefreshClick" IsEnabled="False" />
+                                <AppBarButton x:Uid="WebDavSort" x:Name="WebDavSortButton" Label="Sort by name" Click="OnWebDavSortClick"><AppBarButton.Icon><FontIcon x:Name="WebDavSortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon></AppBarButton>
                                 <AppBarElementContainer>
                                     <ProgressRing x:Name="WebDavProgressRing" Width="20" Height="20" Margin="8,0" IsActive="False" />
                                 </AppBarElementContainer>
@@ -134,7 +140,8 @@
                                 <TextBlock x:Uid="WebDavSelectServerText" x:Name="WebDavPanelPathText" Text="Select a server to connect" TextTrimming="CharacterEllipsis" Opacity="0.7" />
                                 <TextBlock x:Name="WebDavConnectionStatusText" Text="" TextTrimming="CharacterEllipsis" Opacity="0.7" FontSize="11" />
                             </StackPanel>
-                            <ListView x:Name="WebDavPanelEntryList" Grid.Row="4" SelectionMode="Single" DoubleTapped="OnWebDavPanelEntryDoubleTapped">
+                            <TextBox x:Uid="WebDavFilter" x:Name="WebDavFilterBox" Grid.Row="4" Margin="4,0" PlaceholderText="Filter by name" TextChanged="OnWebDavFilterTextChanged" />
+                            <ListView x:Name="WebDavPanelEntryList" Grid.Row="5" SelectionMode="Single" DoubleTapped="OnWebDavPanelEntryDoubleTapped">
                                 <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnWebDavEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddWebDavFavorite" Text="Add to favorites" Click="OnAddWebDavFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
                         </Grid>
@@ -176,12 +183,27 @@
                         </Grid>
                     </Grid>
                     </Grid>
-                    <Border Grid.Column="1" Padding="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
-                        <ListView x:Name="RightPanelSectionList" SelectionMode="Single" HorizontalContentAlignment="Center">
+                    <Border Grid.Column="1" Padding="4" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
+                        <ListView x:Name="RightPanelSectionList"
+                                  SelectionMode="Single"
+                                  HorizontalContentAlignment="Stretch"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                  ScrollViewer.VerticalScrollBarVisibility="Hidden">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="Width" Value="48" />
+                                    <Setter Property="Height" Value="48" />
+                                    <Setter Property="MinWidth" Value="0" />
+                                    <Setter Property="Padding" Value="0" />
+                                    <Setter Property="Margin" Value="0,2" />
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
                             <ListView.ItemTemplate>
                                 <DataTemplate>
-                                    <Grid Width="40" Height="42" ToolTipService.ToolTip="{Binding Label}">
-                                        <FontIcon Glyph="{Binding IconGlyph}" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    <Grid ToolTipService.ToolTip="{Binding Label}">
+                                        <FontIcon Glyph="{Binding IconGlyph}" FontSize="18" Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
@@ -191,7 +213,7 @@
             </Grid>
         </Grid>
         <Grid x:Name="PlaybackControls" Grid.Row="5" Padding="8,4" ColumnSpacing="6">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="120" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="95" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="120" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="95" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <Button x:Name="BeginningButton" Grid.Column="0" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnGoToBeginningClick" ToolTipService.ToolTip="Go to beginning (Home)"><Image Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/beginning.svg" /></Image.Source></Image></Button>
             <Button x:Name="PreviousButton" Grid.Column="1" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media (Ctrl+B)"><Image Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/previous.svg" /></Image.Source></Image></Button>
             <Button x:Name="SeekBackButton" Grid.Column="2" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSeekBackClick" ToolTipService.ToolTip="Seek backward"><Image Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/seek-back.svg" /></Image.Source></Image></Button>
@@ -199,12 +221,13 @@
             <Button x:Name="StopButton" Grid.Column="4" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnStopClick" ToolTipService.ToolTip="Stop"><Image Width="18" Height="18"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/stop.svg" /></Image.Source></Image></Button>
             <Button x:Name="SeekForwardButton" Grid.Column="5" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSeekForwardClick" ToolTipService.ToolTip="Seek forward"><Image Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/seek-forward.svg" /></Image.Source></Image></Button>
             <Button x:Name="NextButton" Grid.Column="6" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media (Ctrl+F)"><Image Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/next.svg" /></Image.Source></Image></Button>
-            <Slider x:Name="PositionSlider" Grid.Column="7" Minimum="0" Maximum="1" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
-            <TextBlock x:Name="PositionText" Grid.Column="8" Text="00:00 / 00:00" VerticalAlignment="Center" FontFamily="Consolas" />
-            <Slider x:Name="VolumeSlider" Grid.Column="9" Minimum="0" Maximum="130" Value="100" ValueChanged="OnVolumeChanged" />
-            <Button x:Name="MuteButton" Grid.Column="10" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnMuteClick"><Image x:Name="MuteIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/volume.svg" /></Image.Source></Image></Button>
-            <TextBlock x:Uid="SpeedLabel" Grid.Column="11" Text="Speed" VerticalAlignment="Center" /><ComboBox x:Name="RateCombo" Grid.Column="12" SelectionChanged="OnRateChanged" />
-            <Button x:Name="RepeatButton" Grid.Column="13" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnRepeatClick" ToolTipService.ToolTip="Repeat off"><Image x:Name="RepeatIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/repeat.svg" /></Image.Source></Image></Button>
+            <Button x:Uid="ScreenshotButton" x:Name="ScreenshotButton" Grid.Column="7" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSaveScreenshotClick" ToolTipService.ToolTip="Save current frame"><FontIcon Glyph="&#xE722;" FontSize="19" /></Button>
+            <Slider x:Name="PositionSlider" Grid.Column="8" Minimum="0" Maximum="1" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
+            <TextBlock x:Name="PositionText" Grid.Column="9" Text="00:00 / 00:00" VerticalAlignment="Center" FontFamily="Consolas" />
+            <Slider x:Name="VolumeSlider" Grid.Column="10" Minimum="0" Maximum="130" Value="100" ValueChanged="OnVolumeChanged" />
+            <Button x:Name="MuteButton" Grid.Column="11" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnMuteClick"><Image x:Name="MuteIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/volume.svg" /></Image.Source></Image></Button>
+            <TextBlock x:Uid="SpeedLabel" Grid.Column="12" Text="Speed" VerticalAlignment="Center" /><ComboBox x:Name="RateCombo" Grid.Column="13" SelectionChanged="OnRateChanged" />
+            <Button x:Name="RepeatButton" Grid.Column="14" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnRepeatClick" ToolTipService.ToolTip="Repeat off"><Image x:Name="RepeatIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/repeat.svg" /></Image.Source></Image></Button>
         </Grid>
         <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="3" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
         <Grid x:Name="VisualizationPanel" Grid.Row="4" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">

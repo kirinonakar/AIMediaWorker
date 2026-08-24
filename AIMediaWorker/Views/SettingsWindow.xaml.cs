@@ -26,6 +26,16 @@ public sealed partial class SettingsWindow : Window
     public Array Precisions { get; } = Enum.GetValues<AsrPrecision>();
     public Array ThinkingLevels { get; } = Enum.GetValues<ThinkingLevel>();
     public string[] Providers { get; } = ["Unsloth Desktop", "Google", "OllamaCloud", "OpenCodeGo", "OpenCodeZen"];
+    public string GeneralHeading { get; } = L("GeneralExpander.Header");
+    public string PlaybackHeading { get; } = L("PlaybackExpander.Header");
+    public string PlaybackAdvancedHeading { get; } = L("PlaybackAdvancedExpander.Header");
+    public string SubtitleHeading { get; } = L("SubtitleExpander.Header");
+    public string SubtitleAdvancedHeading { get; } = L("SubtitleAdvancedExpander.Header");
+    public string AsrHeading { get; } = L("AsrExpander.Header");
+    public string AsrProcessingHeading { get; } = L("AsrProcessingExpander.Header");
+    public string NetworkHeading { get; } = L("NetworkExpander.Header");
+    public string CaptureHeading { get; } = L("CaptureExpander.Header");
+    public string LlmHeading { get; } = L("LlmExpander.Header");
     public event EventHandler<AppSettings>? SettingsSaved;
 
     public SettingsWindow(Window owner)

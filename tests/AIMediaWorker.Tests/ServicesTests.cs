@@ -20,6 +20,10 @@ public sealed class ServicesTests : IDisposable
     [InlineData("Ctrl+Shift+N", "N", true, true, false, true)]
     [InlineData("Ctrl+F", "F", true, false, false, true)]
     [InlineData("Ctrl+B", "B", true, false, false, true)]
+    [InlineData("Ctrl+1", "Number1", true, false, false, true)]
+    [InlineData("Ctrl+2", "Number2", true, false, false, true)]
+    [InlineData("Ctrl+1", "D1", true, false, false, true)]
+    [InlineData("Ctrl+2", "NumberPad2", true, false, false, true)]
     public void ShortcutGesturesMatchExactModifiers(string gesture, string key, bool control, bool shift, bool alt, bool expected)
     {
         Assert.Equal(expected, ShortcutGesture.Matches(gesture, key, control, shift, alt));

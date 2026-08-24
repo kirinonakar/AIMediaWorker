@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="AIMediaWorker.Views.RegionSelectionWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Select a region">
+    <Grid x:Name="SelectionSurface" Background="#B0000000" PointerPressed="OnPointerPressed" PointerMoved="OnPointerMoved" PointerReleased="OnPointerReleased" KeyDown="OnKeyDown">
+        <Border x:Name="SelectionBorder" Visibility="Collapsed" BorderBrush="#FFFFFFFF" BorderThickness="3" Background="#55308CEB" HorizontalAlignment="Left" VerticalAlignment="Top">
+            <Border Margin="8" Padding="6,3" Background="#CC000000" HorizontalAlignment="Left" VerticalAlignment="Top">
+                <TextBlock x:Name="SelectionSizeText" Foreground="White" FontFamily="Consolas" FontWeight="SemiBold" />
+            </Border>
+        </Border>
+        <Border HorizontalAlignment="Center" VerticalAlignment="Top" Margin="24" Padding="16,10" CornerRadius="8" Background="#DD202020" IsHitTestVisible="False">
+            <TextBlock x:Name="InstructionText" Text="Drag to select a recording region · Esc to cancel" Foreground="White" FontSize="16" />
+        </Border>
+        <Button x:Name="FocusTarget" Width="1" Height="1" Opacity="0" HorizontalAlignment="Left" VerticalAlignment="Top" />
+    </Grid>
+</Window>

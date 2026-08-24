@@ -36,6 +36,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     void SetSubtitleVisibility(bool visible);
     void SetRate(double rate);
     void FrameStep(bool backwards = false);
+    void SaveScreenshot(string path, bool includeSubtitles = true);
     void SetAbLoop(TimeSpan? start, TimeSpan? end);
     void SelectTrack(MediaTrackType type, int? id);
     void LoadSubtitle(string path, bool select = true);

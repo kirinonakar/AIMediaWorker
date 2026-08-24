@@ -57,6 +57,22 @@ public static class ShortcutGesture
         var expectedControl = modifiers.Any(part => part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase) || part.Equals("Control", StringComparison.OrdinalIgnoreCase));
         var expectedShift = modifiers.Any(part => part.Equals("Shift", StringComparison.OrdinalIgnoreCase));
         var expectedAlt = modifiers.Any(part => part.Equals("Alt", StringComparison.OrdinalIgnoreCase));
-        return expectedControl == control && expectedShift == shift && expectedAlt == alt && parts[^1].Equals(key, StringComparison.OrdinalIgnoreCase);
+        return expectedControl == control &&
+               expectedShift == shift &&
+               expectedAlt == alt &&
+               NormalizeKey(parts[^1]).Equals(NormalizeKey(key), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeKey(string key)
+    {
+        var normalized = key.Trim();
+        if (normalized.Length == 2 && normalized[0] is 'D' or 'd' && char.IsDigit(normalized[1])) return normalized[1].ToString();
+        if (normalized.StartsWith("NumberPad", StringComparison.OrdinalIgnoreCase) &&
+            normalized.Length == 10 && char.IsDigit(normalized[^1])) return normalized[^1].ToString();
+        if (normalized.StartsWith("NumPad", StringComparison.OrdinalIgnoreCase) &&
+            normalized.Length == 7 && char.IsDigit(normalized[^1])) return normalized[^1].ToString();
+        if (normalized.StartsWith("Number", StringComparison.OrdinalIgnoreCase) &&
+            normalized.Length == 7 && char.IsDigit(normalized[^1])) return normalized[^1].ToString();
+        return normalized;
     }
 }

@@ -178,6 +178,11 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public void SetSubtitleVisibility(bool visible) { AreSubtitlesVisible = visible; SetProperty("sub-visibility", visible ? "yes" : "no"); }
     public void SetRate(double rate) { Rate = Math.Clamp(rate, 0.25, 4); SetProperty("speed", Rate.ToString("0.###", CultureInfo.InvariantCulture)); }
     public void FrameStep(bool backwards = false) => Command(backwards ? "frame-back-step" : "frame-step");
+    public void SaveScreenshot(string path, bool includeSubtitles = true)
+    {
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A screenshot path is required.", nameof(path));
+        Command("screenshot-to-file", Path.GetFullPath(path), includeSubtitles ? "subtitles" : "video");
+    }
 
     public void SetAbLoop(TimeSpan? start, TimeSpan? end)
     {

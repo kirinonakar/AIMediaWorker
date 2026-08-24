@@ -63,6 +63,7 @@ public sealed partial class MainWindow : Window
     private double _bottomPanelHeight = 160;
     private bool _initialized;
     private CameraWindow? _cameraWindow;
+    private ScreenRecordingWindow? _screenRecordingWindow;
     private SettingsWindow? _settingsWindow;
     private AppSettings _settings = new();
     private readonly WindowsCredentialService _windowsCredentials = new();
@@ -103,6 +104,10 @@ public sealed partial class MainWindow : Window
     private int _playlistIndex = -1;
     private RepeatMode _repeatMode;
     private string _browserDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+    private BrowserEntry[] _browserEntries = [];
+    private WebDavEntry[] _webDavEntries = [];
+    private EntrySortMode _browserSortMode;
+    private EntrySortMode _webDavSortMode;
     private Guid? _webDavPanelServerId;
     private DispatcherQueueTimer? _fullscreenHoverTimer;
     private DateTimeOffset _showFullscreenMenuUntil;
@@ -511,6 +516,45 @@ public sealed partial class MainWindow : Window
     private async void OnPreviousMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(-1);
     private async void OnNextMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(1);
     private void OnFrameStepClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.FrameStep());
+    private async void OnSaveScreenshotClick(object sender, RoutedEventArgs e)
+    {
+        if (!_playback.IsAvailable || _playback.State is not (PlaybackState.Playing or PlaybackState.Paused) || _playback.VideoWidth is null)
+        {
+            await ShowMessageAsync(L("ScreenshotUnavailableTitle"), L("ScreenshotUnavailableMessage"));
+            return;
+        }
+
+        try
+        {
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.PicturesLibrary,
+                DefaultFileExtension = ".png",
+                SuggestedFileName = CreateScreenshotFileName()
+            };
+            picker.FileTypeChoices.Add(L("PngImageFileType"), [".png"]);
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var file = await picker.PickSaveFileAsync();
+            if (file is null) return;
+            await Task.Run(() => _playback.SaveScreenshot(file.Path));
+            StatusText.Text = F("StatusScreenshotSaved", file.Name);
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "screenshot", "SCREENSHOT_SAVE_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("ScreenshotErrorTitle"), exception.Message);
+        }
+    }
+
+    private string CreateScreenshotFileName()
+    {
+        var displayName = _currentMediaSource?.DisplayName;
+        var stem = string.IsNullOrWhiteSpace(displayName) ? "AIMediaWorker" : Path.GetFileNameWithoutExtension(displayName);
+        foreach (var character in Path.GetInvalidFileNameChars()) stem = stem.Replace(character, '_');
+        if (string.IsNullOrWhiteSpace(stem)) stem = "AIMediaWorker";
+        var position = _playback.Position;
+        return $"{stem}_{(int)position.TotalHours:00}-{position.Minutes:00}-{position.Seconds:00}.{position.Milliseconds:000}";
+    }
     private void OnSeekBackClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(_playback.Position - TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds), () => _playback.SeekRelative(TimeSpan.FromSeconds(-_settings.Playback.SeekIntervalSeconds)));
     private void OnSeekForwardClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(_playback.Position + TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds), () => _playback.SeekRelative(TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds)));
     private void OnMuteClick(object sender, RoutedEventArgs e)
@@ -1937,7 +1981,8 @@ public sealed partial class MainWindow : Window
         {
             _webDavPanelServerId = null;
             _webDavPanelDirectory = null;
-            WebDavPanelEntryList.ItemsSource = null;
+            _webDavEntries = [];
+            ApplyWebDavEntryView();
             WebDavParentButton.IsEnabled = false;
             WebDavRefreshButton.IsEnabled = false;
             WebDavPanelPathText.Text = L("WebDavSelectServerMessage");
@@ -1970,7 +2015,8 @@ public sealed partial class MainWindow : Window
         {
             var entries = await _webDavClient.ListAsync(server, _webDavPanelDirectory, operation.Token);
             if (operation.IsCancellationRequested) return;
-            WebDavPanelEntryList.ItemsSource = entries;
+            _webDavEntries = entries.ToArray();
+            ApplyWebDavEntryView();
             WebDavConnectionStatusText.Text = F("WebDavConnectedMessage", server.Name, entries.Count);
         }
         catch (OperationCanceledException) { }
@@ -1978,7 +2024,8 @@ public sealed partial class MainWindow : Window
         catch (Exception exception)
         {
             await AppLog.WriteAsync("error", "webdav", exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_LIST_ERROR", exception.Message, exception);
-            WebDavPanelEntryList.ItemsSource = null;
+            _webDavEntries = [];
+            ApplyWebDavEntryView();
             WebDavConnectionStatusText.Text = exception.Message;
         }
         finally
@@ -2007,6 +2054,33 @@ public sealed partial class MainWindow : Window
 
     private async void OnWebDavRefreshClick(object sender, RoutedEventArgs e) => await RefreshWebDavDirectoryAsync();
 
+    private void OnWebDavFilterTextChanged(object sender, TextChangedEventArgs e) => ApplyWebDavEntryView();
+
+    private void OnWebDavSortClick(object sender, RoutedEventArgs e)
+    {
+        _webDavSortMode = NextSortMode(_webDavSortMode);
+        ApplyWebDavEntryView();
+    }
+
+    private void ApplyWebDavEntryView()
+    {
+        var selectedUri = (WebDavPanelEntryList.SelectedItem as WebDavEntry)?.Uri;
+        var filter = WebDavFilterBox.Text.Trim();
+        IEnumerable<WebDavEntry> filtered = string.IsNullOrEmpty(filter)
+            ? _webDavEntries
+            : _webDavEntries.Where(entry => entry.Name.Contains(filter, StringComparison.CurrentCultureIgnoreCase));
+        filtered = _webDavSortMode switch
+        {
+            EntrySortMode.Newest => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.LastModified is null).ThenByDescending(entry => entry.LastModified).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase),
+            EntrySortMode.Oldest => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.LastModified is null).ThenBy(entry => entry.LastModified).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase),
+            _ => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
+        };
+        var view = filtered.ToArray();
+        WebDavPanelEntryList.ItemsSource = view;
+        if (selectedUri is not null) WebDavPanelEntryList.SelectedItem = view.FirstOrDefault(entry => entry.Uri == selectedUri);
+        UpdateSortButton(WebDavSortButton, WebDavSortIcon, _webDavSortMode);
+    }
+
     private static Uri EnsureWebDavDirectoryUri(Uri uri) => uri.AbsoluteUri.EndsWith('/') ? uri : new Uri(uri.AbsoluteUri + "/");
     private async void OnCameraClick(object sender, RoutedEventArgs e)
     {
@@ -2022,6 +2096,22 @@ public sealed partial class MainWindow : Window
             _cameraWindow = null;
             await AppLog.WriteAsync("error", "camera", "CAMERA_WINDOW_ERROR", exception.Message, exception);
             await ShowMessageAsync(L("CameraErrorTitle"), exception.Message);
+        }
+    }
+    private async void OnScreenRecordingClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (_screenRecordingWindow is not null) { _screenRecordingWindow.Activate(); return; }
+            _screenRecordingWindow = new ScreenRecordingWindow(this);
+            _screenRecordingWindow.Closed += (_, _) => _screenRecordingWindow = null;
+            _screenRecordingWindow.Activate();
+        }
+        catch (Exception exception)
+        {
+            _screenRecordingWindow = null;
+            await AppLog.WriteAsync("error", "screen-recording", "SCREEN_RECORDING_WINDOW_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("ScreenRecordingErrorTitle"), exception.Message);
         }
     }
     private async void OnSettingsClick(object sender, RoutedEventArgs e)
@@ -2147,7 +2237,8 @@ public sealed partial class MainWindow : Window
             });
             _browserDirectory = Path.GetFullPath(directory);
             BrowserPathBox.Text = _browserDirectory;
-            FolderEntryList.ItemsSource = entries;
+            _browserEntries = entries;
+            ApplyBrowserEntryView();
             if (selectedPath is not null) SelectBrowserEntry(selectedPath);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -2163,6 +2254,56 @@ public sealed partial class MainWindow : Window
         var files = (FolderEntryList.ItemsSource as IEnumerable<BrowserEntry>)?.Where(item => !item.IsDirectory).Select(item => item.Path).ToArray() ?? [entry.Path];
         _playlist.Clear(); _playlist.AddRange(files); _playlistIndex = Math.Max(0, _playlist.FindIndex(path => path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase)));
         await OpenMediaAsync(entry.Path, preservePlaylist: true);
+    }
+
+    private void OnBrowserFilterTextChanged(object sender, TextChangedEventArgs e) => ApplyBrowserEntryView();
+
+    private void OnBrowserSortClick(object sender, RoutedEventArgs e)
+    {
+        _browserSortMode = NextSortMode(_browserSortMode);
+        ApplyBrowserEntryView();
+    }
+
+    private void ApplyBrowserEntryView()
+    {
+        var selectedPath = (FolderEntryList.SelectedItem as BrowserEntry)?.Path;
+        var filter = BrowserFilterBox.Text.Trim();
+        IEnumerable<BrowserEntry> filtered = string.IsNullOrEmpty(filter)
+            ? _browserEntries
+            : _browserEntries.Where(entry => entry.Name.Contains(filter, StringComparison.CurrentCultureIgnoreCase));
+        filtered = _browserSortMode switch
+        {
+            EntrySortMode.Newest => filtered.OrderByDescending(entry => entry.IsDirectory).ThenByDescending(entry => entry.LastModified).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase),
+            EntrySortMode.Oldest => filtered.OrderByDescending(entry => entry.IsDirectory).ThenBy(entry => entry.LastModified).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase),
+            _ => filtered.OrderByDescending(entry => entry.IsDirectory).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
+        };
+        var view = filtered.ToArray();
+        FolderEntryList.ItemsSource = view;
+        if (selectedPath is not null) FolderEntryList.SelectedItem = view.FirstOrDefault(entry => entry.Path.Equals(selectedPath, StringComparison.OrdinalIgnoreCase));
+        UpdateSortButton(BrowserSortButton, BrowserSortIcon, _browserSortMode);
+    }
+
+    private static EntrySortMode NextSortMode(EntrySortMode mode) => mode switch
+    {
+        EntrySortMode.Name => EntrySortMode.Newest,
+        EntrySortMode.Newest => EntrySortMode.Oldest,
+        _ => EntrySortMode.Name
+    };
+
+    private static void UpdateSortButton(AppBarButton button, FontIcon icon, EntrySortMode mode)
+    {
+        button.Label = L(mode switch
+        {
+            EntrySortMode.Newest => "SortNewest",
+            EntrySortMode.Oldest => "SortOldest",
+            _ => "SortName"
+        });
+        icon.Glyph = mode switch
+        {
+            EntrySortMode.Newest => "\uE74B",
+            EntrySortMode.Oldest => "\uE74A",
+            _ => "\uE8CB"
+        };
     }
 
     private void OnBrowserEntryRightTapped(object sender, RightTappedRoutedEventArgs e)
@@ -2536,13 +2677,21 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private sealed record BrowserEntry(string Path, bool IsDirectory, long? Length)
+    private sealed record BrowserEntry(string Path, bool IsDirectory, long? Length, DateTime LastModified)
     {
         public string Name => System.IO.Path.GetFileName(Path.TrimEnd(System.IO.Path.DirectorySeparatorChar));
         public string IconGlyph => IsDirectory ? "\uE8B7" : "\uE8A5";
         public string Details => IsDirectory || Length is null ? string.Empty : FormatBytes(Length.Value);
-        public static BrowserEntry FromDirectory(string path) => new(path, true, null);
-        public static BrowserEntry FromFile(string path) => new(path, false, new FileInfo(path).Length);
+        public static BrowserEntry FromDirectory(string path)
+        {
+            var info = new DirectoryInfo(path);
+            return new BrowserEntry(path, true, null, info.LastWriteTimeUtc);
+        }
+        public static BrowserEntry FromFile(string path)
+        {
+            var info = new FileInfo(path);
+            return new BrowserEntry(path, false, info.Length, info.LastWriteTimeUtc);
+        }
         private static string FormatBytes(long bytes)
         {
             string[] units = ["B", "KB", "MB", "GB", "TB"];
@@ -2552,6 +2701,8 @@ public sealed partial class MainWindow : Window
             return $"{display:0.##} {units[unit]}";
         }
     }
+
+    private enum EntrySortMode { Name, Newest, Oldest }
 
     private const int GwlStyle = -16;
     private const int WsCaption = 0x00C00000;
