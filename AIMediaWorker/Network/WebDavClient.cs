@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Xml.Linq;
+using AIMediaWorker.Media;
 using AIMediaWorker.Settings;
 
 namespace AIMediaWorker.Network;
@@ -55,7 +56,7 @@ public sealed class WebDavClient : IDisposable
         if ((int)response.StatusCode != 207 && !response.IsSuccessStatusCode) throw new WebDavException("NETWORK_ERROR", $"WebDAV listing failed with HTTP {(int)response.StatusCode}.", response.StatusCode);
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         var document = await XDocument.LoadAsync(stream, LoadOptions.None, cancellationToken).ConfigureAwait(false);
-        return ParseMultiStatus(document, directory).Where(entry => !UrisEquivalent(entry.Uri, directory)).OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        return ParseMultiStatus(document, directory).Where(entry => !UrisEquivalent(entry.Uri, directory)).OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance).ToArray();
     }
 
     public HttpRequestMessage CreateMediaRequest(WebDavServerSettings server, Uri mediaUri, HttpMethod? method = null)

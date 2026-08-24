@@ -663,7 +663,7 @@ public sealed partial class MainWindow : Window
             if (directory is null) return;
             var siblings = _loadedBrowserDirectory is not null && AreSameDirectory(directory, _loadedBrowserDirectory)
                 ? _browserEntries.Where(entry => !entry.IsDirectory).Select(entry => entry.Path).ToArray()
-                : await Task.Run(() => Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase).Take(5000).Select(Path.GetFullPath).ToArray());
+                : await Task.Run(() => Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).OrderBy(Path.GetFileName, WindowsFileNameComparer.Instance).Take(5000).Select(Path.GetFullPath).ToArray());
             if (!string.Equals(_playback.CurrentSource, fullPath, StringComparison.OrdinalIgnoreCase)) return;
             var index = Array.FindIndex(siblings, path => path.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
             if (index < 0) return;
@@ -2337,9 +2337,9 @@ public sealed partial class MainWindow : Window
             : _webDavEntries.Where(entry => entry.Name.Contains(filter, StringComparison.CurrentCultureIgnoreCase));
         filtered = _webDavSortMode switch
         {
-            EntrySortMode.Newest => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.LastModified is null).ThenByDescending(entry => entry.LastModified).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase),
-            EntrySortMode.Oldest => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.LastModified is null).ThenBy(entry => entry.LastModified).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase),
-            _ => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
+            EntrySortMode.Newest => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.LastModified is null).ThenByDescending(entry => entry.LastModified).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance),
+            EntrySortMode.Oldest => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.LastModified is null).ThenBy(entry => entry.LastModified).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance),
+            _ => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance)
         };
         var view = filtered.ToArray();
         WebDavPanelEntryList.ItemsSource = view;
@@ -2619,12 +2619,12 @@ public sealed partial class MainWindow : Window
             {
                 const int maximumEntries = 5000;
                 var result = new List<BrowserEntry>();
-                foreach (var path in Directory.EnumerateDirectories(directory).Take(maximumEntries).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase))
+                foreach (var path in Directory.EnumerateDirectories(directory).Take(maximumEntries).OrderBy(Path.GetFileName, WindowsFileNameComparer.Instance))
                 {
                     try { result.Add(BrowserEntry.FromDirectory(path)); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
                 }
                 var remaining = Math.Max(0, maximumEntries - result.Count);
-                foreach (var path in Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).Take(remaining).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase))
+                foreach (var path in Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).Take(remaining).OrderBy(Path.GetFileName, WindowsFileNameComparer.Instance))
                 {
                     try { result.Add(BrowserEntry.FromFile(path)); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
                 }
@@ -2706,9 +2706,9 @@ public sealed partial class MainWindow : Window
             : _browserEntries.Where(entry => entry.Name.Contains(filter, StringComparison.CurrentCultureIgnoreCase));
         filtered = _browserSortMode switch
         {
-            EntrySortMode.Newest => filtered.OrderByDescending(entry => entry.IsDirectory).ThenByDescending(entry => entry.LastModified).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase),
-            EntrySortMode.Oldest => filtered.OrderByDescending(entry => entry.IsDirectory).ThenBy(entry => entry.LastModified).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase),
-            _ => filtered.OrderByDescending(entry => entry.IsDirectory).ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
+            EntrySortMode.Newest => filtered.OrderByDescending(entry => entry.IsDirectory).ThenByDescending(entry => entry.LastModified).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance),
+            EntrySortMode.Oldest => filtered.OrderByDescending(entry => entry.IsDirectory).ThenBy(entry => entry.LastModified).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance),
+            _ => filtered.OrderByDescending(entry => entry.IsDirectory).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance)
         };
         var view = filtered.ToArray();
         FolderEntryList.ItemsSource = view;
