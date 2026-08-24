@@ -395,7 +395,20 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnNativeVideoClicked(object? sender, EventArgs e)
-        => DispatcherQueue.TryEnqueue(FocusPlaybackSurface);
+        => DispatcherQueue.TryEnqueue(() =>
+        {
+            DismissOpenMenus();
+            FocusPlaybackSurface();
+        });
+
+    private void DismissOpenMenus()
+    {
+        if (RootGrid.XamlRoot is not { } xamlRoot) return;
+        foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot).ToArray())
+        {
+            if (popup.Child is MenuFlyoutPresenter) popup.IsOpen = false;
+        }
+    }
 
     private async Task HandleDroppedFilesAsync(IEnumerable<string> paths)
     {
