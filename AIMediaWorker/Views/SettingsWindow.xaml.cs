@@ -4,6 +4,7 @@ using AIMediaWorker.Settings;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
@@ -57,6 +58,7 @@ public sealed partial class SettingsWindow : Window
     public SettingsWindow(Window owner)
     {
         InitializeComponent();
+        StabilizeSettingsControlHeights(Root);
         Title = L("SettingsWindow.Title");
         WindowOwner.Attach(this, owner);
         var handle = WindowNative.GetWindowHandle(this);
@@ -73,6 +75,16 @@ public sealed partial class SettingsWindow : Window
         ThemeCombo.SelectionChanged += OnThemeComboChanged;
         Root.ActualThemeChanged += OnRootActualThemeChanged;
         Closed += (_, _) => _asrInstallCancellation?.Cancel();
+    }
+
+    private static void StabilizeSettingsControlHeights(DependencyObject element)
+    {
+        if (element is TextBox or PasswordBox or ComboBox or NumberBox or DropDownButton or CheckBox)
+            ((FrameworkElement)element).Height = 40;
+
+        var childCount = VisualTreeHelper.GetChildrenCount(element);
+        for (var index = 0; index < childCount; index++)
+            StabilizeSettingsControlHeights(VisualTreeHelper.GetChild(element, index));
     }
 
     private void CenterOnOwnerDisplay(Window owner)
