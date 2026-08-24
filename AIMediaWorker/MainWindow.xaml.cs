@@ -756,8 +756,16 @@ public sealed partial class MainWindow : Window
         await OpenPlaylistEntryAsync(_playlist[_playlistIndex]);
     }
 
-    private Task OpenPlaylistEntryAsync(PlaylistEntry entry) =>
-        OpenMediaAsync(entry.Path, entry.HttpHeaders, entry.MediaSource, preservePlaylist: true);
+    private async Task OpenPlaylistEntryAsync(PlaylistEntry entry)
+    {
+        await OpenMediaAsync(entry.Path, entry.HttpHeaders, entry.MediaSource, preservePlaylist: true);
+        if (entry.MediaSource is WebDavMediaSource webDavSource &&
+            _currentMediaSource is WebDavMediaSource currentSource &&
+            currentSource.ServerId == webDavSource.ServerId && UrisEqual(currentSource.Uri, webDavSource.Uri))
+        {
+            await TryLoadMatchingWebDavSmiAsync(webDavSource);
+        }
+    }
 
     private void UpdatePlaylistButtons()
     {
@@ -829,7 +837,8 @@ public sealed partial class MainWindow : Window
         if (!await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"))) return;
         try
         {
-            var text = await File.ReadAllTextAsync(path, ResolveSubtitleEncoding());
+            var bytes = await File.ReadAllBytesAsync(path);
+            var text = SubtitleTextDecoder.Decode(bytes, ResolveSubtitleEncoding(), Path.GetExtension(path).Equals(".smi", StringComparison.OrdinalIgnoreCase));
             var document = ParseSubtitle(path, text);
             // SAMI import is editable but this application does not write SAMI. Keep it
             // detached from the source so Save uses a supported output format instead of
@@ -2782,33 +2791,74 @@ public sealed partial class MainWindow : Window
         if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("RecentServerMissingMessage")); return; }
         if (IsSubtitlePath(Uri.UnescapeDataString(entry.Uri.AbsolutePath)))
         {
-            await LoadWebDavSubtitleAsync(server, entry);
+            await LoadWebDavSubtitleAsync(server, entry, confirmChanges: true, showSubtitlePanel: true);
             return;
         }
         await OpenWebDavMediaAsync(server, entry, (WebDavPanelEntryList.ItemsSource as IEnumerable<WebDavEntry>)?.ToArray());
     }
 
-    private async Task LoadWebDavSubtitleAsync(WebDavServerSettings server, WebDavEntry entry)
+    private async Task LoadWebDavSubtitleAsync(WebDavServerSettings server, WebDavEntry entry, bool confirmChanges, bool showSubtitlePanel, Uri? expectedMediaUri = null)
     {
-        await CancelAiPipelineAsync();
-        if (!await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"))) return;
+        if (confirmChanges)
+        {
+            await CancelAiPipelineAsync();
+            if (!await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"))) return;
+        }
         try
         {
             var bytes = await _webDavClient.DownloadAsync(server, entry.Uri);
-            using var stream = new MemoryStream(bytes, writable: false);
-            using var reader = new StreamReader(stream, ResolveSubtitleEncoding(), detectEncodingFromByteOrderMarks: true);
-            var document = ParseSubtitle(Uri.UnescapeDataString(entry.Uri.AbsolutePath), await reader.ReadToEndAsync());
+            if (expectedMediaUri is not null &&
+                (_currentMediaSource is not WebDavMediaSource currentSource ||
+                 currentSource.ServerId != server.Id || !UrisEqual(currentSource.Uri, expectedMediaUri))) return;
+            var path = Uri.UnescapeDataString(entry.Uri.AbsolutePath);
+            var text = SubtitleTextDecoder.Decode(bytes, ResolveSubtitleEncoding(), Path.GetExtension(path).Equals(".smi", StringComparison.OrdinalIgnoreCase));
+            var document = ParseSubtitle(path, text);
             document.MarkSaved();
             BindDocument(document);
             _translationCompletedForCurrentMedia = false;
             ScheduleSubtitleOverlaySync();
-            ShowRightPanelSection(RightPanelSection.Subtitles);
+            if (showSubtitlePanel) ShowRightPanelSection(RightPanelSection.Subtitles);
             StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
         }
         catch (Exception exception)
         {
             await AppLog.WriteAsync("error", "webdav", exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_SUBTITLE_ERROR", exception.Message, exception);
             await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message);
+        }
+    }
+
+    private async Task TryLoadMatchingWebDavSmiAsync(WebDavMediaSource mediaSource)
+    {
+        try
+        {
+            var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == mediaSource.ServerId);
+            if (server is null) return;
+
+            var directory = EnsureWebDavDirectoryUri(new Uri(mediaSource.Uri, "."));
+            IReadOnlyList<WebDavEntry> entries;
+            if (_webDavPanelServerId == mediaSource.ServerId && _webDavPanelDirectory is not null && UrisEqual(_webDavPanelDirectory, directory))
+            {
+                entries = _webDavEntries;
+            }
+            else
+            {
+                entries = await _webDavClient.ListAsync(server, directory);
+            }
+
+            if (_currentMediaSource is not WebDavMediaSource currentSource ||
+                currentSource.ServerId != mediaSource.ServerId || !UrisEqual(currentSource.Uri, mediaSource.Uri)) return;
+
+            var sidecar = entries.FirstOrDefault(candidate =>
+                !candidate.IsCollection &&
+                SmiParser.IsSidecarFor(mediaSource.DisplayName, candidate.Name));
+            if (sidecar is not null)
+            {
+                await LoadWebDavSubtitleAsync(server, sidecar, confirmChanges: false, showSubtitlePanel: false, expectedMediaUri: mediaSource.Uri);
+            }
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("warning", "webdav", exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_SIDECAR_SUBTITLE_ERROR", exception.Message, exception);
         }
     }
 

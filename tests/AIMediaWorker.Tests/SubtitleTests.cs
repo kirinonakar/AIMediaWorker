@@ -63,6 +63,39 @@ public sealed class SubtitleTests
     }
 
     [Fact]
+    public void SubtitleDecoderAutomaticallyDetectsEucKrSmi()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var eucKr = Encoding.GetEncoding("euc-kr");
+        var bytes = eucKr.GetBytes("<SAMI><SYNC Start=0><P>한글 자막입니다");
+
+        var decoded = SubtitleTextDecoder.Decode(bytes, new UTF8Encoding(false, true), detectKorean: true);
+
+        Assert.Contains("한글 자막입니다", decoded);
+    }
+
+    [Fact]
+    public void SubtitleDecoderUsesConfiguredFallbackForNonSmiText()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var eucKr = Encoding.GetEncoding("euc-kr", EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+        var bytes = eucKr.GetBytes("설정된 인코딩");
+
+        var decoded = SubtitleTextDecoder.Decode(bytes, eucKr);
+
+        Assert.Equal("설정된 인코딩", decoded);
+    }
+
+    [Theory]
+    [InlineData("Movie.mkv", "movie.SMI", true)]
+    [InlineData("movie.mp4", "movie.en.smi", false)]
+    [InlineData("movie.mp4", "movie.srt", false)]
+    public void SmiSidecarMatchingRequiresTheSameBaseName(string mediaName, string subtitleName, bool expected)
+    {
+        Assert.Equal(expected, SmiParser.IsSidecarFor(mediaName, subtitleName));
+    }
+
+    [Fact]
     public void AssRoundTripKeepsBasicStyle()
     {
         var track = new SubtitleTrack { Format = "ass" };

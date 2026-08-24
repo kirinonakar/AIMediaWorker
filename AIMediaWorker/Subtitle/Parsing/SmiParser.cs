@@ -19,6 +19,10 @@ public static partial class SmiParser
     [GeneratedRegex(@"<[^>]+>", RegexOptions.CultureInvariant)]
     private static partial Regex TagRegex();
 
+    public static bool IsSidecarFor(string mediaFileName, string subtitleFileName) =>
+        Path.GetExtension(subtitleFileName).Equals(".smi", StringComparison.OrdinalIgnoreCase) &&
+        Path.GetFileNameWithoutExtension(subtitleFileName).Equals(Path.GetFileNameWithoutExtension(mediaFileName), StringComparison.OrdinalIgnoreCase);
+
     public static SubtitleDocument Parse(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
