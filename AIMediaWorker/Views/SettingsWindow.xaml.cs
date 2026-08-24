@@ -18,6 +18,9 @@ namespace AIMediaWorker.Views;
 
 public sealed partial class SettingsWindow : Window
 {
+    private const int PreferredWidth = 1480;
+    private const int PreferredHeight = 1080;
+
     public IReadOnlyList<string> CaptionPositions { get; } = ["Top", "Center", "Bottom"];
     private readonly SettingsService _service = SettingsService.CreateDefault();
     private readonly WindowsCredentialService _credentials = new();
@@ -52,7 +55,7 @@ public sealed partial class SettingsWindow : Window
         WindowOwner.Attach(this, owner);
         var handle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
-        _appWindow?.Resize(new SizeInt32(1320, 1000));
+        CenterOnOwnerDisplay(owner);
         if (_appWindow?.Presenter is OverlappedPresenter presenter)
         {
             presenter.SetBorderAndTitleBar(true, false);
@@ -63,6 +66,21 @@ public sealed partial class SettingsWindow : Window
         SettingsSectionList.SelectedIndex = 0;
         ThemeCombo.SelectionChanged += OnThemeComboChanged;
         Root.ActualThemeChanged += OnRootActualThemeChanged;
+    }
+
+    private void CenterOnOwnerDisplay(Window owner)
+    {
+        if (_appWindow is null) return;
+
+        var ownerHandle = WindowNative.GetWindowHandle(owner);
+        var ownerWindowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(ownerHandle);
+        var workArea = DisplayArea.GetFromWindowId(ownerWindowId, DisplayAreaFallback.Nearest).WorkArea;
+        var width = Math.Min(PreferredWidth, workArea.Width);
+        var height = Math.Min(PreferredHeight, workArea.Height);
+        var x = workArea.X + (workArea.Width - width) / 2;
+        var y = workArea.Y + (workArea.Height - height) / 2;
+
+        _appWindow.MoveAndResize(new RectInt32(x, y, width, height));
     }
 
     private void OnSettingsSectionChanged(object sender, SelectionChangedEventArgs e)
