@@ -153,7 +153,11 @@ public sealed partial class MainWindow : Window
         _videoHost.FilesDropped += OnNativeVideoFilesDropped;
         _videoHost.Clicked += OnNativeVideoClicked;
         _videoHost.DoubleClicked += OnNativeVideoDoubleClicked;
-        _playbackInitializationTask = InitializePlaybackAsync(_videoHost.Create());
+        var videoWindowHandle = _videoHost.Create();
+        // Keep the native child window out of the z-order until playback has produced its
+        // first frame, otherwise it covers the XAML status/loading overlay.
+        _videoHost.SetVisible(false);
+        _playbackInitializationTask = InitializePlaybackAsync(videoWindowHandle);
         _pendingLaunchSource = initialSource;
         // Start waiting immediately. The continuation does not need the UI thread to issue
         // loadfile, so it can run while the rest of this constructor and activation finish.
@@ -357,7 +361,7 @@ public sealed partial class MainWindow : Window
             if (e.DataView.Contains(StandardDataFormats.Text))
             {
                 var value = (await e.DataView.GetTextAsync()).Trim();
-                if (File.Exists(value)) await HandleDroppedFilesAsync([value]);
+                if (Path.IsPathFullyQualified(value)) await HandleDroppedFilesAsync([value]);
                 else if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") await OpenMediaAsync(uri.AbsoluteUri);
             }
         }
@@ -405,7 +409,12 @@ public sealed partial class MainWindow : Window
 
     private async Task HandleDroppedFilesAsync(IEnumerable<string> paths)
     {
-        var files = paths.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var pathSnapshot = paths.ToArray();
+        var files = await Task.Run(() => pathSnapshot
+            .Where(File.Exists)
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray());
         if (files.Length == 0) return;
         if (!_playback.IsAvailable)
         {
@@ -424,16 +433,8 @@ public sealed partial class MainWindow : Window
     {
         BringToFront();
         if (filePaths is not { Count: > 0 }) return;
-        if (_initialized && _playback.IsAvailable)
-        {
-            _ = OpenForwardedFilesAsync(filePaths);
-        }
-        else
-        {
-            _pendingDroppedFiles = filePaths.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            _pendingLaunchSource = null;
-            StatusText.Text = L("StatusPreparingDroppedMedia");
-        }
+        _pendingLaunchSource = null;
+        _ = OpenForwardedFilesAsync(filePaths);
     }
 
     private async Task OpenForwardedFilesAsync(IReadOnlyList<string> filePaths)
@@ -472,7 +473,7 @@ public sealed partial class MainWindow : Window
             RememberCurrentPosition();
             await _playback.OpenAsync(source, httpHeaders);
             await aiPipelineCancellation;
-            CompleteMediaOpen(source, httpHeaders, mediaSource, preservePlaylist, showInExplorer: false);
+            CompleteMediaOpen(source, httpHeaders, mediaSource ?? MediaSourceFactory.Parse(source), preservePlaylist, showInExplorer: false);
         }
         catch (Exception exception)
         {
@@ -484,13 +485,13 @@ public sealed partial class MainWindow : Window
 
     private void CompleteMediaOpen(string source, IReadOnlyDictionary<string, string>? httpHeaders, IMediaSource? mediaSource, bool preservePlaylist, bool showInExplorer)
     {
+        _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
         if (!preservePlaylist)
         {
             _playlist.Clear();
-            if (File.Exists(source)) { _playlist.Add(PlaylistEntry.FromLocal(source)); _playlistIndex = 0; }
+            if (_currentMediaSource is LocalMediaSource localSource) { _playlist.Add(PlaylistEntry.FromLocal(localSource.Path)); _playlistIndex = 0; }
             else _playlistIndex = -1;
         }
-        _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
         _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
         UpdateWindowTitle(_currentMediaSource.DisplayName);
         if (_currentMediaSource is WebDavMediaSource webDavSource) SelectWebDavEntry(webDavSource.ServerId, webDavSource.Uri);
@@ -499,8 +500,7 @@ public sealed partial class MainWindow : Window
         _subtitleGenerationCompletedForCurrentMedia = false;
         _translationCompletedForCurrentMedia = false;
         StatusText.Text = source;
-        VideoStatusText.Visibility = Visibility.Collapsed;
-        QueuePostOpenWork(source, !preservePlaylist, showInExplorer);
+        QueuePostOpenWork(source, _currentMediaSource as LocalMediaSource, !preservePlaylist, showInExplorer);
         UpdatePlaylistButtons();
         FocusPlaybackSurface();
     }
@@ -525,13 +525,14 @@ public sealed partial class MainWindow : Window
         AppTitleText.Text = title;
     }
 
-    private void QueuePostOpenWork(string source, bool populateSiblingPlaylist, bool showInExplorer)
+    private void QueuePostOpenWork(string source, LocalMediaSource? localSource, bool populateSiblingPlaylist, bool showInExplorer)
     {
         _postOpenCancellation?.Cancel();
         _postOpenCancellation?.Dispose();
         _postOpenCancellation = new CancellationTokenSource();
-        if (File.Exists(source)) PrepareBrowserForOpenedFile(Path.GetFullPath(source), showInExplorer);
-        _pendingPostOpenWork = new PendingPostOpenWork(source, populateSiblingPlaylist, _postOpenCancellation.Token);
+        var localPath = localSource is null ? null : Path.GetFullPath(localSource.Path);
+        if (localPath is not null) PrepareBrowserForOpenedFile(localPath, showInExplorer);
+        _pendingPostOpenWork = new PendingPostOpenWork(source, localPath, populateSiblingPlaylist, _postOpenCancellation.Token);
         if (_playback.IsFirstFrameReady) StartPostOpenWorkIfReady();
     }
 
@@ -551,9 +552,8 @@ public sealed partial class MainWindow : Window
             // media decoding gets the first slice of disk and CPU time.
             await Task.Delay(250, work.CancellationToken);
             if (!string.Equals(_playback.CurrentSource, work.Source, StringComparison.OrdinalIgnoreCase)) return;
-            if (File.Exists(work.Source))
+            if (work.LocalPath is { } fullPath)
             {
-                var fullPath = Path.GetFullPath(work.Source);
                 await RefreshBrowserForOpenedFileAsync(fullPath);
                 if (work.PopulateSiblingPlaylist) await PopulateSiblingPlaylistAsync(fullPath);
             }
@@ -616,7 +616,8 @@ public sealed partial class MainWindow : Window
 
     private async Task OpenFilesAsPlaylistAsync(IEnumerable<string> paths)
     {
-        var files = paths.Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        // Entry points normalize and validate paths on a worker thread before reaching here.
+        var files = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length == 0) return;
         if (files.Length == 1 && IsSubtitlePath(files[0])) { await LoadSubtitleFromPathAsync(files[0]); return; }
         _playlist.Clear();
@@ -1107,21 +1108,45 @@ public sealed partial class MainWindow : Window
         SubtitleList.ItemsSource = track.Cues; _history.Clear(); DrawTimeline();
     }
 
-    private void OnPlaybackStateChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
+    private void OnPlaybackStateChanged(object? sender, EventArgs e)
     {
-        PlayPauseIcon.Source = PlaybackIconSource(_playback.State == PlaybackState.Playing ? "pause" : "play");
-        StatusText.Text = L(_playback.State switch
+        var state = _playback.State;
+        DispatcherQueue.TryEnqueue(() =>
         {
-            PlaybackState.Playing => "PlaybackStatePlaying",
-            PlaybackState.Paused => "PlaybackStatePaused",
-            PlaybackState.Loading => "PlaybackStateLoading",
-            PlaybackState.Idle => "PlaybackStateIdle",
-            PlaybackState.Failed => "PlaybackStateFailed",
-            _ => "PlaybackStateUninitialized"
+            PlayPauseIcon.Source = PlaybackIconSource(state == PlaybackState.Playing ? "pause" : "play");
+            StatusText.Text = L(state switch
+            {
+                PlaybackState.Playing => "PlaybackStatePlaying",
+                PlaybackState.Paused => "PlaybackStatePaused",
+                PlaybackState.Loading => "PlaybackStateLoading",
+                PlaybackState.Idle => "PlaybackStateIdle",
+                PlaybackState.Failed => "PlaybackStateFailed",
+                _ => "PlaybackStateUninitialized"
+            });
+            if (state == PlaybackState.Loading)
+            {
+                _videoHost?.SetVisible(false);
+                VideoStatusText.Text = L("PlaybackStateLoading");
+                VideoStatusOverlay.Visibility = Visibility.Visible;
+                VideoLoadingProgressRing.Visibility = Visibility.Visible;
+                VideoLoadingProgressRing.IsActive = true;
+            }
+            else if (state == PlaybackState.Failed)
+            {
+                _videoHost?.SetVisible(false);
+                VideoStatusText.Text = L("PlaybackStateFailed");
+                VideoStatusOverlay.Visibility = Visibility.Visible;
+                VideoLoadingProgressRing.IsActive = false;
+                VideoLoadingProgressRing.Visibility = Visibility.Collapsed;
+            }
         });
-    });
+    }
     private void OnFirstFrameReady(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
+        VideoLoadingProgressRing.IsActive = false;
+        VideoLoadingProgressRing.Visibility = Visibility.Collapsed;
+        VideoStatusOverlay.Visibility = Visibility.Collapsed;
+        _videoHost?.SetVisible(true);
         StartPostOpenWorkIfReady();
         if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null) StartCheckedAiPipeline();
     });
@@ -1183,7 +1208,15 @@ public sealed partial class MainWindow : Window
     private void OnPlaybackError(object? sender, PlaybackError e)
     {
         _ = AppLog.WriteAsync("error", "playback", e.Code, e.Message, e.Exception);
-        DispatcherQueue.TryEnqueue(() => StatusText.Text = $"{e.Code}: {e.Message}");
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            StatusText.Text = $"{e.Code}: {e.Message}";
+            _videoHost?.SetVisible(false);
+            VideoStatusText.Text = e.Message;
+            VideoStatusOverlay.Visibility = Visibility.Visible;
+            VideoLoadingProgressRing.IsActive = false;
+            VideoLoadingProgressRing.Visibility = Visibility.Collapsed;
+        });
     }
 
     private void OnRootPreviewKeyDown(object sender, KeyRoutedEventArgs e)
@@ -3227,7 +3260,7 @@ public sealed partial class MainWindow : Window
     private sealed record RightPanelSectionEntry(string IconGlyph, string Label);
     private enum RightPanelSection { Explorer, Playlist, WebDav, Favorites, Subtitles }
 
-    private sealed record PendingPostOpenWork(string Source, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
+    private sealed record PendingPostOpenWork(string Source, string? LocalPath, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
     private static AssCueSnapshot? FindActiveOverlayCue(IReadOnlyList<AssCueSnapshot> cues, long positionMicroseconds)
     {
         var low = 0;

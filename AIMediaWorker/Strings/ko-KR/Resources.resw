@@ -64,7 +64,7 @@
   <data name="PlaylistClear.Label"><value>목록 비우기</value></data>
   <data name="PlaybackStatePlaying"><value>재생 중</value></data>
   <data name="PlaybackStatePaused"><value>일시정지</value></data>
-  <data name="PlaybackStateLoading"><value>불러오는 중</value></data>
+  <data name="PlaybackStateLoading"><value>로딩 중…</value></data>
   <data name="PlaybackStateIdle"><value>대기</value></data>
   <data name="PlaybackStateFailed"><value>재생 오류</value></data>
   <data name="PlaybackStateUninitialized"><value>초기화되지 않음</value></data>

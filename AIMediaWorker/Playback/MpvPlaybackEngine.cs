@@ -195,33 +195,45 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         await _openLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var trackRefreshCancellation = Interlocked.Exchange(ref _trackRefreshCancellation, null);
-            trackRefreshCancellation?.Cancel();
-            trackRefreshCancellation?.Dispose();
-            _firstFrameReady = false;
-            SetState(PlaybackState.Loading);
-            CurrentSource = source;
-            Position = TimeSpan.Zero;
-            Duration = TimeSpan.Zero;
-            VideoWidth = null;
-            VideoHeight = null;
-            _editorSubtitlePath = null;
-            cancellationToken.ThrowIfCancellationRequested();
-            if (httpHeaders is null || httpHeaders.Count == 0) SetProperty("http-header-fields", string.Empty);
-            else
-            {
-                foreach (var header in httpHeaders)
-                    if (header.Key.Any(c => c is '\r' or '\n' or ':' or ',') || header.Value.Any(c => c is '\r' or '\n' or ',')) throw new ArgumentException("Invalid HTTP header.", nameof(httpHeaders));
-                SetProperty("http-header-fields", string.Join(',', httpHeaders.Select(header => $"{header.Key}: {header.Value}")));
-            }
-            _loadfileIssued = true;
-            StartupProfiler.Mark("loadfile-command");
-            MpvInterop.CommandAsync(_context, unchecked((ulong)Interlocked.Increment(ref _nextCommandId)), "loadfile", source, "replace");
-            SetProperty("pause", "no");
+            // A synchronously acquired semaphore does not switch threads. Always perform the
+            // native open sequence on a worker so decoder, network, and mpv queue delays cannot
+            // block WinUI's dispatcher, including during shell/file-association startup.
+            await Task.Run(() => OpenCore(source, httpHeaders, cancellationToken), CancellationToken.None).ConfigureAwait(false);
         }
         finally { _openLock.Release(); }
     }
+
+    private void OpenCore(string source, IReadOnlyDictionary<string, string>? httpHeaders, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var trackRefreshCancellation = Interlocked.Exchange(ref _trackRefreshCancellation, null);
+        trackRefreshCancellation?.Cancel();
+        trackRefreshCancellation?.Dispose();
+        _firstFrameReady = false;
+        SetState(PlaybackState.Loading);
+        CurrentSource = source;
+        Position = TimeSpan.Zero;
+        Duration = TimeSpan.Zero;
+        VideoWidth = null;
+        VideoHeight = null;
+        _editorSubtitlePath = null;
+        cancellationToken.ThrowIfCancellationRequested();
+        if (httpHeaders is null || httpHeaders.Count == 0) SetProperty("http-header-fields", string.Empty);
+        else
+        {
+            foreach (var header in httpHeaders)
+                if (header.Key.Any(c => c is '\r' or '\n' or ':' or ',') || header.Value.Any(c => c is '\r' or '\n' or ',')) throw new ArgumentException("Invalid HTTP header.", nameof(httpHeaders));
+            SetProperty("http-header-fields", string.Join(',', httpHeaders.Select(header => $"{header.Key}: {header.Value}")));
+        }
+        _loadfileIssued = true;
+        StartupProfiler.Mark("loadfile-command");
+        MpvInterop.CommandAsync(_context, NextCommandId(), "loadfile", source, "replace");
+        // A synchronous write here waits behind loadfile until playback is ready. Preserve the
+        // required order without waiting for it to finish.
+        MpvInterop.CommandAsync(_context, NextCommandId(), "set", "pause", "no");
+    }
+
+    private ulong NextCommandId() => unchecked((ulong)Interlocked.Increment(ref _nextCommandId));
 
     public void Play() { SetProperty("pause", "no"); SetState(PlaybackState.Playing); }
     public void Pause() { SetProperty("pause", "yes"); SetState(PlaybackState.Paused); }
