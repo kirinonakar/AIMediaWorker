@@ -1,10 +1,14 @@
 using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
 using System.Runtime.InteropServices;
 using AIMediaWorker.Localization;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.Storage.Streams;
 using Windows.Graphics;
 using Windows.System;
 using WinRT.Interop;
@@ -40,9 +44,37 @@ internal sealed partial class RegionSelectionWindow : Window
 
     public async Task<Rectangle?> SelectAsync()
     {
+        await LoadScreenPreviewAsync();
         Activate();
         FocusTarget.Focus(FocusState.Programmatic);
         return await _completion.Task;
+    }
+
+    private async Task LoadScreenPreviewAsync()
+    {
+        try
+        {
+            using var bitmap = new Bitmap(_virtualBounds.Width, _virtualBounds.Height, PixelFormat.Format32bppPArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+                graphics.CopyFromScreen(_virtualBounds.X, _virtualBounds.Y, 0, 0, bitmap.Size, CopyPixelOperation.SourceCopy);
+
+            using var encoded = new MemoryStream();
+            bitmap.Save(encoded, ImageFormat.Png);
+            using var randomAccess = new InMemoryRandomAccessStream();
+            using (var writer = new DataWriter(randomAccess))
+            {
+                writer.WriteBytes(encoded.ToArray());
+                await writer.StoreAsync();
+            }
+            randomAccess.Seek(0);
+            var source = new BitmapImage();
+            await source.SetSourceAsync(randomAccess);
+            ScreenPreview.Source = source;
+        }
+        catch (Exception)
+        {
+            // Keep the translucent overlay usable if a remote or protected desktop cannot be captured.
+        }
     }
 
     public static Rectangle GetPrimaryScreenBounds() => new(0, 0, GetSystemMetrics(0), GetSystemMetrics(1));

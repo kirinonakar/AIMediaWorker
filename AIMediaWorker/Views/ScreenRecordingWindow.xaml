@@ -5,7 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Screen recording">
     <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
-    <Grid x:Name="RootGrid" Padding="20" RowSpacing="14" Loaded="OnLoaded">
+    <Grid x:Name="RootGrid" Padding="20" RowSpacing="14" Loaded="OnLoaded" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />

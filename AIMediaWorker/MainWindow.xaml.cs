@@ -2313,7 +2313,7 @@ public sealed partial class MainWindow : Window
         try
         {
             if (_screenRecordingWindow is not null) { _screenRecordingWindow.Activate(); return; }
-            _screenRecordingWindow = new ScreenRecordingWindow(this);
+            _screenRecordingWindow = new ScreenRecordingWindow(this, RootGrid.ActualTheme);
             _screenRecordingWindow.Closed += (_, _) => _screenRecordingWindow = null;
             _screenRecordingWindow.Activate();
         }
