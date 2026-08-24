@@ -81,22 +81,17 @@ Use the camera button in the playback toolbar or **Playback → Save current fra
 
 ## Python and Qwen setup
 
-Create an isolated environment. Install a PyTorch build appropriate for your CUDA driver first, then the worker dependencies:
-
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-# Install the CUDA or CPU PyTorch build appropriate for this machine first.
-python -m pip install -r asr-worker/requirements.txt
-```
+Open **Settings → Automatic speech recognition** and choose **Install**. The installer creates
+`asr-worker\.venv`, installs `asr-worker\requirements.txt`, and downloads both Qwen models to
+`asr-worker\models` beside the executable. It checks every stage and skips components that are
+already complete while reporting package and model-download progress.
 
 In **Settings → Automatic speech recognition**, configure:
 
-- Python executable, for example `D:\path\to\.venv\Scripts\python.exe`.
-- Qwen3-ASR-1.7B local directory or model identifier.
-- Optional Qwen3-ForcedAligner-0.6B directory or model identifier.
 - Device (`Auto`, `Cpu`, `Cuda`), precision, VAD, language, and chunk duration.
+
+The Python executable and model storage paths are fixed below the executable's `asr-worker`
+directory.
 
 Offline processing extracts bounded chunks, optionally applies Silero VAD, restores global microsecond timestamps, uses forced alignment when configured, and emits subtitles before the complete file finishes. The live path uses a bounded rolling 30-second PCM window because transformer Qwen streaming does not expose the same official low-latency vLLM path.
 

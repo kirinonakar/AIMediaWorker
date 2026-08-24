@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AIMediaWorker.Asr;
 
 namespace AIMediaWorker.Settings;
 
@@ -86,8 +87,9 @@ public sealed class SettingsService
         settings.Subtitle.FontFamily = string.IsNullOrWhiteSpace(settings.Subtitle.FontFamily) ? SubtitleSettings.DefaultFontFamily : settings.Subtitle.FontFamily.Trim();
         settings.Subtitle.Segmentation ??= new SegmentationSettings();
         settings.Asr ??= new AsrSettings();
-        settings.Asr.ModelPath = string.IsNullOrWhiteSpace(settings.Asr.ModelPath) ? AsrSettings.DefaultModelId : settings.Asr.ModelPath.Trim();
-        settings.Asr.AlignerPath = string.IsNullOrWhiteSpace(settings.Asr.AlignerPath) ? AsrSettings.DefaultAlignerId : settings.Asr.AlignerPath.Trim();
+        settings.Asr.ModelPath = AsrSettings.DefaultModelId;
+        settings.Asr.AlignerPath = AsrSettings.DefaultAlignerId;
+        settings.Asr.PythonExecutable = AsrRuntimePaths.PythonExecutable;
         settings.Network ??= new NetworkSettings();
         settings.Network.WebDavServers ??= [];
         settings.Capture ??= new CaptureSettings();

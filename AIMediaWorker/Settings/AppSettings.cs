@@ -1,4 +1,5 @@
 using AIMediaWorker.Playback;
+using AIMediaWorker.Asr;
 using System.Text.Json.Serialization;
 
 namespace AIMediaWorker.Settings;
@@ -67,7 +68,7 @@ public sealed class AsrSettings
 
     public string? ModelPath { get; set; } = DefaultModelId;
     public string? AlignerPath { get; set; } = DefaultAlignerId;
-    public string PythonExecutable { get; set; } = "python";
+    public string PythonExecutable { get; set; } = AsrRuntimePaths.PythonExecutable;
     public AsrDevice Device { get; set; } = AsrDevice.Auto;
     public AsrPrecision Precision { get; set; } = AsrPrecision.Auto;
     public string Language { get; set; } = "auto";

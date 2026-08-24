@@ -1727,9 +1727,9 @@ public sealed partial class MainWindow : Window
             return;
         }
         if (generate) StartWaveformGenerationForSubtitleGeneration(source);
-        if (generate && string.IsNullOrWhiteSpace(_settings.Asr.ModelPath))
+        if (generate && !File.Exists(AsrRuntimePaths.PythonExecutable))
         {
-            StatusText.Text = L("AsrModelMissingMessage");
+            StatusText.Text = L("AsrInstallRequiredMessage");
             return;
         }
 
@@ -1780,7 +1780,7 @@ public sealed partial class MainWindow : Window
     private async Task<bool> GenerateSubtitlesAsync(string source, long startMicroseconds, CancellationToken token)
     {
         StatusText.Text = L("StatusStartingAsr");
-        var worker = System.IO.Path.Combine(AppContext.BaseDirectory, "asr-worker", "main.py");
+        var worker = AsrRuntimePaths.WorkerScript;
         await _asrEngine.StartAsync(_settings.Asr.PythonExecutable, worker, token);
         StatusText.Text = L("StatusLoadingAsr");
         var acceptingLoadProgress = true;

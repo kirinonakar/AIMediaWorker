@@ -123,16 +123,16 @@ public sealed partial class CameraWindow : Window
             {
                 CaptionButton.IsEnabled = false; await _liveAsr.StopAsync(); CaptionButton.Content = L("StartCaptionsText"); CaptionButton.IsEnabled = true; return;
             }
-            if (string.IsNullOrWhiteSpace(_settings.Asr.ModelPath))
+            if (!File.Exists(AsrRuntimePaths.PythonExecutable))
             {
-                SetStatus(L("AsrModelMissingTitle"), L("LiveAsrModelMissingMessage"), InfoBarSeverity.Warning); return;
+                SetStatus(L("AsrInstallRequiredTitle"), L("AsrInstallRequiredMessage"), InfoBarSeverity.Warning); return;
             }
             CaptionButton.IsEnabled = false;
-            var worker = Path.Combine(AppContext.BaseDirectory, "asr-worker", "main.py");
+            var worker = AsrRuntimePaths.WorkerScript;
             await _asr.StartAsync(_settings.Asr.PythonExecutable, worker);
             var acceptingLoadProgress = true;
             var loadProgress = new Progress<AsrEvent>(update => { if (acceptingLoadProgress) UpdateAsrModelProgress(update); });
-            try { await _asr.LoadModelAsync(_settings.Asr.ModelPath, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress); }
+            try { await _asr.LoadModelAsync(_settings.Asr.ModelPath ?? AsrSettings.DefaultModelId, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress); }
             finally { acceptingLoadProgress = false; }
             var language = (LanguageCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "auto";
             await _liveAsr.StartAsync((MicrophoneCombo.SelectedItem as CaptureDevice)?.Id, language);

@@ -9,15 +9,16 @@ public sealed class AsrTests
     public void DefaultPythonCommandUsesNearestProjectVirtualEnvironment()
     {
         var root = Path.Combine(Path.GetTempPath(), "AIMediaWorker.Tests", Guid.NewGuid().ToString("N"));
-        var python = Path.Combine(root, ".venv", "Scripts", "python.exe");
         var worker = Path.Combine(root, "build", "asr-worker", "main.py");
+        var python = Path.Combine(root, "build", "asr-worker", ".venv", "Scripts", "python.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(python)!);
         Directory.CreateDirectory(Path.GetDirectoryName(worker)!);
         File.WriteAllText(python, string.Empty);
         try
         {
             Assert.Equal(Path.GetFullPath(python), PythonEnvironment.ResolveExecutable("python", worker));
-            Assert.Equal("C:\\custom\\python.exe", PythonEnvironment.ResolveExecutable("C:\\custom\\python.exe", worker));
+            Assert.Equal(Path.GetFullPath(python), PythonEnvironment.ResolveExecutable("C:\\custom\\python.exe", worker));
+            Assert.Equal(Path.Combine(root, "build", "asr-worker", "models"), AsrRuntimePaths.GetModelsDirectory(Path.Combine(root, "build")));
         }
         finally
         {
@@ -85,7 +86,7 @@ public sealed class AsrTests
     {
         var root = FindRepositoryRoot();
         var script = Path.Combine(root, "asr-worker", "main.py");
-        if (!File.Exists(script)) return;
+        if (!File.Exists(script) || !File.Exists(PythonEnvironment.ResolveExecutable("python", script))) return;
         await using var client = new AsrWorkerClient();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await client.StartAsync("python", script, cancellation.Token);
@@ -98,7 +99,7 @@ public sealed class AsrTests
     public async Task PythonWorkerCanRestartWithoutLeavingTheClientFailed()
     {
         var script = Path.Combine(FindRepositoryRoot(), "asr-worker", "main.py");
-        if (!File.Exists(script)) return;
+        if (!File.Exists(script) || !File.Exists(PythonEnvironment.ResolveExecutable("python", script))) return;
         await using var client = new AsrWorkerClient();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await client.StartAsync("python", script, cancellation.Token);
@@ -115,7 +116,7 @@ public sealed class AsrTests
     public async Task PythonWorkerReportsMissingModelWithoutCrashing()
     {
         var script = Path.Combine(FindRepositoryRoot(), "asr-worker", "main.py");
-        if (!File.Exists(script)) return;
+        if (!File.Exists(script) || !File.Exists(PythonEnvironment.ResolveExecutable("python", script))) return;
         await using var client = new AsrWorkerClient();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await client.StartAsync("python", script, cancellation.Token);

@@ -9,6 +9,7 @@ using Windows.Graphics;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
 using AIMediaWorker.Diagnostics;
+using AIMediaWorker.Asr;
 using AIMediaWorker.Llm;
 using AIMediaWorker.Localization;
 using AIMediaWorker.WindowsIntegration;
@@ -27,6 +28,7 @@ public sealed partial class SettingsWindow : Window
     private readonly WindowsFileAssociationService _fileAssociations = new();
     private AppSettings _settings = new();
     private AppWindow? _appWindow;
+    private CancellationTokenSource? _asrInstallCancellation;
     public Array Languages { get; } = Enum.GetValues<AppLanguage>();
     public Array Themes { get; } = Enum.GetValues<AppTheme>();
     public Array HardwareDecoders { get; } = Enum.GetValues<HardwareDecoder>();
@@ -67,6 +69,7 @@ public sealed partial class SettingsWindow : Window
         SettingsSectionList.SelectedIndex = 0;
         ThemeCombo.SelectionChanged += OnThemeComboChanged;
         Root.ActualThemeChanged += OnRootActualThemeChanged;
+        Closed += (_, _) => _asrInstallCancellation?.Cancel();
     }
 
     private void CenterOnOwnerDisplay(Window owner)
@@ -138,7 +141,7 @@ public sealed partial class SettingsWindow : Window
         HardwareCombo.SelectedItem = _settings.Playback.HardwareDecoder; RtxCombo.SelectedItem = _settings.Playback.RtxVideoSuperResolution; RtxQualityBox.Value = _settings.Playback.RtxQuality ?? 0; VolumeBox.Value = _settings.Playback.DefaultVolume; SeekBox.Value = _settings.Playback.SeekIntervalSeconds;
         RendererBox.Text = _settings.Playback.Renderer; AudioLanguageBox.Text = _settings.Playback.DefaultAudioLanguage ?? string.Empty; SubtitleLanguageBox.Text = _settings.Playback.DefaultSubtitleLanguage ?? string.Empty;
         SubtitleFontBox.Text = _settings.Subtitle.FontFamily; SubtitleSizeBox.Value = _settings.Subtitle.FontSize; CueDurationBox.Value = _settings.Subtitle.Segmentation.MaximumCueSeconds; SubtitleColorBox.Text = _settings.Subtitle.Color; SubtitleBackgroundBox.Text = _settings.Subtitle.Background; OutlineBox.Value = _settings.Subtitle.Outline; BottomMarginBox.Value = _settings.Subtitle.BottomMargin; EncodingBox.Text = _settings.Subtitle.Encoding; MinCueDurationBox.Value = _settings.Subtitle.Segmentation.MinimumCueSeconds; MaxLinesBox.Value = _settings.Subtitle.Segmentation.MaximumLines; TargetCharsBox.Value = _settings.Subtitle.Segmentation.TargetCharactersPerLine; SilenceSplitBox.Value = _settings.Subtitle.Segmentation.SilenceSplitSeconds; MaximumCpsBox.Value = _settings.Subtitle.Segmentation.MaximumCharactersPerSecond;
-        AsrModelBox.Text = _settings.Asr.ModelPath ?? string.Empty; AlignerBox.Text = _settings.Asr.AlignerPath ?? string.Empty; PythonBox.Text = _settings.Asr.PythonExecutable; AsrDeviceCombo.SelectedItem = _settings.Asr.Device; PrecisionCombo.SelectedItem = _settings.Asr.Precision; VadCheck.IsChecked = _settings.Asr.UseVad; AsrLanguageBox.Text = _settings.Asr.Language; ChunkDurationBox.Value = _settings.Asr.ChunkDurationSeconds;
+        AsrModelBox.Text = AsrSettings.DefaultModelId; AlignerBox.Text = AsrSettings.DefaultAlignerId; PythonBox.Text = AsrRuntimePaths.PythonExecutable; AsrModelFolderBox.Text = AsrRuntimePaths.ModelsDirectory; AsrDeviceCombo.SelectedItem = _settings.Asr.Device; PrecisionCombo.SelectedItem = _settings.Asr.Precision; VadCheck.IsChecked = _settings.Asr.UseVad; AsrLanguageBox.Text = _settings.Asr.Language; ChunkDurationBox.Value = _settings.Asr.ChunkDurationSeconds;
         NetworkTimeoutBox.Value = _settings.Network.TimeoutSeconds; ProxyBox.Text = _settings.Network.Proxy ?? string.Empty; CameraIdBox.Text = _settings.Capture.CameraDeviceId ?? string.Empty; MicrophoneIdBox.Text = _settings.Capture.MicrophoneDeviceId ?? string.Empty; CaptureWidthBox.Value = _settings.Capture.Width; CaptureHeightBox.Value = _settings.Capture.Height; CaptureFpsBox.Value = _settings.Capture.FrameRate; CaptionFontBox.Text = _settings.Capture.CaptionFontFamily; CaptionSizeBox.Value = _settings.Capture.CaptionFontSize; CaptionTextColorBox.Text = _settings.Capture.CaptionTextColor; CaptionBackgroundBox.Text = _settings.Capture.CaptionBackgroundColor; CaptionPositionCombo.SelectedItem = _settings.Capture.CaptionPosition; CaptionLinesBox.Value = _settings.Capture.CaptionMaximumLines;
         ProviderCombo.SelectedItem = _settings.Llm.Provider.Equals("Unsloth", StringComparison.OrdinalIgnoreCase) ? "Unsloth Desktop" : _settings.Llm.Provider; ModelBox.Text = _settings.Llm.Model ?? string.Empty; ThinkingCombo.SelectedItem = _settings.Llm.ThinkingLevel; TranslationLanguageBox.Text = _settings.Llm.TranslationLanguage;
         var rtx = new GraphicsCapabilityService().DetectRtxVideoSuperResolution();
@@ -248,6 +251,92 @@ public sealed partial class SettingsWindow : Window
         ThinkingCombo.IsEnabled = provider is "Unsloth Desktop" or "Google" or "OllamaCloud" or "OpenCodeGo" or "OpenCodeZen";
     }
 
+    private async void OnInstallAsrClick(object sender, RoutedEventArgs e)
+    {
+        if (_asrInstallCancellation is not null) return;
+        _asrInstallCancellation = new CancellationTokenSource();
+        InstallAsrButton.IsEnabled = false;
+        AsrInstallProgressBar.Visibility = Visibility.Visible;
+        AsrInstallProgressBar.IsIndeterminate = true;
+        AsrInstallStatusText.Text = L("AsrInstallStartingMessage");
+        try
+        {
+            var progress = new Progress<AsrInstallationProgress>(UpdateAsrInstallationProgress);
+            await new AsrInstallationService().InstallAsync(progress, _asrInstallCancellation.Token);
+            PythonBox.Text = AsrRuntimePaths.PythonExecutable;
+            AsrModelFolderBox.Text = AsrRuntimePaths.ModelsDirectory;
+            _settings.Asr.PythonExecutable = AsrRuntimePaths.PythonExecutable;
+            _settings.Asr.ModelPath = AsrSettings.DefaultModelId;
+            _settings.Asr.AlignerPath = AsrSettings.DefaultAlignerId;
+            await _service.SaveAsync(_settings);
+            AsrInstallProgressBar.IsIndeterminate = false;
+            AsrInstallProgressBar.Value = 100;
+            AsrInstallStatusText.Text = L("AsrInstallCompleteMessage");
+            StatusBar.Title = L("AsrInstallCompleteTitle");
+            StatusBar.Message = F("AsrInstallCompleteDetail", AsrRuntimePaths.WorkerDirectory);
+            StatusBar.Severity = InfoBarSeverity.Success;
+            StatusBar.IsOpen = true;
+        }
+        catch (OperationCanceledException)
+        {
+            AsrInstallStatusText.Text = L("AsrInstallCancelledMessage");
+        }
+        catch (Exception exception)
+        {
+            AsrInstallProgressBar.IsIndeterminate = false;
+            AsrInstallStatusText.Text = L("AsrInstallFailedMessage");
+            StatusBar.Title = L("AsrInstallFailedTitle");
+            StatusBar.Message = exception.Message;
+            StatusBar.Severity = InfoBarSeverity.Error;
+            StatusBar.IsOpen = true;
+        }
+        finally
+        {
+            _asrInstallCancellation.Dispose();
+            _asrInstallCancellation = null;
+            InstallAsrButton.IsEnabled = true;
+        }
+    }
+
+    private void UpdateAsrInstallationProgress(AsrInstallationProgress update)
+    {
+        if (update.Progress is { } value)
+        {
+            AsrInstallProgressBar.IsIndeterminate = false;
+            AsrInstallProgressBar.Value = value * 100;
+        }
+        else
+        {
+            AsrInstallProgressBar.IsIndeterminate = true;
+        }
+
+        var detail = update.TotalBytes > 0
+            ? $"{FormatBytes(update.DownloadedBytes)} / {FormatBytes(update.TotalBytes)}"
+            : update.Message;
+        AsrInstallStatusText.Text = update.Stage switch
+        {
+            "environment" => F("AsrInstallEnvironmentMessage", detail),
+            "environment-skipped" => L("AsrInstallEnvironmentSkippedMessage"),
+            "environment-complete" => L("AsrInstallEnvironmentCompleteMessage"),
+            "requirements" => F("AsrInstallRequirementsMessage", detail),
+            "requirements-skipped" => L("AsrInstallRequirementsSkippedMessage"),
+            "requirements-complete" => L("AsrInstallRequirementsCompleteMessage"),
+            "asr" => F("AsrInstallModelMessage", update.Message, detail),
+            "aligner" => F("AsrInstallModelMessage", update.Message, detail),
+            "complete" => L("AsrInstallCompleteMessage"),
+            _ => detail
+        };
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = (double)Math.Max(0, bytes);
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
+        return $"{value:0.##} {units[unit]}";
+    }
+
     private async void OnSyncModelsClick(object sender, RoutedEventArgs e)
     {
         var providerId = ProviderCombo.SelectedItem?.ToString() ?? "Unsloth Desktop";
@@ -287,7 +376,7 @@ public sealed partial class SettingsWindow : Window
             _settings.General.Language = (AppLanguage)(LanguageCombo.SelectedItem ?? AppLanguage.Default); _settings.General.Theme = (AppTheme)(ThemeCombo.SelectedItem ?? AppTheme.System); _settings.General.RecentMediaCount = (int)RecentCountBox.Value; _settings.General.ResumePlayback = ResumeCheck.IsChecked == true; _settings.General.DefaultFolder = EmptyToNull(DefaultFolderBox.Text);
             _settings.Playback.HardwareDecoder = (HardwareDecoder)(HardwareCombo.SelectedItem ?? HardwareDecoder.Auto); _settings.Playback.RtxVideoSuperResolution = (RtxVideoSuperResolutionMode)(RtxCombo.SelectedItem ?? RtxVideoSuperResolutionMode.Auto); _settings.Playback.RtxQuality = RtxQualityBox.Value <= 0 ? null : (int)RtxQualityBox.Value; _settings.Playback.DefaultVolume = VolumeBox.Value; _settings.Playback.SeekIntervalSeconds = SeekBox.Value; _settings.Playback.Renderer = RendererBox.Text.Trim(); _settings.Playback.DefaultAudioLanguage = EmptyToNull(AudioLanguageBox.Text); _settings.Playback.DefaultSubtitleLanguage = EmptyToNull(SubtitleLanguageBox.Text);
             _settings.Subtitle.FontFamily = string.IsNullOrWhiteSpace(SubtitleFontBox.Text) ? SubtitleSettings.DefaultFontFamily : SubtitleFontBox.Text.Trim(); _settings.Subtitle.FontSize = SubtitleSizeBox.Value; _settings.Subtitle.Segmentation.MaximumCueSeconds = CueDurationBox.Value; _settings.Subtitle.Color = SubtitleColorBox.Text; _settings.Subtitle.Background = SubtitleBackgroundBox.Text; _settings.Subtitle.Outline = OutlineBox.Value; _settings.Subtitle.BottomMargin = (int)BottomMarginBox.Value; _settings.Subtitle.Encoding = EncodingBox.Text; _settings.Subtitle.Segmentation.MinimumCueSeconds = MinCueDurationBox.Value; _settings.Subtitle.Segmentation.MaximumLines = (int)MaxLinesBox.Value; _settings.Subtitle.Segmentation.TargetCharactersPerLine = (int)TargetCharsBox.Value; _settings.Subtitle.Segmentation.SilenceSplitSeconds = SilenceSplitBox.Value; _settings.Subtitle.Segmentation.MaximumCharactersPerSecond = MaximumCpsBox.Value;
-            _settings.Asr.ModelPath = EmptyToNull(AsrModelBox.Text) ?? AsrSettings.DefaultModelId; _settings.Asr.AlignerPath = EmptyToNull(AlignerBox.Text) ?? AsrSettings.DefaultAlignerId; _settings.Asr.PythonExecutable = PythonBox.Text.Trim(); _settings.Asr.Device = (AsrDevice)(AsrDeviceCombo.SelectedItem ?? AsrDevice.Auto); _settings.Asr.Precision = (AsrPrecision)(PrecisionCombo.SelectedItem ?? AsrPrecision.Auto); _settings.Asr.UseVad = VadCheck.IsChecked == true; _settings.Asr.Language = AsrLanguageBox.Text.Trim(); _settings.Asr.ChunkDurationSeconds = ChunkDurationBox.Value;
+            _settings.Asr.ModelPath = AsrSettings.DefaultModelId; _settings.Asr.AlignerPath = AsrSettings.DefaultAlignerId; _settings.Asr.PythonExecutable = AsrRuntimePaths.PythonExecutable; _settings.Asr.Device = (AsrDevice)(AsrDeviceCombo.SelectedItem ?? AsrDevice.Auto); _settings.Asr.Precision = (AsrPrecision)(PrecisionCombo.SelectedItem ?? AsrPrecision.Auto); _settings.Asr.UseVad = VadCheck.IsChecked == true; _settings.Asr.Language = AsrLanguageBox.Text.Trim(); _settings.Asr.ChunkDurationSeconds = ChunkDurationBox.Value;
             _settings.Network.TimeoutSeconds = (int)NetworkTimeoutBox.Value; _settings.Network.Proxy = EmptyToNull(ProxyBox.Text); _settings.Capture.CameraDeviceId = EmptyToNull(CameraIdBox.Text); _settings.Capture.MicrophoneDeviceId = EmptyToNull(MicrophoneIdBox.Text); _settings.Capture.Width = (int)CaptureWidthBox.Value; _settings.Capture.Height = (int)CaptureHeightBox.Value; _settings.Capture.FrameRate = (int)CaptureFpsBox.Value; _settings.Capture.CaptionFontFamily = CaptionFontBox.Text.Trim(); _settings.Capture.CaptionFontSize = CaptionSizeBox.Value; _settings.Capture.CaptionTextColor = CaptionTextColorBox.Text.Trim(); _settings.Capture.CaptionBackgroundColor = CaptionBackgroundBox.Text.Trim(); _settings.Capture.CaptionPosition = CaptionPositionCombo.SelectedItem?.ToString() ?? "Bottom"; _settings.Capture.CaptionMaximumLines = (int)CaptionLinesBox.Value;
             _settings.Llm.Provider = ProviderCombo.SelectedItem?.ToString() ?? "Unsloth Desktop"; _settings.Llm.Model = EmptyToNull(ModelBox.Text); _settings.Llm.ThinkingLevel = (ThinkingLevel)(ThinkingCombo.SelectedItem ?? ThinkingLevel.Default); _settings.Llm.TranslationLanguage = TranslationLanguageBox.Text.Trim();
             if (!string.IsNullOrEmpty(ApiKeyBox.Password)) _credentials.Save(CredentialIdentifier.ForLlm(_settings.Llm.Provider), _settings.Llm.Provider, ApiKeyBox.Password);
