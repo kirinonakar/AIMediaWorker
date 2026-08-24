@@ -47,6 +47,7 @@ public sealed partial class SettingsWindow : Window
     public string CaptureHeading { get; } = L("CaptureExpander.Header");
     public string LlmHeading { get; } = L("LlmExpander.Header");
     public event EventHandler<AppSettings>? SettingsSaved;
+    public event EventHandler? DllUnloadRequested;
 
     public SettingsWindow(Window owner)
     {
@@ -150,6 +151,7 @@ public sealed partial class SettingsWindow : Window
         if (!isPackaged && registeredExtensions.Count > 0)
             foreach (var option in AssociationOptions) option.IsSelected = registeredExtensions.Contains(option.Extension);
         RegisterAssociationsButton.IsEnabled = !isPackaged;
+        UnregisterAndUnloadButton.IsEnabled = !isPackaged;
         AssociationOptionsList.IsEnabled = !isPackaged;
         AssociationStateText.Text = isPackaged
             ? L("FileAssociationsPackagedStatus")
@@ -168,6 +170,41 @@ public sealed partial class SettingsWindow : Window
             StatusBar.Message = L("FileAssociationsRegisteredMessage");
             StatusBar.Severity = InfoBarSeverity.Success;
             StatusBar.IsOpen = true;
+        }
+        catch (Exception exception)
+        {
+            StatusBar.Title = L("FileAssociationsErrorTitle");
+            StatusBar.Message = exception.Message;
+            StatusBar.Severity = InfoBarSeverity.Error;
+            StatusBar.IsOpen = true;
+        }
+    }
+
+    private async void OnUnregisterAndUnloadClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var confirmation = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot,
+                RequestedTheme = Root.ActualTheme,
+                Title = L("FileAssociationsUnregisterTitle"),
+                Content = L("FileAssociationsUnregisterConfirmation"),
+                PrimaryButtonText = L("UnregisterAndExitButton"),
+                CloseButtonText = L("CancelButtonText"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await confirmation.ShowAsync() != ContentDialogResult.Primary) return;
+
+            _fileAssociations.Unregister();
+            foreach (var option in AssociationOptions) option.IsSelected = false;
+            AssociationStateText.Text = L("FileAssociationsNotRegisteredStatus");
+            StatusBar.Title = L("FileAssociationsUnregisteredTitle");
+            StatusBar.Message = L("FileAssociationsUnregisteredMessage");
+            StatusBar.Severity = InfoBarSeverity.Success;
+            StatusBar.IsOpen = true;
+
+            DllUnloadRequested?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception exception)
         {

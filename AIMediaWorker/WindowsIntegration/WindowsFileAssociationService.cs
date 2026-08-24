@@ -109,6 +109,38 @@ public sealed class WindowsFileAssociationService
         return fileAssociations?.GetValue(NormalizeExtension(extension)) is string;
     }
 
+    /// <summary>
+    /// Removes only the per-user registry entries created by <see cref="Register"/>.
+    /// Windows-protected UserChoice values are intentionally left for Windows to reconcile.
+    /// </summary>
+    public void Unregister()
+    {
+        if (IsPackaged) throw new InvalidOperationException("Packaged file associations can only be removed by uninstalling the package.");
+
+        var executablePath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executablePath)) throw new InvalidOperationException("The application executable path is unavailable.");
+
+        using (var classes = Registry.CurrentUser.CreateSubKey(@"Software\Classes", writable: true)
+            ?? throw new InvalidOperationException("Unable to open the current user's file association registry."))
+        {
+            classes.DeleteSubKeyTree($@"Applications\{Path.GetFileName(executablePath)}", throwOnMissingSubKey: false);
+            foreach (var extension in SupportedExtensions)
+            {
+                var progId = GetProgId(extension);
+                using (var openWithProgIds = classes.OpenSubKey($@"{extension}\OpenWithProgids", writable: true))
+                    openWithProgIds?.DeleteValue(progId, throwOnMissingValue: false);
+                classes.DeleteSubKeyTree(progId, throwOnMissingSubKey: false);
+            }
+        }
+
+        using (var application = Registry.CurrentUser.OpenSubKey($@"Software\{ApplicationName}", writable: true))
+            application?.DeleteSubKeyTree("Capabilities", throwOnMissingSubKey: false);
+        using (var registeredApplications = Registry.CurrentUser.OpenSubKey(@"Software\RegisteredApplications", writable: true))
+            registeredApplications?.DeleteValue(ApplicationName, throwOnMissingValue: false);
+
+        NotifyAssociationChanged();
+    }
+
     public Uri GetDefaultAppsSettingsUri()
     {
         if (IsPackaged)

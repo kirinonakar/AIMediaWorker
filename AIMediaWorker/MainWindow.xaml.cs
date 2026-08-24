@@ -2260,6 +2260,11 @@ public sealed partial class MainWindow : Window
                 });
                 ScheduleSubtitleOverlaySync();
             };
+            _settingsWindow.DllUnloadRequested += (_, _) =>
+            {
+                _settingsWindow?.Close();
+                Close();
+            };
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Activate();
         }
