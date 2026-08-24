@@ -59,6 +59,9 @@ namespace AIMediaWorker
         {
             try
             {
+                // File activation payloads can become unavailable after the first asynchronous
+                // continuation, so capture the launch source before loading settings.
+                var launchSource = GetLaunchSource();
                 var settings = await _settingsLoadTask;
                 try
                 {
@@ -69,7 +72,6 @@ namespace AIMediaWorker
                 }
                 catch (Exception exception) { await AppLog.WriteAsync("warning", "credentials", "WEBDAV_CREDENTIAL_MIGRATION_ERROR", exception.Message, exception); }
                 LocalizationService.Apply(settings.General.Language);
-                var launchSource = GetLaunchSource();
                 var mainWindow = new MainWindow(launchSource, settings);
                 mainWindow.ApplySavedWindowPlacement(settings.Window);
                 _window = mainWindow;
@@ -84,12 +86,16 @@ namespace AIMediaWorker
 
         private static string? GetLaunchSource()
         {
-            var activation = Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs();
-            if (activation.Kind == ExtendedActivationKind.File && activation.Data is IFileActivatedEventArgs fileActivation)
+            try
             {
-                var activatedFile = fileActivation.Files.OfType<StorageFile>().FirstOrDefault();
-                if (activatedFile is not null) return activatedFile.Path;
+                var activation = Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs();
+                if (activation?.Kind == ExtendedActivationKind.File && activation.Data is IFileActivatedEventArgs fileActivation)
+                {
+                    var activatedFile = fileActivation.Files.OfType<StorageFile>().FirstOrDefault();
+                    if (activatedFile is not null) return activatedFile.Path;
+                }
             }
+            catch (Exception exception) when (exception is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
 
             return Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(value =>
                 File.Exists(value) ||

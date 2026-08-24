@@ -116,6 +116,7 @@ public sealed partial class MainWindow : Window
     private DateTimeOffset _showFullscreenRightPanelUntil;
     private string? _pendingLaunchSource;
     private string[]? _pendingDroppedFiles;
+    private bool _openingLaunchSource;
     private PendingPostOpenWork? _pendingPostOpenWork;
     private CancellationTokenSource? _postOpenCancellation;
     private Task? _historyLoadTask;
@@ -254,7 +255,9 @@ public sealed partial class MainWindow : Window
             else if (_playback.IsAvailable && _pendingLaunchSource is { Length: > 0 } launchSource)
             {
                 _pendingLaunchSource = null;
-                await OpenMediaAsync(launchSource);
+                _openingLaunchSource = true;
+                try { await OpenMediaAsync(launchSource); }
+                finally { _openingLaunchSource = false; }
             }
             else _ = RefreshBrowserAsync(_browserDirectory);
             await historyLoad;
@@ -388,7 +391,7 @@ public sealed partial class MainWindow : Window
             _translationCompletedForCurrentMedia = false;
             StatusText.Text = source;
             VideoStatusText.Visibility = Visibility.Collapsed;
-            QueuePostOpenWork(source, !preservePlaylist);
+            QueuePostOpenWork(source, !preservePlaylist, _openingLaunchSource);
             UpdatePlaylistButtons();
             FocusPlaybackSurface();
         }
@@ -411,7 +414,7 @@ public sealed partial class MainWindow : Window
         catch (Exception exception) { await AppLog.WriteAsync("error", "history", "HISTORY_SAVE_AFTER_OPEN_ERROR", exception.Message, exception); }
     }
 
-    private void QueuePostOpenWork(string source, bool populateSiblingPlaylist)
+    private void QueuePostOpenWork(string source, bool populateSiblingPlaylist, bool showInExplorer)
     {
         _waveformCancellation?.Cancel();
         _waveformSource = null;
@@ -420,6 +423,7 @@ public sealed partial class MainWindow : Window
         _postOpenCancellation?.Cancel();
         _postOpenCancellation?.Dispose();
         _postOpenCancellation = new CancellationTokenSource();
+        if (File.Exists(source)) PrepareBrowserForOpenedFile(Path.GetFullPath(source), showInExplorer);
         _pendingPostOpenWork = new PendingPostOpenWork(source, populateSiblingPlaylist, _postOpenCancellation.Token);
         if (_playback.IsFirstFrameReady) StartPostOpenWorkIfReady();
     }
@@ -436,23 +440,39 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            // Let mpv present its first frames before FFmpeg and folder enumeration compete for I/O and CPU.
-            await Task.Delay(750, work.CancellationToken);
+            // The browser location is already visible. Defer only directory enumeration so
+            // media decoding gets the first slice of disk and CPU time.
+            await Task.Delay(250, work.CancellationToken);
             if (!string.Equals(_playback.CurrentSource, work.Source, StringComparison.OrdinalIgnoreCase)) return;
-            var tasks = new List<Task>();
             if (File.Exists(work.Source))
             {
                 var fullPath = Path.GetFullPath(work.Source);
-                tasks.Add(RefreshBrowserForOpenedFileAsync(fullPath));
-                if (work.PopulateSiblingPlaylist) tasks.Add(PopulateSiblingPlaylistAsync(fullPath));
+                await RefreshBrowserForOpenedFileAsync(fullPath);
+                if (work.PopulateSiblingPlaylist) await PopulateSiblingPlaylistAsync(fullPath);
             }
-            await Task.WhenAll(tasks);
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)
         {
             await AppLog.WriteAsync("error", "post-open", "POST_OPEN_WORK_ERROR", exception.Message, exception);
         }
+    }
+
+    private void PrepareBrowserForOpenedFile(string fullPath, bool showInExplorer)
+    {
+        if (Path.GetDirectoryName(fullPath) is not { } directory) return;
+        if (showInExplorer) ShowRightPanelSection(RightPanelSection.Explorer);
+        if (AreSameDirectory(directory, _browserDirectory))
+        {
+            SelectBrowserEntry(fullPath);
+            return;
+        }
+
+        _browserDirectory = directory;
+        BrowserFilterBox.Text = string.Empty;
+        _browserEntries = [];
+        UpdateBrowserBreadcrumbs();
+        ApplyBrowserEntryView();
     }
 
     private async Task RefreshBrowserForOpenedFileAsync(string fullPath)
