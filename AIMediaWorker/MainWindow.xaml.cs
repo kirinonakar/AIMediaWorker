@@ -2666,9 +2666,10 @@ public sealed partial class MainWindow : Window
     {
         if (e.ClickedItem is not BrowserEntry entry) return;
         if (entry.IsDirectory) { await RefreshBrowserAsync(entry.Path); return; }
-        var files = (FolderEntryList.ItemsSource as IEnumerable<BrowserEntry>)?.Where(item => !item.IsDirectory).Select(item => item.Path).ToArray() ?? [entry.Path];
-        _playlist.Clear(); _playlist.AddRange(files.Select(PlaylistEntry.FromLocal)); _playlistIndex = Math.Max(0, _playlist.FindIndex(item => item.Path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase)));
-        await OpenPlaylistEntryAsync(_playlist[_playlistIndex]);
+        // Issue loadfile before materializing a potentially large sibling playlist.
+        // CompleteMediaOpen keeps the current item available immediately, then the
+        // first-frame callback populates the rest of the folder asynchronously.
+        await OpenMediaAsync(entry.Path);
     }
 
     private async void OnBrowserBreadcrumbItemClick(BreadcrumbBar sender, BreadcrumbBarItemClickedEventArgs e)
@@ -2763,9 +2764,9 @@ public sealed partial class MainWindow : Window
         await AddFavoriteAsync(new LocalMediaSource(entry.Path), entry.IsDirectory);
     }
 
-    private async void OnPlaylistDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private async void OnPlaylistItemClick(object sender, ItemClickEventArgs e)
     {
-        if (PlaylistList.SelectedItem is not PlaylistEntry entry) return;
+        if (e.ClickedItem is not PlaylistEntry entry) return;
         var index = _playlist.IndexOf(entry);
         if (index < 0) return;
         _playlistIndex = index;
