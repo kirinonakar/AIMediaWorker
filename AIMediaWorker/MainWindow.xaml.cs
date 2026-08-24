@@ -75,6 +75,7 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _aiOperationCancellation;
     private Task? _aiPipelineTask;
     private int _generatedSubtitleUiRefreshQueued;
+    private int _playbackPositionUiRefreshQueued;
     private CancellationTokenSource? _seekAiRestartCancellation;
     private bool _subtitleGenerationCompletedForCurrentMedia;
     private bool _translationCompletedForCurrentMedia;
@@ -95,9 +96,11 @@ public sealed partial class MainWindow : Window
     private Task? _shutdownTask;
     private TimeSpan? _abStart;
     private CancellationTokenSource? _overlaySyncCancellation;
+    private readonly SemaphoreSlim _overlayWriteLock = new(1, 1);
     private string? _renderedOverlayContent;
     private string? _renderedOverlayFontFamily;
-    private OverlayCueSnapshot[] _renderedOverlayCues = [];
+    private AssCueSnapshot[] _renderedOverlayCues = [];
+    private Rectangle? _timelinePlayhead;
     private bool _subtitleEditorHasFocus;
     private readonly List<PlaylistEntry> _playlist = [];
     private int _playlistIndex = -1;
@@ -1044,6 +1047,7 @@ public sealed partial class MainWindow : Window
     private void DrawTimeline()
     {
         TimelineCanvas.Children.Clear();
+        _timelinePlayhead = null;
         if (_document.ActiveTrack?.Cues is { } cues)
         {
             foreach (var cue in cues)
@@ -1070,20 +1074,25 @@ public sealed partial class MainWindow : Window
                 Canvas.SetLeft(border, left); Canvas.SetTop(border, 4); TimelineCanvas.Children.Add(border);
             }
         }
-        var playheadX = _timelineTransform.TimeToX(Math.Max(0, _playback.Position.Ticks / 10));
-        if (playheadX >= 0 && playheadX <= TimelineCanvas.ActualWidth)
+        _timelinePlayhead = new Rectangle
         {
-            var playhead = new Rectangle
-            {
-                Width = 2,
-                Height = TimelineCanvas.ActualHeight,
-                Fill = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 255, 69, 0)),
-                IsHitTestVisible = false
-            };
-            Canvas.SetLeft(playhead, playheadX);
-            Canvas.SetTop(playhead, 0);
-            TimelineCanvas.Children.Add(playhead);
-        }
+            Width = 2,
+            Height = TimelineCanvas.ActualHeight,
+            Fill = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 255, 69, 0)),
+            IsHitTestVisible = false
+        };
+        Canvas.SetTop(_timelinePlayhead, 0);
+        TimelineCanvas.Children.Add(_timelinePlayhead);
+        UpdateTimelinePlayhead(Math.Max(0, _playback.Position.Ticks / 10));
+    }
+
+    private void UpdateTimelinePlayhead(long positionMicroseconds)
+    {
+        if (_timelinePlayhead is null) return;
+        var playheadX = _timelineTransform.TimeToX(positionMicroseconds);
+        _timelinePlayhead.Height = TimelineCanvas.ActualHeight;
+        _timelinePlayhead.Visibility = playheadX >= 0 && playheadX <= TimelineCanvas.ActualWidth ? Visibility.Visible : Visibility.Collapsed;
+        if (_timelinePlayhead.Visibility == Visibility.Visible) Canvas.SetLeft(_timelinePlayhead, playheadX);
     }
 
     private void BindDocument(SubtitleDocument document)
@@ -1116,27 +1125,45 @@ public sealed partial class MainWindow : Window
         StartPostOpenWorkIfReady();
         if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null) StartCheckedAiPipeline();
     });
-    private void OnPlaybackPositionChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
+    private void OnPlaybackPositionChanged(object? sender, EventArgs e)
     {
-        _updatingPosition = true; PositionSlider.Maximum = Math.Max(1, _playback.Duration.TotalSeconds); if (!_positionSliderDragging) PositionSlider.Value = Math.Clamp(_playback.Position.TotalSeconds, 0, PositionSlider.Maximum); _updatingPosition = false;
-        PositionText.Text = $"{FormatTime(_playback.Position)} / {FormatTime(_playback.Duration)}"; DecoderText.Text = _playback.DecoderDescription ?? string.Empty;
-        ResolutionText.Text = _playback.VideoWidth is { } width && _playback.VideoHeight is { } height ? $"{width}×{height}" : string.Empty;
-        var positionMicroseconds = Math.Max(0, _playback.Position.Ticks / 10);
-        var visualizationWidth = TimelineCanvas.ActualWidth;
-        if (visualizationWidth > 0) _timelineTransform.EnsureVisible(positionMicroseconds, visualizationWidth);
-        var cue = _document.FindActiveCue(positionMicroseconds);
-        if (!_subtitleEditorHasFocus)
+        if (Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 1) != 0) return;
+        if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, RefreshPlaybackPositionUi))
+            Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 0);
+    }
+
+    private void RefreshPlaybackPositionUi()
+    {
+        try
         {
-            var cueChanged = cue?.Id != _playbackLinkedCueId;
-            _playbackLinkedCueId = cue?.Id;
-            if (cue is not null)
+            var position = _playback.Position;
+            var duration = _playback.Duration;
+            _updatingPosition = true;
+            PositionSlider.Maximum = Math.Max(1, duration.TotalSeconds);
+            if (!_positionSliderDragging) PositionSlider.Value = Math.Clamp(position.TotalSeconds, 0, PositionSlider.Maximum);
+            _updatingPosition = false;
+            PositionText.Text = $"{FormatTime(position)} / {FormatTime(duration)}";
+            DecoderText.Text = _playback.DecoderDescription ?? string.Empty;
+            ResolutionText.Text = _playback.VideoWidth is { } width && _playback.VideoHeight is { } height ? $"{width}×{height}" : string.Empty;
+            var positionMicroseconds = Math.Max(0, position.Ticks / 10);
+            var visualizationWidth = TimelineCanvas.ActualWidth;
+            var viewportChanged = visualizationWidth > 0 && _timelineTransform.EnsureVisible(positionMicroseconds, visualizationWidth);
+            var cue = _document.FindActiveCue(positionMicroseconds);
+            if (!_subtitleEditorHasFocus)
             {
-                if (!SubtitleList.SelectedItems.Contains(cue)) SubtitleList.SelectedItem = cue;
-                if (cueChanged) SubtitleList.ScrollIntoView(cue, ScrollIntoViewAlignment.Leading);
+                var cueChanged = cue?.Id != _playbackLinkedCueId;
+                _playbackLinkedCueId = cue?.Id;
+                if (cue is not null)
+                {
+                    if (!SubtitleList.SelectedItems.Contains(cue)) SubtitleList.SelectedItem = cue;
+                    if (cueChanged) SubtitleList.ScrollIntoView(cue, ScrollIntoViewAlignment.Leading);
+                }
             }
+            if (viewportChanged) DrawTimeline();
+            else UpdateTimelinePlayhead(positionMicroseconds);
         }
-        DrawTimeline();
-    });
+        finally { Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 0); }
+    }
     private void OnMediaEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(async () =>
     {
         if (_repeatMode == RepeatMode.One)
@@ -1773,6 +1800,7 @@ public sealed partial class MainWindow : Window
         var translationQueue = Channel.CreateUnbounded<SubtitleCue>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
         var translationTask = TranslateGeneratedCuesRealtimeAsync(translationQueue.Reader, document, track, token);
         var translatedCount = 0;
+        var pendingCues = new List<SubtitleCue>(32);
         var segmentation = _settings.Subtitle.Segmentation;
         var asrSegmentation = new AsrSegmentationOptions(segmentation.MinimumCueSeconds, segmentation.MaximumCueSeconds, segmentation.MaximumLines, segmentation.TargetCharactersPerLine, segmentation.SilenceSplitSeconds, segmentation.MaximumCharactersPerSecond);
         try
@@ -1780,18 +1808,22 @@ public sealed partial class MainWindow : Window
             await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, startMicroseconds, token))
             {
                 if (!ReferenceEquals(_document, document)) throw new OperationCanceledException(token);
-                if (result.Event == "progress" && result.Progress is { } progress) StatusText.Text = F("StatusGeneratingSubtitles", progress);
+                if (result.Event == "progress")
+                {
+                    FlushPendingCues();
+                    if (result.Progress is { } progress) StatusText.Text = F("StatusGeneratingSubtitles", progress);
+                }
                 if (result.Event == "segment" && result.Segment is { } segment)
                 {
                     var cue = new SubtitleCue { StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds, Text = segment.Text, Confidence = segment.Confidence, Source = SubtitleCueSource.AutomaticSpeechRecognition };
-                    track.Cues.Add(cue);
-                    translationQueue.Writer.TryWrite(cue);
-                    ScheduleGeneratedSubtitleUiRefresh();
+                    pendingCues.Add(cue);
+                    if (pendingCues.Count >= 32) FlushPendingCues();
                 }
             }
         }
         finally
         {
+            FlushPendingCues();
             translationQueue.Writer.TryComplete();
             if (token.IsCancellationRequested)
             {
@@ -1802,9 +1834,18 @@ public sealed partial class MainWindow : Window
             else translatedCount = await translationTask;
         }
         if (!ReferenceEquals(_document, document)) return false;
-        document.Sort(); document.MarkDirty(); DrawTimeline(); ScheduleSubtitleOverlaySync();
+        document.Sort(); document.MarkDirty(); DrawTimeline(); ScheduleSubtitleOverlaySync(force: true);
         StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
         return TranslateMenuItem.IsChecked && translatedCount == track.Cues.Count;
+
+        void FlushPendingCues()
+        {
+            if (pendingCues.Count == 0 || !ReferenceEquals(_document, document)) return;
+            track.Cues.AddRange(pendingCues);
+            foreach (var cue in pendingCues) translationQueue.Writer.TryWrite(cue);
+            pendingCues.Clear();
+            ScheduleGeneratedSubtitleUiRefresh();
+        }
     }
 
     private async Task<int> TranslateGeneratedCuesRealtimeAsync(ChannelReader<SubtitleCue> reader, SubtitleDocument targetDocument, SubtitleTrack track, CancellationToken cancellationToken)
@@ -2915,12 +2956,12 @@ public sealed partial class MainWindow : Window
         _historyService.AddRecent(_currentMediaSource, (long)(_playback.Position.TotalMilliseconds * 1000), _settings.General.RecentMediaCount);
     }
 
-    private void ScheduleSubtitleOverlaySync()
+    private void ScheduleSubtitleOverlaySync(bool force = false)
     {
         if (!_playback.IsAvailable || _playback.CurrentSource is null || _document.ActiveTrack is null) return;
         _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = new CancellationTokenSource();
         var token = _overlaySyncCancellation.Token;
-        _ = SyncSubtitleOverlayAsync(token);
+        _ = SyncSubtitleOverlayAsync(token, force);
     }
 
     private void ScheduleGeneratedSubtitleUiRefresh()
@@ -2948,37 +2989,48 @@ public sealed partial class MainWindow : Window
         _settings.Playback.ShowSubtitles = _playback.AreSubtitlesVisible;
     }
 
-    private async Task SyncSubtitleOverlayAsync(CancellationToken cancellationToken)
+    private async Task SyncSubtitleOverlayAsync(CancellationToken cancellationToken, bool force)
     {
         try
         {
             await Task.Delay(150, cancellationToken);
+            var document = _document;
+            var track = document.ActiveTrack;
+            if (track is null) return;
+            var fontFamily = _settings.Subtitle.FontFamily;
+            var cues = track.Cues
+                .Select(cue => new AssCueSnapshot(cue.Id, cue.StartMicroseconds, cue.EndMicroseconds, cue.Text, cue.Style, cue.Speaker))
+                .OrderBy(cue => cue.StartMicroseconds)
+                .ToArray();
+            var nativeHeader = track.NativeHeader;
+            var content = await Task.Run(() => AssWriter.Write(cues, nativeHeader, fontFamily), cancellationToken).ConfigureAwait(false);
+            if (!ReferenceEquals(_document, document)) return;
+            if (string.Equals(content, _renderedOverlayContent, StringComparison.Ordinal)) return;
             while (true)
             {
-                var track = _document.ActiveTrack;
-                if (track is null) return;
-                var fontFamily = _settings.Subtitle.FontFamily;
-                var cues = track.Cues.Select(cue => new OverlayCueSnapshot(cue.Id, cue.StartMicroseconds, cue.EndMicroseconds, cue.Text, cue.Style, cue.Speaker)).ToArray();
-                var content = AssWriter.Write(track, fontFamily);
-                if (string.Equals(content, _renderedOverlayContent, StringComparison.Ordinal)) return;
-
                 var position = (long)(_playback.Position.TotalMilliseconds * 1000);
                 var renderedActive = FindActiveOverlayCue(_renderedOverlayCues, position);
                 var currentActive = FindActiveOverlayCue(cues, position);
-                var currentSubtitleIsUnchanged = renderedActive is not null && renderedActive == currentActive;
+                var currentSubtitleIsUnchanged = renderedActive == currentActive;
                 var fontIsUnchanged = string.Equals(fontFamily, _renderedOverlayFontFamily, StringComparison.OrdinalIgnoreCase);
-                if (currentSubtitleIsUnchanged && fontIsUnchanged)
+                if (!force && _playback.State == PlaybackState.Playing && _renderedOverlayContent is not null && currentSubtitleIsUnchanged && fontIsUnchanged)
                 {
                     await Task.Delay(100, cancellationToken);
                     continue;
                 }
 
-                await File.WriteAllTextAsync(_editorOverlayPath, content, new System.Text.UTF8Encoding(false), cancellationToken);
-                if (cancellationToken.IsCancellationRequested) return;
-                _playback.UpdateEditorSubtitle(_editorOverlayPath);
-                _renderedOverlayContent = content;
-                _renderedOverlayFontFamily = fontFamily;
-                _renderedOverlayCues = cues;
+                if (!ReferenceEquals(_document, document)) return;
+                await _overlayWriteLock.WaitAsync(cancellationToken);
+                try
+                {
+                    await File.WriteAllTextAsync(_editorOverlayPath, content, new System.Text.UTF8Encoding(false), cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _playback.UpdateEditorSubtitle(_editorOverlayPath);
+                    _renderedOverlayContent = content;
+                    _renderedOverlayFontFamily = fontFamily;
+                    _renderedOverlayCues = cues;
+                }
+                finally { _overlayWriteLock.Release(); }
                 return;
             }
         }
@@ -3176,8 +3228,21 @@ public sealed partial class MainWindow : Window
     private enum RightPanelSection { Explorer, Playlist, WebDav, Favorites, Subtitles }
 
     private sealed record PendingPostOpenWork(string Source, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
-    private sealed record OverlayCueSnapshot(Guid Id, long StartMicroseconds, long EndMicroseconds, string Text, string? Style, string? Speaker);
-    private static OverlayCueSnapshot? FindActiveOverlayCue(IEnumerable<OverlayCueSnapshot> cues, long positionMicroseconds) => cues.LastOrDefault(cue => cue.StartMicroseconds <= positionMicroseconds && positionMicroseconds < cue.EndMicroseconds);
+    private static AssCueSnapshot? FindActiveOverlayCue(IReadOnlyList<AssCueSnapshot> cues, long positionMicroseconds)
+    {
+        var low = 0;
+        var high = cues.Count - 1;
+        var candidate = -1;
+        while (low <= high)
+        {
+            var middle = low + (high - low) / 2;
+            if (cues[middle].StartMicroseconds <= positionMicroseconds) { candidate = middle; low = middle + 1; }
+            else high = middle - 1;
+        }
+        if (candidate < 0) return null;
+        var cue = cues[candidate];
+        return positionMicroseconds < cue.EndMicroseconds ? cue : null;
+    }
 
     private sealed record BrowserEntry(string Path, bool IsDirectory, long? Length, DateTime LastModified)
     {

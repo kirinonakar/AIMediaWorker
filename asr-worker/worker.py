@@ -27,6 +27,7 @@ from subtitle.segmenter import SegmentationOptions, SubtitleSegmenter
 MAX_SAFE_ALIGNED_CHUNK_SECONDS = 29.0
 PLAYBACK_PRIORITY_CHUNK_SECONDS = 15.0
 PLAYBACK_PRIORITY_COOLDOWN_SECONDS = 0.075
+PLAYBACK_PRIORITY_EXTRACTION_RATE = 4.0
 
 
 class JobCancelled(RuntimeError):
@@ -199,7 +200,13 @@ class AsrWorker:
         while offset < duration:
             self._check_cancel(cancel)
             window_duration = min(chunk_duration, duration - offset)
-            chunk_path = extract_window(source, offset, window_duration, cancel_event=cancel)
+            chunk_path = extract_window(
+                source,
+                offset,
+                window_duration,
+                cancel_event=cancel,
+                read_rate=PLAYBACK_PRIORITY_EXTRACTION_RATE if playback_priority else None,
+            )
             try:
                 windows = self.vad.speech_windows(chunk_path) if use_vad else [SpeechWindow(0.0, window_duration)]
                 if not windows:

@@ -9,6 +9,26 @@ namespace AIMediaWorker.Tests;
 public sealed class SubtitleTests
 {
     [Fact]
+    public void AddRangeRaisesOneCollectionChangeAndTracksLaterCueEdits()
+    {
+        var document = new SubtitleDocument();
+        var track = document.EnsureTrack();
+        document.MarkSaved();
+        var changes = 0;
+        track.Cues.CollectionChanged += (_, _) => changes++;
+        var first = new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "one" };
+        var second = new SubtitleCue { StartMicroseconds = 1_000_000, EndMicroseconds = 2_000_000, Text = "two" };
+
+        track.Cues.AddRange([first, second]);
+
+        Assert.Equal(1, changes);
+        Assert.Equal(2, track.Cues.Count);
+        document.MarkSaved();
+        second.Text = "updated";
+        Assert.True(document.IsDirty);
+    }
+
+    [Fact]
     public void SrtRoundTripPreservesTimesAndText()
     {
         const string input = "1\r\n00:00:01,250 --> 00:00:03,500\r\nHello\r\nworld\r\n\r\n2\r\n00:01:00,000 --> 00:01:01,100\r\nEnd\r\n";

@@ -45,14 +45,16 @@ def probe_duration(path: str, ffprobe: str = "ffprobe") -> float:
     return duration
 
 
-def extract_window(path: str, start_seconds: float, duration_seconds: float, ffmpeg: str = "ffmpeg", cancel_event: threading.Event | None = None) -> str:
+def extract_window(path: str, start_seconds: float, duration_seconds: float, ffmpeg: str = "ffmpeg", cancel_event: threading.Event | None = None, read_rate: float | None = None) -> str:
     if cancel_event is not None and cancel_event.is_set():
         raise FfmpegCancelled("FFmpeg extraction was cancelled")
     descriptor, output = tempfile.mkstemp(prefix="aimw-audio-", suffix=".wav")
     os.close(descriptor)
     command = [
         ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{max(0.0, start_seconds):.6f}",
-        *(["-rw_timeout", "30000000"] if path.lower().startswith(("http://", "https://")) else []), "-i", path, "-t", f"{max(0.01, duration_seconds):.6f}", "-vn", "-threads", "1", "-ac", "1", "-ar", "16000",
+        *(["-rw_timeout", "30000000"] if path.lower().startswith(("http://", "https://")) else []),
+        *(["-readrate", f"{max(1.0, read_rate):.3f}"] if read_rate is not None else []),
+        "-i", path, "-t", f"{max(0.01, duration_seconds):.6f}", "-vn", "-threads", "1", "-ac", "1", "-ar", "16000",
         "-c:a", "pcm_s16le", "-y", output,
     ]
     try:

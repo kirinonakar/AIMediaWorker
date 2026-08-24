@@ -328,6 +328,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private void EventLoop(CancellationToken cancellationToken)
     {
         var nextPoll = DateTime.UtcNow.AddMilliseconds(200);
+        var nextMetadataPoll = DateTime.MinValue;
         try
         {
             while (!cancellationToken.IsCancellationRequested && _context != 0)
@@ -340,7 +341,9 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 }
                 if (_state is PlaybackState.Playing or PlaybackState.Paused && DateTime.UtcNow >= nextPoll)
                 {
-                    PollProperties();
+                    var includeMetadata = DateTime.UtcNow >= nextMetadataPoll;
+                    PollProperties(includeMetadata);
+                    if (includeMetadata) nextMetadataPoll = DateTime.UtcNow.AddSeconds(1);
                     nextPoll = DateTime.UtcNow.AddMilliseconds(200);
                 }
             }
@@ -434,21 +437,23 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         }
     }
 
-    private void PollProperties()
+    private void PollProperties(bool includeMetadata)
     {
         if (_context == 0) return;
         var position = GetDouble("time-pos");
-        var duration = GetDouble("duration");
         var changed = false;
         if (position is not null)
         {
             Position = TimeSpan.FromSeconds(Math.Max(0, position.Value));
             changed = true;
         }
-        if (duration is not null) Duration = TimeSpan.FromSeconds(Math.Max(0, duration.Value));
-        VideoWidth = GetInt("dwidth") ?? GetInt("width");
-        VideoHeight = GetInt("dheight") ?? GetInt("height");
-        DecoderDescription = GetString("video-codec") is { } codec ? $"{codec} / {GetString("hwdec-current") ?? "software"}" : null;
+        if (includeMetadata)
+        {
+            if (GetDouble("duration") is { } duration) Duration = TimeSpan.FromSeconds(Math.Max(0, duration));
+            VideoWidth = GetInt("dwidth") ?? GetInt("width");
+            VideoHeight = GetInt("dheight") ?? GetInt("height");
+            DecoderDescription = GetString("video-codec") is { } codec ? $"{codec} / {GetString("hwdec-current") ?? "software"}" : null;
+        }
         if (changed) PositionChanged?.Invoke(this, EventArgs.Empty);
     }
 

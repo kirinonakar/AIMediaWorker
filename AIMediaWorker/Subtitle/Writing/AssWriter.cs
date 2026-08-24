@@ -10,10 +10,17 @@ public static class AssWriter
 
     public static string Write(SubtitleTrack track, string? fontFamily = null)
     {
-        var builder = new StringBuilder(string.IsNullOrWhiteSpace(track.NativeHeader) || !track.NativeHeader.Contains("[Events]", StringComparison.OrdinalIgnoreCase) ? CreateHeader(fontFamily) : track.NativeHeader.TrimEnd() + "\n");
-        foreach (var cue in track.Cues.OrderBy(c => c.StartMicroseconds))
+        ArgumentNullException.ThrowIfNull(track);
+        return Write(track.Cues.Select(cue => new AssCueSnapshot(cue.Id, cue.StartMicroseconds, cue.EndMicroseconds, cue.Text, cue.Style, cue.Speaker)).ToArray(), track.NativeHeader, fontFamily);
+    }
+
+    public static string Write(IReadOnlyList<AssCueSnapshot> cues, string? nativeHeader, string? fontFamily = null)
+    {
+        ArgumentNullException.ThrowIfNull(cues);
+        var builder = new StringBuilder(string.IsNullOrWhiteSpace(nativeHeader) || !nativeHeader.Contains("[Events]", StringComparison.OrdinalIgnoreCase) ? CreateHeader(fontFamily) : nativeHeader.TrimEnd() + "\n");
+        foreach (var cue in cues.OrderBy(c => c.StartMicroseconds))
         {
-            cue.Validate();
+            if (cue.StartMicroseconds < 0 || cue.EndMicroseconds <= cue.StartMicroseconds) throw new InvalidDataException("Invalid subtitle time range.");
             var text = cue.Text.Replace("\r\n", "\\N").Replace("\n", "\\N").Replace("\r", "\\N");
             builder.Append("Dialogue: 0,").Append(SubtitleTime.FormatAss(cue.StartMicroseconds)).Append(',').Append(SubtitleTime.FormatAss(cue.EndMicroseconds))
                 .Append(',').Append(string.IsNullOrWhiteSpace(cue.Style) ? "Default" : cue.Style).Append(',').Append(cue.Speaker ?? string.Empty)
@@ -29,3 +36,5 @@ public static class AssWriter
         return $"{HeaderPrefix}Style: Default,{font},54,&H00FFFFFF,&H000000FF,&H00101010,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,60,60,45,1\n{EventsHeader}";
     }
 }
+
+public readonly record struct AssCueSnapshot(Guid Id, long StartMicroseconds, long EndMicroseconds, string Text, string? Style, string? Speaker);

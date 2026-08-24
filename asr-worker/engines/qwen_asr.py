@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -50,6 +51,14 @@ class QwenAsrEngine:
         try:
             try:
                 import torch
+                cpu_threads = max(1, int(os.environ.get("AIMW_ASR_CPU_THREADS", "2")))
+                if hasattr(torch, "set_num_threads"):
+                    torch.set_num_threads(cpu_threads)
+                if hasattr(torch, "set_num_interop_threads"):
+                    try:
+                        torch.set_num_interop_threads(1)
+                    except RuntimeError:
+                        pass
                 loading_name = "Initializing qwen-asr runtime"
                 if progress:
                     progress("loading", loading_name, time.monotonic() - loading_started, 0, 0)
