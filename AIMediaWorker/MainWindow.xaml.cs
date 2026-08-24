@@ -2209,8 +2209,11 @@ public sealed partial class MainWindow : Window
             WebDavConnectionStatusText.Text = L("WebDavCredentialMissingMessage");
             return;
         }
+        var targetDirectory = EnsureWebDavDirectoryUri(directory ?? credential.RootUri);
+        var changedDirectory = _webDavPanelServerId != server.Id || _webDavPanelDirectory is null || !UrisEqual(_webDavPanelDirectory, targetDirectory);
         _webDavPanelServerId = server.Id;
-        _webDavPanelDirectory = EnsureWebDavDirectoryUri(directory ?? credential.RootUri);
+        _webDavPanelDirectory = targetDirectory;
+        if (changedDirectory) WebDavFilterBox.Text = string.Empty;
         WebDavServerList.SelectedItem = server;
         await RefreshWebDavDirectoryAsync();
     }
@@ -2268,6 +2271,7 @@ public sealed partial class MainWindow : Window
         var root = EnsureWebDavDirectoryUri(credential.RootUri);
         var parent = EnsureWebDavDirectoryUri(new Uri(_webDavPanelDirectory, "../"));
         if (!parent.AbsoluteUri.StartsWith(root.AbsoluteUri, StringComparison.OrdinalIgnoreCase)) parent = root;
+        if (_webDavPanelDirectory is null || !UrisEqual(parent, _webDavPanelDirectory)) WebDavFilterBox.Text = string.Empty;
         _webDavPanelDirectory = parent;
         await RefreshWebDavDirectoryAsync();
     }
@@ -2277,6 +2281,7 @@ public sealed partial class MainWindow : Window
     private async void OnWebDavBreadcrumbItemClick(BreadcrumbBar sender, BreadcrumbBarItemClickedEventArgs e)
     {
         if (e.Item is not WebDavBreadcrumbEntry entry || entry.Uri is null || entry.Uri == _webDavPanelDirectory) return;
+        if (_webDavPanelDirectory is null || !UrisEqual(entry.Uri, _webDavPanelDirectory)) WebDavFilterBox.Text = string.Empty;
         _webDavPanelDirectory = entry.Uri;
         await RefreshWebDavDirectoryAsync();
     }
@@ -2629,6 +2634,7 @@ public sealed partial class MainWindow : Window
                 }
                 return result.ToArray();
             });
+            if (!AreSameDirectory(directory, _browserDirectory)) BrowserFilterBox.Text = string.Empty;
             _browserDirectory = Path.GetFullPath(directory);
             _loadedBrowserDirectory = _browserDirectory;
             UpdateBrowserBreadcrumbs();
@@ -2760,7 +2766,9 @@ public sealed partial class MainWindow : Window
         if (e.ClickedItem is not WebDavEntry entry || _webDavPanelServerId is not { } serverId) return;
         if (entry.IsCollection)
         {
-            _webDavPanelDirectory = EnsureWebDavDirectoryUri(entry.Uri);
+            var targetDirectory = EnsureWebDavDirectoryUri(entry.Uri);
+            if (_webDavPanelDirectory is null || !UrisEqual(targetDirectory, _webDavPanelDirectory)) WebDavFilterBox.Text = string.Empty;
+            _webDavPanelDirectory = targetDirectory;
             await RefreshWebDavDirectoryAsync();
             return;
         }
