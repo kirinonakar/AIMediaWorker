@@ -97,6 +97,9 @@ public sealed class SettingsService
         if (string.Equals(settings.Llm.Provider, "Unsloth", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(settings.Llm.Provider)) settings.Llm.Provider = "Unsloth Desktop";
         settings.Llm.CachedModels ??= [];
         settings.General ??= new GeneralSettings();
+        settings.General.UiFontFamily = string.IsNullOrWhiteSpace(settings.General.UiFontFamily)
+            ? GeneralSettings.DefaultUiFontFamily
+            : settings.General.UiFontFamily.Trim();
         settings.General.DefaultFolder = string.IsNullOrWhiteSpace(settings.General.DefaultFolder) ? null : settings.General.DefaultFolder.Trim();
         settings.Window ??= new WindowLayoutSettings();
         settings.General.Shortcuts ??= [];

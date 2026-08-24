@@ -122,6 +122,7 @@ namespace AIMediaWorker
                 // continuation, so capture the launch source before loading settings.
                 var launchSource = GetLaunchSource();
                 var settings = await _settingsLoadTask;
+                UiFontService.Apply(settings.General.UiFontFamily);
                 StartupProfiler.Mark("localization-apply-start");
                 LocalizationService.Apply(settings.General.Language);
                 StartupProfiler.Mark("localization-apply-end");

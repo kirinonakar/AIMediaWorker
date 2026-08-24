@@ -12,7 +12,7 @@ public enum ThinkingLevel { Default, Off, Low, Medium, High, XHigh, Max }
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public PlaybackSettings Playback { get; set; } = new();
     public SubtitleSettings Subtitle { get; set; } = new();
@@ -107,7 +107,6 @@ public sealed class CaptureSettings
     public int Width { get; set; } = 1920;
     public int Height { get; set; } = 1080;
     public int FrameRate { get; set; } = 30;
-    public string CaptionFontFamily { get; set; } = "Segoe UI";
     public double CaptionFontSize { get; set; } = 32;
     public string CaptionTextColor { get; set; } = "#FFFFFFFF";
     public string CaptionBackgroundColor { get; set; } = "#A0000000";
@@ -127,8 +126,11 @@ public sealed class LlmSettings
 
 public sealed class GeneralSettings
 {
+    public const string DefaultUiFontFamily = "Noto Sans CJK JP";
+
     public AppLanguage Language { get; set; } = AppLanguage.Default;
     public AppTheme Theme { get; set; } = AppTheme.System;
+    public string UiFontFamily { get; set; } = DefaultUiFontFamily;
     public int RecentMediaCount { get; set; } = 20;
     public bool ResumePlayback { get; set; } = true;
     public string? DefaultFolder { get; set; }

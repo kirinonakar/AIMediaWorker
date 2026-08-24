@@ -2406,6 +2406,7 @@ public sealed partial class MainWindow : Window
             {
                 _settings = settings;
                 LocalizationService.Apply(settings.General.Language);
+                UiFontService.Apply(settings.General.UiFontFamily, RootGrid);
                 ApplyTheme(settings.General.Theme);
                 RefreshFavoritesList();
                 RefreshRightPanelSections();

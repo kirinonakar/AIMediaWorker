@@ -36,6 +36,7 @@ public sealed class ServicesTests : IDisposable
         var service = new SettingsService(path);
         var settings = new AppSettings();
         settings.General.Language = AppLanguage.Japanese;
+        settings.General.UiFontFamily = "Arial";
         settings.Asr.Language = "ko";
         settings.Playback.DefaultVolume = 77;
         settings.Playback.ShowSubtitles = false;
@@ -51,6 +52,7 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal(AppLanguage.Japanese, service.LoadLanguage());
         var loaded = await service.LoadAsync();
         Assert.Equal(AppLanguage.Japanese, loaded.General.Language);
+        Assert.Equal("Arial", loaded.General.UiFontFamily);
         Assert.Equal("ko", loaded.Asr.Language);
         Assert.Equal(77, loaded.Playback.DefaultVolume);
         Assert.False(loaded.Playback.ShowSubtitles);
@@ -90,6 +92,19 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal("Ctrl+F", loaded.General.Shortcuts[ShortcutActions.NextMedia]);
         Assert.Equal("Ctrl+1", loaded.General.Shortcuts[ShortcutActions.ToggleTimelinePanel]);
         Assert.Equal("Ctrl+2", loaded.General.Shortcuts[ShortcutActions.ToggleSidePanel]);
+        Assert.Equal(GeneralSettings.DefaultUiFontFamily, loaded.General.UiFontFamily);
+    }
+
+    [Fact]
+    public async Task SettingsNormalizeBlankUiFontToNotoSansCjkJp()
+    {
+        var path = Path.Combine(_folder, "settings-blank-ui-font.json");
+        Directory.CreateDirectory(_folder);
+        await File.WriteAllTextAsync(path, "{\"General\":{\"UiFontFamily\":\"   \"}}");
+
+        var loaded = await new SettingsService(path).LoadAsync();
+
+        Assert.Equal("Noto Sans CJK JP", loaded.General.UiFontFamily);
     }
 
     [Fact]

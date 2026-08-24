@@ -179,7 +179,7 @@ public sealed partial class CameraWindow : Window
 
     private void ApplyCaptionAppearance()
     {
-        CaptionText.FontFamily = new FontFamily(string.IsNullOrWhiteSpace(_settings.Capture.CaptionFontFamily) ? "Segoe UI" : _settings.Capture.CaptionFontFamily);
+        CaptionText.FontFamily = new FontFamily(string.IsNullOrWhiteSpace(_settings.Subtitle.FontFamily) ? SubtitleSettings.DefaultFontFamily : _settings.Subtitle.FontFamily);
         CaptionText.FontSize = Math.Clamp(_settings.Capture.CaptionFontSize, 8, 144);
         CaptionText.Foreground = new SolidColorBrush(ParseColor(_settings.Capture.CaptionTextColor, Color.FromArgb(255, 255, 255, 255)));
         CaptionText.MaxLines = Math.Clamp(_settings.Capture.CaptionMaximumLines, 1, 6);
