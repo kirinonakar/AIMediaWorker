@@ -120,6 +120,10 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         SetOption("sub-auto", "fuzzy");
         SetOption("sub-fonts-dir", ".");
         SetOption("audio-client-name", "AIMediaWorker");
+        // Keep the Windows audio endpoint alive across loadfile replacements. Reopening it at
+        // each playlist boundary can produce a short click on some drivers and receivers.
+        TrySetOption("gapless-audio", "yes");
+        TrySetOption("audio-stream-silence", "yes");
         TrySetOption("audio-buffer", "0.2");
         TrySetOption("audio-pitch-correction", "yes");
         TrySetOption("cache", "yes");
