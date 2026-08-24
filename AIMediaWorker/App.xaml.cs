@@ -46,7 +46,6 @@ namespace AIMediaWorker
         {
             StartupProfiler.Mark("app-constructor");
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
-            _ = MpvPlaybackEngine.PreloadAsync();
             var settingsService = SettingsService.CreateDefault();
             StartupProfiler.Mark("settings-load-start");
             // JSON metadata generation/JIT can complete synchronously for this small file.

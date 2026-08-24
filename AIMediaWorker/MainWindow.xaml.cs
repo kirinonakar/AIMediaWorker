@@ -123,8 +123,8 @@ public sealed partial class MainWindow : Window
     private string[]? _pendingDroppedFiles;
     private PendingPostOpenWork? _pendingPostOpenWork;
     private CancellationTokenSource? _postOpenCancellation;
+    private readonly TaskCompletionSource _firstUiFrameReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _playbackInitializationTask;
-    private readonly Task? _initialLaunchOpenTask;
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
 
     public MainWindow() : this(null, new AppSettings()) { }
@@ -134,9 +134,6 @@ public sealed partial class MainWindow : Window
     public MainWindow(string? initialSource, AppSettings settings)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        // mpv_create and option setup do not require the video HWND. Start them before
-        // parsing the MainWindow XAML so native cold initialization overlaps WinUI work.
-        _ = _playback.PrepareAsync(_settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
         _browserDirectory = ResolveDefaultBrowserDirectory(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
         _webDavCredentials = new WebDavCredentialStore(_windowsCredentials);
         _webDavClient = new WebDavClient(_windowsCredentials, timeout: TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds));
@@ -153,15 +150,8 @@ public sealed partial class MainWindow : Window
         _videoHost.FilesDropped += OnNativeVideoFilesDropped;
         _videoHost.Clicked += OnNativeVideoClicked;
         _videoHost.DoubleClicked += OnNativeVideoDoubleClicked;
-        var videoWindowHandle = _videoHost.Create();
-        // Keep the native child window out of the z-order until playback has produced its
-        // first frame, otherwise it covers the XAML status/loading overlay.
-        _videoHost.SetVisible(false);
-        _playbackInitializationTask = InitializePlaybackAsync(videoWindowHandle);
+        _playbackInitializationTask = InitializePlaybackAfterFirstUiFrameAsync(_videoHost.Create());
         _pendingLaunchSource = initialSource;
-        // Start waiting immediately. The continuation does not need the UI thread to issue
-        // loadfile, so it can run while the rest of this constructor and activation finish.
-        _initialLaunchOpenTask = string.IsNullOrWhiteSpace(initialSource) ? null : OpenInitialLaunchSourceAsync();
         ExtendsContentIntoTitleBar = true;
         RightPanelSectionList.SelectionChanged += OnRightPanelSectionChanged;
         RefreshRightPanelSections();
@@ -194,6 +184,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            await _firstUiFrameReady.Task.ConfigureAwait(false);
             await _playbackInitializationTask.ConfigureAwait(false);
             if (!_playback.IsAvailable || _pendingDroppedFiles is { Length: > 0 } ||
                 _pendingLaunchSource is not { Length: > 0 } launchSource) return;
@@ -224,6 +215,15 @@ public sealed partial class MainWindow : Window
         _playback.ConfigurePreferredLanguages(_settings.Playback.DefaultAudioLanguage, _settings.Playback.DefaultSubtitleLanguage);
         _playback.ConfigureSubtitleStyle(_settings.Subtitle.FontFamily, _settings.Subtitle.FontSize, _settings.Subtitle.Color, _settings.Subtitle.Background, _settings.Subtitle.Outline, _settings.Subtitle.BottomMargin);
         _playback.SetSubtitleVisibility(_settings.Playback.ShowSubtitles);
+    }
+
+    private async Task InitializePlaybackAfterFirstUiFrameAsync(nint videoWindowHandle)
+    {
+        // Warm libmpv even when no file was supplied, but only after the initial WinUI frame
+        // has been submitted. File-open paths reuse this single task and therefore enter
+        // playback immediately when initialization has already completed.
+        await _firstUiFrameReady.Task.ConfigureAwait(false);
+        await InitializePlaybackAsync(videoWindowHandle).ConfigureAwait(false);
     }
 
     public void ApplySavedWindowPlacement(WindowLayoutSettings layout)
@@ -290,6 +290,10 @@ public sealed partial class MainWindow : Window
             RateCombo.SelectedItem = RateCombo.Items.Cast<double>().OrderBy(value => Math.Abs(value - _settings.Playback.PlaybackRate)).First();
             UpdateShortcutHints();
             UpdatePlaylistButtons();
+            // Shell activation previously issued loadfile from the constructor, before WinUI
+            // had presented its first frame. Let one complete composition pass finish first so
+            // decoder/GPU startup cannot delay painting the window chrome and controls.
+            await WaitForFirstUiFrameAsync();
             await _playbackInitializationTask;
             StatusText.Text = _playback.IsAvailable ? L("StatusLibmpvReady") : L("StatusPlaybackUnavailable");
             if (_playback.IsAvailable && _pendingDroppedFiles is { Length: > 0 } droppedFiles)
@@ -298,13 +302,33 @@ public sealed partial class MainWindow : Window
                 _pendingLaunchSource = null;
                 await OpenFilesAsPlaylistAsync(droppedFiles);
             }
-            if (_initialLaunchOpenTask is not null) await _initialLaunchOpenTask;
+            if (_pendingLaunchSource is { Length: > 0 }) await OpenInitialLaunchSourceAsync();
             await recentLoad;
             RebuildRecentMenu();
             RefreshWebDavServerList();
             ApplyTheme(_settings.General.Theme);
         }
         catch (Exception exception) { StatusText.Text = exception.Message; }
+    }
+
+    private Task WaitForFirstUiFrameAsync()
+    {
+        if (_firstUiFrameReady.Task.IsCompleted) return _firstUiFrameReady.Task;
+        EventHandler<object>? rendering = null;
+        rendering = (_, _) =>
+        {
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= rendering;
+            // Rendering is raised while the frame is being prepared. Complete from a low
+            // priority dispatcher item so the current frame is submitted before playback work.
+            if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+                {
+                    StartupProfiler.Mark("first-ui-frame");
+                    _firstUiFrameReady.TrySetResult();
+                }))
+                _firstUiFrameReady.TrySetResult();
+        };
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += rendering;
+        return _firstUiFrameReady.Task;
     }
 
     private async void OnOpenMediaClick(object sender, RoutedEventArgs e)
@@ -467,6 +491,7 @@ public sealed partial class MainWindow : Window
         }
         try
         {
+            await _firstUiFrameReady.Task;
             await _playbackInitializationTask;
             if (!_playback.IsAvailable) throw new InvalidOperationException(L("StatusPlaybackUnavailable"));
             await _historyService.LoadRecentAsync();
@@ -1108,45 +1133,21 @@ public sealed partial class MainWindow : Window
         SubtitleList.ItemsSource = track.Cues; _history.Clear(); DrawTimeline();
     }
 
-    private void OnPlaybackStateChanged(object? sender, EventArgs e)
+    private void OnPlaybackStateChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
-        var state = _playback.State;
-        DispatcherQueue.TryEnqueue(() =>
+        PlayPauseIcon.Source = PlaybackIconSource(_playback.State == PlaybackState.Playing ? "pause" : "play");
+        StatusText.Text = L(_playback.State switch
         {
-            PlayPauseIcon.Source = PlaybackIconSource(state == PlaybackState.Playing ? "pause" : "play");
-            StatusText.Text = L(state switch
-            {
-                PlaybackState.Playing => "PlaybackStatePlaying",
-                PlaybackState.Paused => "PlaybackStatePaused",
-                PlaybackState.Loading => "PlaybackStateLoading",
-                PlaybackState.Idle => "PlaybackStateIdle",
-                PlaybackState.Failed => "PlaybackStateFailed",
-                _ => "PlaybackStateUninitialized"
-            });
-            if (state == PlaybackState.Loading)
-            {
-                _videoHost?.SetVisible(false);
-                VideoStatusText.Text = L("PlaybackStateLoading");
-                VideoStatusOverlay.Visibility = Visibility.Visible;
-                VideoLoadingProgressRing.Visibility = Visibility.Visible;
-                VideoLoadingProgressRing.IsActive = true;
-            }
-            else if (state == PlaybackState.Failed)
-            {
-                _videoHost?.SetVisible(false);
-                VideoStatusText.Text = L("PlaybackStateFailed");
-                VideoStatusOverlay.Visibility = Visibility.Visible;
-                VideoLoadingProgressRing.IsActive = false;
-                VideoLoadingProgressRing.Visibility = Visibility.Collapsed;
-            }
+            PlaybackState.Playing => "PlaybackStatePlaying",
+            PlaybackState.Paused => "PlaybackStatePaused",
+            PlaybackState.Loading => "PlaybackStateLoading",
+            PlaybackState.Idle => "PlaybackStateIdle",
+            PlaybackState.Failed => "PlaybackStateFailed",
+            _ => "PlaybackStateUninitialized"
         });
-    }
+    });
     private void OnFirstFrameReady(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
-        VideoLoadingProgressRing.IsActive = false;
-        VideoLoadingProgressRing.Visibility = Visibility.Collapsed;
-        VideoStatusOverlay.Visibility = Visibility.Collapsed;
-        _videoHost?.SetVisible(true);
         StartPostOpenWorkIfReady();
         if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null) StartCheckedAiPipeline();
     });
@@ -1208,15 +1209,7 @@ public sealed partial class MainWindow : Window
     private void OnPlaybackError(object? sender, PlaybackError e)
     {
         _ = AppLog.WriteAsync("error", "playback", e.Code, e.Message, e.Exception);
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            StatusText.Text = $"{e.Code}: {e.Message}";
-            _videoHost?.SetVisible(false);
-            VideoStatusText.Text = e.Message;
-            VideoStatusOverlay.Visibility = Visibility.Visible;
-            VideoLoadingProgressRing.IsActive = false;
-            VideoLoadingProgressRing.Visibility = Visibility.Collapsed;
-        });
+        DispatcherQueue.TryEnqueue(() => StatusText.Text = $"{e.Code}: {e.Message}");
     }
 
     private void OnRootPreviewKeyDown(object sender, KeyRoutedEventArgs e)

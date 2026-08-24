@@ -63,6 +63,7 @@ public static class StartupProfiler
         AddDuration(durations, "libmpv DLL", "mpv-dll-load-start", "mpv-dll-load-end");
         AddDuration(durations, "MainWindow through XAML", "main-window-create-start", "xaml-ready");
         AddDuration(durations, "XAML InitializeComponent", "xaml-start", "xaml-ready");
+        AddDuration(durations, "window activation -> first UI frame", "window-activated", "first-ui-frame");
         AddDuration(durations, "mpv_create", "mpv-create-start", "mpv-create-end");
         AddDuration(durations, "mpv options", "mpv-options-start", "mpv-options-end");
         AddDuration(durations, "mpv_initialize", "mpv-initialize-start", "mpv-initialize-end");
@@ -79,8 +80,8 @@ public static class StartupProfiler
         var bottleneck = durations.Count == 0 ? default : durations.MaxBy(item => item.Milliseconds);
         var milestoneNames = new[]
         {
-            "app-constructor", "settings-load-end", "mpv-dll-load-end", "xaml-ready",
-            "mpv-initialize-end", "window-activated", "loadfile-command", "start-file",
+            "app-constructor", "settings-load-end", "xaml-ready", "window-activated", "first-ui-frame", "mpv-dll-load-end",
+            "mpv-initialize-end", "loadfile-command", "start-file",
             "file-loaded", "video-reconfig", "audio-reconfig", "first-frame"
         };
         var milestones = milestoneNames
