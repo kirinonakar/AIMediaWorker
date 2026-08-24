@@ -87,7 +87,7 @@ public sealed partial class MainWindow : Window
     private Rectangle? _waveformPlayhead;
     private readonly WaveformGenerator _waveformGenerator = new();
     private readonly WaveformCache _waveformCache = new(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIMediaWorker", "Waveforms"));
-    private readonly MediaHistoryService _historyService = new(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIMediaWorker", "history.json"));
+    private readonly MediaHistoryService _historyService = MediaHistoryService.CreateDefault();
     private readonly ObservableCollection<FavoriteListEntry> _favoriteEntries = [];
     private IMediaSource? _currentMediaSource;
     private IReadOnlyDictionary<string, string>? _currentHttpHeaders;
@@ -128,7 +128,6 @@ public sealed partial class MainWindow : Window
     private string[]? _pendingDroppedFiles;
     private PendingPostOpenWork? _pendingPostOpenWork;
     private CancellationTokenSource? _postOpenCancellation;
-    private Task? _historyLoadTask;
     private readonly Task _playbackInitializationTask;
     private readonly Task? _initialLaunchOpenTask;
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
@@ -285,7 +284,7 @@ public sealed partial class MainWindow : Window
             _bottomPanelHeight = Math.Clamp(_settings.Window.BottomPanelHeight, 100, 800);
             ClampPanelSizesToAvailable();
             ApplyPanelVisibility();
-            var historyLoad = _historyLoadTask ??= _historyService.LoadAsync();
+            var recentLoad = _historyService.LoadRecentAsync();
             _ = RefreshBrowserAsync(_browserDirectory);
             SubtitleVisibilityMenuItem.IsChecked = _settings.Playback.ShowSubtitles;
             RateCombo.ItemsSource = new[] { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0 };
@@ -301,9 +300,8 @@ public sealed partial class MainWindow : Window
                 await OpenFilesAsPlaylistAsync(droppedFiles);
             }
             if (_initialLaunchOpenTask is not null) await _initialLaunchOpenTask;
-            await historyLoad;
+            await recentLoad;
             RebuildRecentMenu();
-            RefreshFavoritesList();
             RefreshWebDavServerList();
             ApplyTheme(_settings.General.Theme);
         }
@@ -475,6 +473,7 @@ public sealed partial class MainWindow : Window
         {
             await _playbackInitializationTask;
             if (!_playback.IsAvailable) throw new InvalidOperationException(L("StatusPlaybackUnavailable"));
+            await _historyService.LoadRecentAsync();
             RememberCurrentPosition();
             await _playback.OpenAsync(source, httpHeaders);
             await aiPipelineCancellation;
@@ -515,9 +514,9 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            if (_historyLoadTask is { } historyLoad) await historyLoad;
+            await _historyService.LoadRecentAsync();
             _historyService.AddRecent(source, 0, _settings.General.RecentMediaCount);
-            await _historyService.SaveAsync();
+            await _historyService.SaveRecentAsync();
             RebuildRecentMenu();
         }
         catch (Exception exception) { await AppLog.WriteAsync("error", "history", "HISTORY_SAVE_AFTER_OPEN_ERROR", exception.Message, exception); }
@@ -1594,6 +1593,20 @@ public sealed partial class MainWindow : Window
         WebDavSection.Visibility = section == RightPanelSection.WebDav ? Visibility.Visible : Visibility.Collapsed;
         FavoritesSection.Visibility = section == RightPanelSection.Favorites ? Visibility.Visible : Visibility.Collapsed;
         SubtitlesSection.Visibility = section == RightPanelSection.Subtitles ? Visibility.Visible : Visibility.Collapsed;
+        if (_initialized && section == RightPanelSection.Favorites) _ = LoadFavoritesForDisplayAsync();
+    }
+
+    private async Task LoadFavoritesForDisplayAsync()
+    {
+        try
+        {
+            await _historyService.LoadFavoritesAsync();
+            RefreshFavoritesList();
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "favorites", "FAVORITES_LOAD_ERROR", exception.Message, exception);
+        }
     }
 
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
@@ -2853,8 +2866,9 @@ public sealed partial class MainWindow : Window
 
     private async Task AddFavoriteAsync(IMediaSource source, bool isFolder)
     {
-        _historyService.AddFavorite(source, isFolder);
-        await _historyService.SaveAsync();
+        await _historyService.LoadFavoritesAsync();
+        if (!_historyService.AddFavorite(source, isFolder)) return;
+        await _historyService.SaveFavoritesAsync();
         RefreshFavoritesList();
         StatusText.Text = isFolder ? F("StatusAddedFavoriteFolder", source.DisplayName) : L("StatusAddedFavorite");
     }
@@ -2873,9 +2887,10 @@ public sealed partial class MainWindow : Window
 
     private async void OnFavoriteDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {
-        _historyService.ReorderFavorites(_favoriteEntries.Select(entry => entry.Item.Location));
+        await _historyService.LoadFavoritesAsync();
+        if (!_historyService.ReorderFavorites(_favoriteEntries.Select(entry => entry.Item.Location))) return;
         RefreshFavoritesList();
-        await _historyService.SaveAsync();
+        await _historyService.SaveFavoritesAsync();
     }
 
     private void OnFavoriteSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateFavoriteCommands();
@@ -2899,18 +2914,22 @@ public sealed partial class MainWindow : Window
 
     private async void OnRemoveSelectedFavoritesClick(object sender, RoutedEventArgs e)
     {
+        await _historyService.LoadFavoritesAsync();
         var selected = FavoriteList.SelectedItems.OfType<FavoriteListEntry>().ToArray();
         if (selected.Length == 0) return;
-        foreach (var entry in selected) _historyService.RemoveFavorite(entry.Item.Location);
-        await _historyService.SaveAsync();
+        var removed = false;
+        foreach (var entry in selected) removed |= _historyService.RemoveFavorite(entry.Item.Location);
+        if (!removed) return;
+        await _historyService.SaveFavoritesAsync();
         RefreshFavoritesList();
     }
 
     private async void OnRemoveFavoriteItemClick(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: FavoriteListEntry entry }) return;
-        _historyService.RemoveFavorite(entry.Item.Location);
-        await _historyService.SaveAsync();
+        await _historyService.LoadFavoritesAsync();
+        if (!_historyService.RemoveFavorite(entry.Item.Location)) return;
+        await _historyService.SaveFavoritesAsync();
         RefreshFavoritesList();
     }
 
@@ -3149,6 +3168,7 @@ public sealed partial class MainWindow : Window
         {
             _appWindow.Changed -= OnAppWindowChanged;
         }
+        await _historyService.LoadRecentAsync();
         RememberCurrentPosition();
 
         _waveformCancellation?.Cancel();
@@ -3176,7 +3196,7 @@ public sealed partial class MainWindow : Window
             catch (TimeoutException exception) { await AppLog.WriteAsync("warning", "shutdown", "AI_PIPELINE_SHUTDOWN_TIMEOUT", exception.Message, exception); }
         }
 
-        try { await _historyService.SaveAsync(); }
+        try { await _historyService.SaveRecentAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "HISTORY_SAVE_ERROR", exception.Message, exception); }
         try { await SettingsService.CreateDefault().SaveAsync(_settings); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "SETTINGS_SAVE_ERROR", exception.Message, exception); }

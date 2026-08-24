@@ -133,24 +133,59 @@ public sealed class ServicesTests : IDisposable
     [Fact]
     public async Task RecentMediaDeduplicatesAndPersists()
     {
-        var path = Path.Combine(_folder, "history.json");
-        var history = new MediaHistoryService(path);
+        var recentPath = Path.Combine(_folder, "recent.json");
+        var favoritesPath = Path.Combine(_folder, "favorites.json");
+        var history = new MediaHistoryService(recentPath, favoritesPath);
+        await history.LoadRecentAsync();
         history.AddRecent(new HttpMediaSource(new Uri("https://example.test/movie.mp4")), 100, 2);
         history.AddRecent(new HttpMediaSource(new Uri("https://example.test/movie.mp4")), 200, 2);
         history.AddRecent(new HttpMediaSource(new Uri("https://example.test/other.mkv")), 300, 2);
         Assert.Equal(2, history.Recent.Count);
         Assert.Equal(200, history.Recent[1].LastPlaybackPositionMicroseconds);
-        await history.SaveAsync();
-        var loaded = new MediaHistoryService(path);
-        await loaded.LoadAsync();
+        await history.SaveRecentAsync();
+        Assert.False(File.Exists(favoritesPath));
+
+        var loaded = new MediaHistoryService(recentPath, favoritesPath);
+        await loaded.LoadRecentAsync();
         Assert.Equal(2, loaded.Recent.Count);
+    }
+
+    [Fact]
+    public async Task UnchangedFavoritesDoNotCreateAFile()
+    {
+        var recentPath = Path.Combine(_folder, "unchanged-recent.json");
+        var favoritesPath = Path.Combine(_folder, "unchanged-favorites.json");
+        var history = new MediaHistoryService(recentPath, favoritesPath);
+
+        await history.LoadFavoritesAsync();
+        await history.SaveFavoritesAsync();
+
+        Assert.False(File.Exists(favoritesPath));
+    }
+
+    [Fact]
+    public async Task FavoritesAreLoadedLazily()
+    {
+        var recentPath = Path.Combine(_folder, "lazy-recent.json");
+        var favoritesPath = Path.Combine(_folder, "lazy-favorites.json");
+        var lazyReader = new MediaHistoryService(recentPath, favoritesPath);
+        var writer = new MediaHistoryService(recentPath, favoritesPath);
+        await writer.LoadFavoritesAsync();
+        writer.AddFavorite(new HttpMediaSource(new Uri("https://example.test/lazy.mp4")));
+        await writer.SaveFavoritesAsync();
+
+        await lazyReader.LoadFavoritesAsync();
+
+        Assert.Single(lazyReader.Favorites);
     }
 
     [Fact]
     public async Task RecentMediaNeverExceedsTwentyItems()
     {
-        var path = Path.Combine(_folder, "history-limit.json");
-        var history = new MediaHistoryService(path);
+        var recentPath = Path.Combine(_folder, "recent-limit.json");
+        var favoritesPath = Path.Combine(_folder, "favorites-limit.json");
+        var history = new MediaHistoryService(recentPath, favoritesPath);
+        await history.LoadRecentAsync();
         for (var index = 0; index < 25; index++)
         {
             history.AddRecent(new HttpMediaSource(new Uri($"https://example.test/media-{index}.mp4")), index, 100);
@@ -160,24 +195,27 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal("https://example.test/media-24.mp4", history.Recent[0].Location);
         Assert.Equal("https://example.test/media-5.mp4", history.Recent[^1].Location);
 
-        await history.SaveAsync();
-        var loaded = new MediaHistoryService(path);
-        await loaded.LoadAsync();
+        await history.SaveRecentAsync();
+        var loaded = new MediaHistoryService(recentPath, favoritesPath);
+        await loaded.LoadRecentAsync();
         Assert.Equal(20, loaded.Recent.Count);
     }
 
     [Fact]
     public async Task FolderFavoritesPersistAndDeduplicate()
     {
-        var path = Path.Combine(_folder, "favorites.json");
-        var history = new MediaHistoryService(path);
+        var recentPath = Path.Combine(_folder, "recent.json");
+        var favoritesPath = Path.Combine(_folder, "favorites.json");
+        var history = new MediaHistoryService(recentPath, favoritesPath);
+        await history.LoadFavoritesAsync();
         var source = new LocalMediaSource(Path.Combine(_folder, "Videos"));
-        history.AddFavorite(source, true);
-        history.AddFavorite(source, true);
-        await history.SaveAsync();
+        Assert.True(history.AddFavorite(source, true));
+        Assert.False(history.AddFavorite(source, true));
+        await history.SaveFavoritesAsync();
+        Assert.False(File.Exists(recentPath));
 
-        var loaded = new MediaHistoryService(path);
-        await loaded.LoadAsync();
+        var loaded = new MediaHistoryService(recentPath, favoritesPath);
+        await loaded.LoadFavoritesAsync();
 
         var favorite = Assert.Single(loaded.Favorites);
         Assert.True(favorite.IsFolder);
@@ -186,8 +224,10 @@ public sealed class ServicesTests : IDisposable
     [Fact]
     public async Task FavoriteFoldersStayAboveFilesAndDraggedOrderPersists()
     {
-        var path = Path.Combine(_folder, "favorite-order.json");
-        var history = new MediaHistoryService(path);
+        var recentPath = Path.Combine(_folder, "recent-order.json");
+        var favoritesPath = Path.Combine(_folder, "favorite-order.json");
+        var history = new MediaHistoryService(recentPath, favoritesPath);
+        await history.LoadFavoritesAsync();
         var firstFile = new HttpMediaSource(new Uri("https://example.test/first.mp4"));
         var secondFile = new HttpMediaSource(new Uri("https://example.test/second.mp4"));
         var firstFolder = new LocalMediaSource(Path.Combine(_folder, "FirstFolder"));
@@ -200,12 +240,12 @@ public sealed class ServicesTests : IDisposable
 
         Assert.Equal([firstFolder.Location, secondFolder.Location, firstFile.Location, secondFile.Location], history.Favorites.Select(item => item.Location));
 
-        history.ReorderFavorites([secondFile.Location, secondFolder.Location, firstFile.Location, firstFolder.Location]);
+        Assert.True(history.ReorderFavorites([secondFile.Location, secondFolder.Location, firstFile.Location, firstFolder.Location]));
         Assert.Equal([secondFolder.Location, firstFolder.Location, secondFile.Location, firstFile.Location], history.Favorites.Select(item => item.Location));
 
-        await history.SaveAsync();
-        var loaded = new MediaHistoryService(path);
-        await loaded.LoadAsync();
+        await history.SaveFavoritesAsync();
+        var loaded = new MediaHistoryService(recentPath, favoritesPath);
+        await loaded.LoadFavoritesAsync();
 
         Assert.Equal([secondFolder.Location, firstFolder.Location, secondFile.Location, firstFile.Location], loaded.Favorites.Select(item => item.Location));
     }

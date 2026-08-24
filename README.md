@@ -162,7 +162,8 @@ In fullscreen mode the window frame and panels are hidden. Fullscreen opens on t
 Per-user data is stored below `%LOCALAPPDATA%\AIMediaWorker`:
 
 - `settings.json`: atomically replaced application settings.
-- `history.json`: recent media and favorites.
+- `recent.json`: recent media and playback positions.
+- `favorites.json`: favorite media and folders.
 - `Waveforms`: source-fingerprint waveform cache.
 - `Logs\app.jsonl`: size-rotated structured diagnostics without credentials.
 

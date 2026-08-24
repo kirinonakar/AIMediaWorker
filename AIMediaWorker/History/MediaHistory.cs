@@ -10,32 +10,42 @@ public sealed record FavoriteItem(MediaSourceKind SourceType, string DisplayName
 public sealed class MediaHistoryService
 {
     private const int MaximumRecentItems = 20;
-    private readonly string _path;
-    private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly string _recentPath;
+    private readonly string _favoritesPath;
+    private readonly SemaphoreSlim _recentLock = new(1, 1);
+    private readonly SemaphoreSlim _favoritesLock = new(1, 1);
+    private readonly Lazy<Task> _recentLoadTask;
+    private readonly Lazy<Task> _favoritesLoadTask;
+    private long _recentChangeVersion;
+    private long _recentSavedVersion;
+    private long _favoritesChangeVersion;
+    private long _favoritesSavedVersion;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
 
-    public MediaHistoryService(string path) => _path = Path.GetFullPath(path);
+    public MediaHistoryService(string recentPath, string favoritesPath)
+    {
+        _recentPath = Path.GetFullPath(recentPath);
+        _favoritesPath = Path.GetFullPath(favoritesPath);
+        _recentLoadTask = new Lazy<Task>(LoadRecentCoreAsync, LazyThreadSafetyMode.ExecutionAndPublication);
+        _favoritesLoadTask = new Lazy<Task>(LoadFavoritesCoreAsync, LazyThreadSafetyMode.ExecutionAndPublication);
+    }
+
+    public static MediaHistoryService CreateDefault()
+    {
+        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIMediaWorker");
+        return new MediaHistoryService(
+            Path.Combine(folder, "recent.json"),
+            Path.Combine(folder, "favorites.json"));
+    }
+
     public List<RecentMediaItem> Recent { get; private set; } = [];
     public List<FavoriteItem> Favorites { get; private set; } = [];
 
-    public async Task LoadAsync(CancellationToken cancellationToken = default)
-    {
-        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (!File.Exists(_path)) return;
-            await using var stream = File.OpenRead(_path);
-            var data = await JsonSerializer.DeserializeAsync<HistoryData>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-            Recent = (data?.Recent ?? []).Take(MaximumRecentItems).ToList();
-            Favorites = PutFoldersFirst(data?.Favorites ?? []);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
-        {
-            Recent = []; Favorites = [];
-        }
-        finally { _lock.Release(); }
-    }
+    public Task LoadRecentAsync(CancellationToken cancellationToken = default) =>
+        cancellationToken.CanBeCanceled ? _recentLoadTask.Value.WaitAsync(cancellationToken) : _recentLoadTask.Value;
+
+    public Task LoadFavoritesAsync(CancellationToken cancellationToken = default) =>
+        cancellationToken.CanBeCanceled ? _favoritesLoadTask.Value.WaitAsync(cancellationToken) : _favoritesLoadTask.Value;
 
     public void AddRecent(IMediaSource source, long positionMicroseconds, int limit)
     {
@@ -44,21 +54,29 @@ public sealed class MediaHistoryService
         Recent.Insert(0, new RecentMediaItem(source.Kind, source.DisplayName, source.Location, DateTimeOffset.UtcNow, Math.Max(0, positionMicroseconds)));
         var effectiveLimit = Math.Clamp(limit, 1, MaximumRecentItems);
         if (Recent.Count > effectiveLimit) Recent.RemoveRange(effectiveLimit, Recent.Count - effectiveLimit);
+        Interlocked.Increment(ref _recentChangeVersion);
     }
 
-    public void AddFavorite(IMediaSource source, bool isFolder = false)
+    public bool AddFavorite(IMediaSource source, bool isFolder = false)
     {
         var key = Normalize(source.Location);
-        if (Favorites.Any(item => Normalize(item.Location) == key)) return;
+        if (Favorites.Any(item => Normalize(item.Location) == key)) return false;
         var favorite = new FavoriteItem(source.Kind, source.DisplayName, source.Location, isFolder, DateTimeOffset.UtcNow);
         var insertionIndex = isFolder ? Favorites.FindIndex(item => !item.IsFolder) : -1;
         if (insertionIndex < 0) Favorites.Add(favorite);
         else Favorites.Insert(insertionIndex, favorite);
+        Interlocked.Increment(ref _favoritesChangeVersion);
+        return true;
     }
 
-    public bool RemoveFavorite(string location) => Favorites.RemoveAll(item => Normalize(item.Location) == Normalize(location)) > 0;
+    public bool RemoveFavorite(string location)
+    {
+        var removed = Favorites.RemoveAll(item => Normalize(item.Location) == Normalize(location)) > 0;
+        if (removed) Interlocked.Increment(ref _favoritesChangeVersion);
+        return removed;
+    }
 
-    public void ReorderFavorites(IEnumerable<string> orderedLocations)
+    public bool ReorderFavorites(IEnumerable<string> orderedLocations)
     {
         var favoritesByLocation = Favorites.ToDictionary(item => Normalize(item.Location));
         var reordered = new List<FavoriteItem>(Favorites.Count);
@@ -69,20 +87,101 @@ public sealed class MediaHistoryService
         }
 
         reordered.AddRange(Favorites.Where(item => favoritesByLocation.ContainsKey(Normalize(item.Location))));
-        Favorites = PutFoldersFirst(reordered);
+        reordered = PutFoldersFirst(reordered);
+        if (Favorites.SequenceEqual(reordered)) return false;
+        Favorites = reordered;
+        Interlocked.Increment(ref _favoritesChangeVersion);
+        return true;
     }
 
-    public async Task SaveAsync(CancellationToken cancellationToken = default)
+    public async Task SaveRecentAsync(CancellationToken cancellationToken = default)
     {
-        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await LoadRecentAsync(cancellationToken).ConfigureAwait(false);
+        if (Volatile.Read(ref _recentChangeVersion) == Volatile.Read(ref _recentSavedVersion)) return;
+        await _recentLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            var temp = _path + ".tmp";
-            await using (var stream = File.Create(temp)) await JsonSerializer.SerializeAsync(stream, new HistoryData(Recent, Favorites), JsonOptions, cancellationToken).ConfigureAwait(false);
-            File.Move(temp, _path, true);
+            var versionToSave = Volatile.Read(ref _recentChangeVersion);
+            if (versionToSave == Volatile.Read(ref _recentSavedVersion)) return;
+            var snapshot = new RecentHistoryData(Recent.ToList());
+            await WriteAsync(_recentPath, snapshot, cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _recentSavedVersion, versionToSave);
         }
-        finally { _lock.Release(); }
+        finally { _recentLock.Release(); }
+    }
+
+    public async Task SaveFavoritesAsync(CancellationToken cancellationToken = default)
+    {
+        await LoadFavoritesAsync(cancellationToken).ConfigureAwait(false);
+        if (Volatile.Read(ref _favoritesChangeVersion) == Volatile.Read(ref _favoritesSavedVersion)) return;
+        await _favoritesLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var versionToSave = Volatile.Read(ref _favoritesChangeVersion);
+            if (versionToSave == Volatile.Read(ref _favoritesSavedVersion)) return;
+            var snapshot = new FavoritesData(Favorites.ToList());
+            await WriteAsync(_favoritesPath, snapshot, cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _favoritesSavedVersion, versionToSave);
+        }
+        finally { _favoritesLock.Release(); }
+    }
+
+    private async Task LoadRecentCoreAsync()
+    {
+        await _recentLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (File.Exists(_recentPath))
+            {
+                var data = await ReadAsync<RecentHistoryData>(_recentPath).ConfigureAwait(false);
+                Recent = (data?.Recent ?? []).Take(MaximumRecentItems).ToList();
+            }
+            Interlocked.Exchange(ref _recentChangeVersion, 0);
+            Interlocked.Exchange(ref _recentSavedVersion, 0);
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            Recent = [];
+        }
+        finally { _recentLock.Release(); }
+    }
+
+    private async Task LoadFavoritesCoreAsync()
+    {
+        await _favoritesLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (File.Exists(_favoritesPath))
+            {
+                var data = await ReadAsync<FavoritesData>(_favoritesPath).ConfigureAwait(false);
+                Favorites = PutFoldersFirst(data?.Favorites ?? []);
+            }
+            Interlocked.Exchange(ref _favoritesChangeVersion, 0);
+            Interlocked.Exchange(ref _favoritesSavedVersion, 0);
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            Favorites = [];
+        }
+        finally { _favoritesLock.Release(); }
+    }
+
+    private static async Task<T?> ReadAsync<T>(string path)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions).ConfigureAwait(false);
+    }
+
+    private static async Task WriteAsync<T>(string path, T data, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporaryPath = path + ".tmp";
+        await using (var stream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 16 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough))
+        {
+            await JsonSerializer.SerializeAsync(stream, data, JsonOptions, cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        File.Move(temporaryPath, path, true);
     }
 
     private static List<FavoriteItem> PutFoldersFirst(IEnumerable<FavoriteItem> favorites)
@@ -92,5 +191,6 @@ public sealed class MediaHistoryService
     }
 
     private static string Normalize(string location) => Uri.TryCreate(location, UriKind.Absolute, out var uri) && !uri.IsFile ? uri.GetComponents(UriComponents.HttpRequestUrl, UriFormat.UriEscaped).TrimEnd('/').ToUpperInvariant() : Path.GetFullPath(location).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant();
-    private sealed record HistoryData(List<RecentMediaItem> Recent, List<FavoriteItem> Favorites);
+    private sealed record RecentHistoryData(List<RecentMediaItem> Recent);
+    private sealed record FavoritesData(List<FavoriteItem> Favorites);
 }
