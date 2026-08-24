@@ -18,7 +18,7 @@ namespace AIMediaWorker.Views;
 
 public sealed partial class SettingsWindow : Window
 {
-    private const int FixedWidth = 1500;
+    private const int FixedWidth = 1510;
     private const int FixedHeight = 1080;
 
     public IReadOnlyList<string> CaptionPositions { get; } = ["Top", "Center", "Bottom"];
