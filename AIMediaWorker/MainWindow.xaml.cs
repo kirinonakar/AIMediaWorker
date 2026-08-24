@@ -105,6 +105,7 @@ public sealed partial class MainWindow : Window
     private int _playlistIndex = -1;
     private RepeatMode _repeatMode;
     private string _browserDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+    private string? _loadedBrowserDirectory;
     private BrowserEntry[] _browserEntries = [];
     private WebDavEntry[] _webDavEntries = [];
     private EntrySortMode _browserSortMode;
@@ -469,6 +470,7 @@ public sealed partial class MainWindow : Window
         }
 
         _browserDirectory = directory;
+        _loadedBrowserDirectory = null;
         BrowserFilterBox.Text = string.Empty;
         _browserEntries = [];
         UpdateBrowserBreadcrumbs();
@@ -480,7 +482,7 @@ public sealed partial class MainWindow : Window
         try
         {
             if (Path.GetDirectoryName(fullPath) is not { } directory) return;
-            if (AreSameDirectory(directory, _browserDirectory))
+            if (_loadedBrowserDirectory is not null && AreSameDirectory(directory, _loadedBrowserDirectory))
             {
                 SelectBrowserEntry(fullPath);
                 return;
@@ -527,7 +529,9 @@ public sealed partial class MainWindow : Window
             var fullPath = Path.GetFullPath(currentPath);
             var directory = Path.GetDirectoryName(fullPath);
             if (directory is null) return;
-            var siblings = await Task.Run(() => Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase).Take(5000).Select(Path.GetFullPath).ToArray());
+            var siblings = _loadedBrowserDirectory is not null && AreSameDirectory(directory, _loadedBrowserDirectory)
+                ? _browserEntries.Where(entry => !entry.IsDirectory).Select(entry => entry.Path).ToArray()
+                : await Task.Run(() => Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase).Take(5000).Select(Path.GetFullPath).ToArray());
             if (!string.Equals(_playback.CurrentSource, fullPath, StringComparison.OrdinalIgnoreCase)) return;
             var index = Array.FindIndex(siblings, path => path.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
             if (index < 0) return;
@@ -2465,6 +2469,7 @@ public sealed partial class MainWindow : Window
                 return result.ToArray();
             });
             _browserDirectory = Path.GetFullPath(directory);
+            _loadedBrowserDirectory = _browserDirectory;
             UpdateBrowserBreadcrumbs();
             _browserEntries = entries;
             ApplyBrowserEntryView();
