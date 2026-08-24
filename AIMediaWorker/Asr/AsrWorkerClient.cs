@@ -52,12 +52,11 @@ public sealed class AsrWorkerClient : IAsrEngine
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
         // Native ML runtimes otherwise create a worker per logical processor. Keeping a
         // bounded pool leaves CPU time for libmpv's demux, audio and presentation threads.
-        var nativeThreadBudget = Math.Clamp(Environment.ProcessorCount / 4, 1, 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var nativeThreadBudget = Math.Clamp(Environment.ProcessorCount / 2, 1, 4).ToString(System.Globalization.CultureInfo.InvariantCulture);
         startInfo.Environment["OMP_NUM_THREADS"] = nativeThreadBudget;
         startInfo.Environment["MKL_NUM_THREADS"] = nativeThreadBudget;
         startInfo.Environment["OPENBLAS_NUM_THREADS"] = "1";
         startInfo.Environment["NUMEXPR_NUM_THREADS"] = nativeThreadBudget;
-        startInfo.Environment["AIMW_ASR_CPU_THREADS"] = nativeThreadBudget;
         startInfo.Environment["TOKENIZERS_PARALLELISM"] = "false";
         var process = new Process
         {

@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+
 namespace AIMediaWorker.Subtitle;
 
 public sealed class SubtitleTrack
@@ -7,5 +9,5 @@ public sealed class SubtitleTrack
     public string? Language { get; set; }
     public string Format { get; set; } = "srt";
     public string? NativeHeader { get; set; }
-    public RangeObservableCollection<SubtitleCue> Cues { get; } = [];
+    public ObservableCollection<SubtitleCue> Cues { get; } = [];
 }

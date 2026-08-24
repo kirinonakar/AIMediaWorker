@@ -25,9 +25,8 @@ from subtitle.segmenter import SegmentationOptions, SubtitleSegmenter
 
 
 MAX_SAFE_ALIGNED_CHUNK_SECONDS = 29.0
-PLAYBACK_PRIORITY_CHUNK_SECONDS = 15.0
-PLAYBACK_PRIORITY_COOLDOWN_SECONDS = 0.075
-PLAYBACK_PRIORITY_EXTRACTION_RATE = 4.0
+PLAYBACK_PRIORITY_CHUNK_SECONDS = 8.0
+PLAYBACK_PRIORITY_COOLDOWN_SECONDS = 0.125
 
 
 class JobCancelled(RuntimeError):
@@ -200,13 +199,7 @@ class AsrWorker:
         while offset < duration:
             self._check_cancel(cancel)
             window_duration = min(chunk_duration, duration - offset)
-            chunk_path = extract_window(
-                source,
-                offset,
-                window_duration,
-                cancel_event=cancel,
-                read_rate=PLAYBACK_PRIORITY_EXTRACTION_RATE if playback_priority else None,
-            )
+            chunk_path = extract_window(source, offset, window_duration, cancel_event=cancel)
             try:
                 windows = self.vad.speech_windows(chunk_path) if use_vad else [SpeechWindow(0.0, window_duration)]
                 if not windows:
@@ -214,7 +207,7 @@ class AsrWorker:
                     completed = offset - start_seconds
                     self.emit({"id": request_id, "event": "progress", "progress": min(1.0, completed / remaining_duration) if remaining_duration > 0 else 1.0})
                     continue
-                for speech in windows:
+                for speech_index, speech in enumerate(windows):
                     self._check_cancel(cancel)
                     local_start = max(0.0, speech.start_seconds)
                     local_end = min(window_duration, speech.end_seconds)
@@ -239,6 +232,8 @@ class AsrWorker:
                         segment.end_us = max(segment.start_us + 1, segment.end_us)
                         emitted_end = segment.end_us
                         self.emit({"id": request_id, "event": "segment", "segment": segment.to_dict()})
+                    if playback_priority and speech_index < len(windows) - 1 and cancel.wait(PLAYBACK_PRIORITY_COOLDOWN_SECONDS):
+                        self._check_cancel(cancel)
             finally:
                 Path(chunk_path).unlink(missing_ok=True)
             offset += window_duration

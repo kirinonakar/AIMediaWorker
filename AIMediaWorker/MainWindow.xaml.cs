@@ -1823,55 +1823,70 @@ public sealed partial class MainWindow : Window
         ShowRightPanelSection(RightPanelSection.Subtitles);
         StatusText.Text = F("StatusGeneratingSubtitles", 0d);
         EnableGeneratedSubtitleOverlay();
+        var translateGeneratedCues = TranslateMenuItem.IsChecked;
         var translationQueue = Channel.CreateUnbounded<SubtitleCue>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
         var translationTask = TranslateGeneratedCuesRealtimeAsync(translationQueue.Reader, document, track, token);
         var translatedCount = 0;
-        var pendingCues = new List<SubtitleCue>(32);
         var segmentation = _settings.Subtitle.Segmentation;
         var asrSegmentation = new AsrSegmentationOptions(segmentation.MinimumCueSeconds, segmentation.MaximumCueSeconds, segmentation.MaximumLines, segmentation.TargetCharactersPerLine, segmentation.SilenceSplitSeconds, segmentation.MaximumCharactersPerSecond);
         try
         {
-            await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, startMicroseconds, token))
+            await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, startMicroseconds, token).ConfigureAwait(false))
             {
                 if (!ReferenceEquals(_document, document)) throw new OperationCanceledException(token);
-                if (result.Event == "progress")
-                {
-                    FlushPendingCues();
-                    if (result.Progress is { } progress) StatusText.Text = F("StatusGeneratingSubtitles", progress);
-                }
+                if (result.Event == "progress" && result.Progress is { } progress)
+                    await DispatchSubtitleUiAsync(() => StatusText.Text = F("StatusGeneratingSubtitles", progress), document, token).ConfigureAwait(false);
                 if (result.Event == "segment" && result.Segment is { } segment)
                 {
                     var cue = new SubtitleCue { StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds, Text = segment.Text, Confidence = segment.Confidence, Source = SubtitleCueSource.AutomaticSpeechRecognition };
-                    pendingCues.Add(cue);
-                    if (pendingCues.Count >= 32) FlushPendingCues();
+                    await DispatchSubtitleUiAsync(() =>
+                    {
+                        track.Cues.Add(cue);
+                        translationQueue.Writer.TryWrite(cue);
+                        ScheduleGeneratedSubtitleUiRefresh();
+                    }, document, token).ConfigureAwait(false);
                 }
             }
         }
         finally
         {
-            FlushPendingCues();
             translationQueue.Writer.TryComplete();
             if (token.IsCancellationRequested)
             {
-                try { await translationTask; }
+                try { await translationTask.ConfigureAwait(false); }
                 catch (OperationCanceledException) { }
                 catch (Exception exception) { await AppLog.WriteAsync("warning", "translation", "TRANSLATION_CANCEL_WAIT_ERROR", exception.Message, exception); }
             }
-            else translatedCount = await translationTask;
+            else translatedCount = await translationTask.ConfigureAwait(false);
         }
         if (!ReferenceEquals(_document, document)) return false;
-        document.Sort(); document.MarkDirty(); DrawTimeline(); ScheduleSubtitleOverlaySync(force: true);
-        StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
-        return TranslateMenuItem.IsChecked && translatedCount == track.Cues.Count;
-
-        void FlushPendingCues()
+        var finalCueCount = 0;
+        await DispatchSubtitleUiAsync(() =>
         {
-            if (pendingCues.Count == 0 || !ReferenceEquals(_document, document)) return;
-            track.Cues.AddRange(pendingCues);
-            foreach (var cue in pendingCues) translationQueue.Writer.TryWrite(cue);
-            pendingCues.Clear();
-            ScheduleGeneratedSubtitleUiRefresh();
-        }
+            document.MarkDirty();
+            DrawTimeline();
+            ScheduleSubtitleOverlaySync();
+            finalCueCount = track.Cues.Count;
+            StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
+        }, document, token).ConfigureAwait(false);
+        return translateGeneratedCues && translatedCount == finalCueCount;
+    }
+
+    private Task DispatchSubtitleUiAsync(Action action, SubtitleDocument targetDocument, CancellationToken cancellationToken)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (ReferenceEquals(_document, targetDocument)) action();
+                completion.TrySetResult();
+            }
+            catch (OperationCanceledException) { completion.TrySetCanceled(cancellationToken); }
+            catch (Exception exception) { completion.TrySetException(exception); }
+        })) completion.TrySetException(new InvalidOperationException("The subtitle result could not be dispatched to the UI thread."));
+        return completion.Task;
     }
 
     private async Task<int> TranslateGeneratedCuesRealtimeAsync(ChannelReader<SubtitleCue> reader, SubtitleDocument targetDocument, SubtitleTrack track, CancellationToken cancellationToken)
@@ -2047,7 +2062,7 @@ public sealed partial class MainWindow : Window
             return Task.CompletedTask;
         }
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!DispatcherQueue.TryEnqueue(() =>
+        if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
         {
             try { Apply(); completion.SetResult(); }
             catch (Exception exception) { completion.SetException(exception); }
@@ -2982,12 +2997,12 @@ public sealed partial class MainWindow : Window
         _historyService.AddRecent(_currentMediaSource, (long)(_playback.Position.TotalMilliseconds * 1000), _settings.General.RecentMediaCount);
     }
 
-    private void ScheduleSubtitleOverlaySync(bool force = false)
+    private void ScheduleSubtitleOverlaySync()
     {
         if (!_playback.IsAvailable || _playback.CurrentSource is null || _document.ActiveTrack is null) return;
         _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = new CancellationTokenSource();
         var token = _overlaySyncCancellation.Token;
-        _ = SyncSubtitleOverlayAsync(token, force);
+        _ = SyncSubtitleOverlayAsync(token);
     }
 
     private void ScheduleGeneratedSubtitleUiRefresh()
@@ -3015,7 +3030,7 @@ public sealed partial class MainWindow : Window
         _settings.Playback.ShowSubtitles = _playback.AreSubtitlesVisible;
     }
 
-    private async Task SyncSubtitleOverlayAsync(CancellationToken cancellationToken, bool force)
+    private async Task SyncSubtitleOverlayAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -3037,9 +3052,9 @@ public sealed partial class MainWindow : Window
                 var position = (long)(_playback.Position.TotalMilliseconds * 1000);
                 var renderedActive = FindActiveOverlayCue(_renderedOverlayCues, position);
                 var currentActive = FindActiveOverlayCue(cues, position);
-                var currentSubtitleIsUnchanged = renderedActive == currentActive;
+                var currentSubtitleIsUnchanged = renderedActive is not null && renderedActive == currentActive;
                 var fontIsUnchanged = string.Equals(fontFamily, _renderedOverlayFontFamily, StringComparison.OrdinalIgnoreCase);
-                if (!force && _playback.State == PlaybackState.Playing && _renderedOverlayContent is not null && currentSubtitleIsUnchanged && fontIsUnchanged)
+                if (_playback.State == PlaybackState.Playing && _renderedOverlayContent is not null && currentSubtitleIsUnchanged && fontIsUnchanged)
                 {
                     await Task.Delay(100, cancellationToken);
                     continue;

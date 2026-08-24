@@ -76,14 +76,6 @@ public sealed class SubtitleDocument : INotifyPropertyChanged
 
     private void CuesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        if (e.Action == NotifyCollectionChangedAction.Reset && sender is IEnumerable<SubtitleCue> currentCues)
-        {
-            foreach (var cue in currentCues)
-            {
-                cue.PropertyChanged -= CueChanged;
-                cue.PropertyChanged += CueChanged;
-            }
-        }
         if (e.OldItems is not null)
             foreach (SubtitleCue cue in e.OldItems) cue.PropertyChanged -= CueChanged;
         if (e.NewItems is not null)
