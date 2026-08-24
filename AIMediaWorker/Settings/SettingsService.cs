@@ -89,7 +89,7 @@ public sealed class SettingsService
         settings.Asr ??= new AsrSettings();
         settings.Asr.ModelPath = AsrSettings.DefaultModelId;
         settings.Asr.AlignerPath = AsrSettings.DefaultAlignerId;
-        settings.Asr.PythonExecutable = AsrRuntimePaths.PythonExecutable;
+        settings.Asr.CrispAsrRuntimeDirectory = AsrRuntimePaths.CrispAsrRuntimeDirectory;
         settings.Network ??= new NetworkSettings();
         settings.Network.WebDavServers ??= [];
         settings.Capture ??= new CaptureSettings();

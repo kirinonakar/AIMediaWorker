@@ -14,8 +14,8 @@ Last updated: 2026-08-23
 - Edited-document overlay synchronization through a debounced temporary ASS track and `sub-reload`.
 - Playback/cue highlight synchronization and virtualized WinUI `ListView` editor.
 - Timeline visible-range rendering, click seek, cue move, start/end resize, pan, zoom and playhead/cue-boundary snapping.
-- Python NDJSON worker lifecycle, crash detection, restart support, cancellation, status and orphan-process cleanup.
-- Official `qwen-asr` integration for Qwen3-ASR-1.7B and Qwen3-ForcedAligner-0.6B, model/device/precision configuration, FFmpeg chunk extraction, optional Silero VAD, global offset restoration, incremental segments and long-media bounded processing.
+- WinUI3 in-process CrispASR C ABI lifecycle, native session management, cancellation, restart support and failure reporting without a helper executable.
+- CrispASR integration for Qwen3-ASR-1.7B and qwen3-forced-aligner-0.6B, fixed GGUF model paths, FFmpeg chunk extraction, native amplitude gating, global offset restoration, incremental segments and bounded long-media processing.
 - Configurable punctuation/silence/duration/line-length subtitle segmentation.
 - Live PCM buffering with partial/final events and a low-latency path separate from offline forced alignment.
 - HTTP media playback and cancellable WebDAV PROPFIND browser with add/edit/delete servers, parent/refresh/open and authenticated direct mpv playback.
@@ -40,7 +40,7 @@ Last updated: 2026-08-23
 - Camera resolution/frame-rate selection and configurable live-caption font, size, colors, position, and line count.
 - Authenticated remote media preparation for ASR, direct unauthenticated HTTP ASR, network timeout/reconnect behavior, and cancellable FFmpeg extraction.
 - Subtitle encoding selection and explicit style-loss status when converting formats.
-- Python segmenter tests that protect CJK text from truncation and enforce cancellation; C# shortcut/protocol regression tests.
+- C# native runtime/path/protocol regression tests, missing-model recovery tests and shortcut/protocol regression tests.
 - Complete setup/usage/troubleshooting README.
 - Self-contained Windows App SDK deployment so the unpackaged executable starts without a separately registered Windows App Runtime.
 - Drag-and-drop and multi-file playlist opening, sibling-folder playlists, previous/next, repeat modes, deferred exact seeking, subtitle visibility toggle, and command-line autoplay.
@@ -62,16 +62,16 @@ Last updated: 2026-08-23
 ## Known Issues
 
 - The current machine has a verified x64 `mpv-2.dll` and passes local generated-video playback startup. Qwen model weights, CUDA, a WebDAV test server, provider API keys and known camera/microphone fixtures still require environment-dependent validation.
-- Qwen streaming inference is officially limited to the vLLM backend. The transformer worker therefore uses bounded rolling-window transcription for low-latency partial captions and reserves forced alignment for offline mode.
+- The WinUI C# client uses bounded rolling-window transcription for live partial captions and serialized CrispASR session calls; offline results additionally use the CrispASR forced-aligner ABI.
 - RTX Video Super Resolution activation is driver/profile controlled for the D3D11 video path; the application can detect compatible-class hardware but cannot independently prove the driver's per-frame enhancement state.
 - A language change fully applies after application restart; newly opened views use the updated resource qualifier immediately.
 
 ## Architecture Decisions
 
-- WinUI never imports PyTorch; all ASR runs in a separately restartable Python process over versioned NDJSON.
+- WinUI does not import Python or start a helper process; C# loads the prebuilt CrispASR DLL from `asr-worker/crispasr` and calls its C ABI directly.
 - `libmpv` owns decode, A/V sync, GPU rendering and normal subtitle rendering in a native child HWND.
 - Subtitle times are integer microseconds and only convert to floating-point seconds at external process/API boundaries.
-- Long audio is extracted through bounded FFmpeg chunks; complete decoded media is never retained in managed memory.
+- Long audio is extracted through bounded FFmpeg chunks; live audio is kept in a bounded rolling buffer and offline chunks are released after inference.
 - Secrets use Windows Credential Manager and are only attached to in-memory HTTP/mpv requests.
 - The test project references a UI-free linked core assembly so unit tests do not require Windows App SDK activation.
 
@@ -79,15 +79,15 @@ Last updated: 2026-08-23
 
 - `libmpv` initialization, D3D11VA/NVDEC fallback, track switching and media matrix.
 - NVIDIA GPU/driver RTX VSR activation.
-- Qwen3-ASR and ForcedAligner inference with real CUDA/model weights.
+- Qwen3-ASR and ForcedAligner inference through the CrispASR C ABI with real CUDA/model weights.
 - WebDAV authentication/range-seek behavior against real servers.
 - Camera preview/capture, microphone removal/permission-denial and live-caption latency.
 - Google/Ollama Cloud/OpenCode/Unsloth model listing, translation and summarization with real credentials.
 
 ## Final Validation Checklist
 
-- Python syntax, protocol lifecycle, missing-model recovery, and 3 segmenter tests pass.
-- All 29 .NET unit/integration tests pass, including generated FFmpeg media and a WebDAV 207 fixture.
-- Debug and Release solution builds pass with zero warnings.
+- Native runtime path, protocol lifecycle, missing-model recovery, and subtitle timing tests pass.
+- All .NET unit/integration tests pass, including the native runtime lifecycle when the prebuilt DLL is available.
+- Debug and Release solution builds pass with no errors; warnings are tracked in the normal build output.
 - The self-contained unpackaged Release executable creates a visible top-level `AIMediaWorker` window during its launch smoke test; the exact smoke-test process is then stopped cleanly.
 - Real-hardware/service workflows remain listed above for the target deployment environment.

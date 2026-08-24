@@ -12,7 +12,7 @@ public enum ThinkingLevel { Default, Off, Low, Medium, High, XHigh, Max }
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public PlaybackSettings Playback { get; set; } = new();
     public SubtitleSettings Subtitle { get; set; } = new();
@@ -63,12 +63,12 @@ public sealed class SegmentationSettings
 
 public sealed class AsrSettings
 {
-    public const string DefaultModelId = "Qwen/Qwen3-ASR-1.7B";
-    public const string DefaultAlignerId = "Qwen/Qwen3-ForcedAligner-0.6B";
+    public const string DefaultModelId = AsrRuntimePaths.AsrModelFileName;
+    public const string DefaultAlignerId = AsrRuntimePaths.AlignerModelFileName;
 
     public string? ModelPath { get; set; } = DefaultModelId;
     public string? AlignerPath { get; set; } = DefaultAlignerId;
-    public string PythonExecutable { get; set; } = AsrRuntimePaths.PythonExecutable;
+    public string CrispAsrRuntimeDirectory { get; set; } = AsrRuntimePaths.CrispAsrRuntimeDirectory;
     public AsrDevice Device { get; set; } = AsrDevice.Auto;
     public AsrPrecision Precision { get; set; } = AsrPrecision.Auto;
     public string Language { get; set; } = "auto";

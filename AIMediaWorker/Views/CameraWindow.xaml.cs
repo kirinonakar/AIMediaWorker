@@ -127,13 +127,13 @@ public sealed partial class CameraWindow : Window
             {
                 CaptionButton.IsEnabled = false; await _liveAsr.StopAsync(); CaptionButton.Content = L("StartCaptionsText"); CaptionButton.IsEnabled = true; return;
             }
-            if (!File.Exists(AsrRuntimePaths.PythonExecutable))
+            if (!File.Exists(AsrRuntimePaths.CrispAsrDllPath))
             {
                 SetStatus(L("AsrInstallRequiredTitle"), L("AsrInstallRequiredMessage"), InfoBarSeverity.Warning); return;
             }
             CaptionButton.IsEnabled = false;
-            var worker = AsrRuntimePaths.WorkerScript;
-            await _asr.StartAsync(_settings.Asr.PythonExecutable, worker);
+            var runtimeDirectory = AsrRuntimePaths.GetCrispAsrRuntimeDirectory(_settings.Asr.CrispAsrRuntimeDirectory);
+            await _asr.StartAsync(runtimeDirectory);
             var acceptingLoadProgress = true;
             var loadProgress = new Progress<AsrEvent>(update => { if (acceptingLoadProgress) UpdateAsrModelProgress(update); });
             try { await _asr.LoadModelAsync(_settings.Asr.ModelPath ?? AsrSettings.DefaultModelId, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress); }

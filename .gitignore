@@ -17,6 +17,7 @@ Libs/
 .venv/
 asr-worker/models/
 asr-worker/runtime/
+asr-worker
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

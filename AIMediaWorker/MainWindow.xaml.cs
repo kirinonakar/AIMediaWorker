@@ -1678,7 +1678,7 @@ public sealed partial class MainWindow : Window
     private async void OnDiagnosticsClick(object sender, RoutedEventArgs e)
     {
         StatusText.Text = L("StatusCollectingDiagnostics");
-        var snapshot = await new DiagnosticsService().CollectAsync(_playback, _asrEngine.State, _settings.Asr.PythonExecutable, _settings.Asr.ModelPath, _settings.Asr.AlignerPath);
+        var snapshot = await new DiagnosticsService().CollectAsync(_playback, _asrEngine.State, AsrRuntimePaths.GetCrispAsrRuntimeDirectory(_settings.Asr.CrispAsrRuntimeDirectory), _settings.Asr.ModelPath, _settings.Asr.AlignerPath);
         var output = new TextBox { Text = snapshot.ToString(), IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinWidth = 650, MinHeight = 420, FontFamily = new FontFamily("Consolas") };
         await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("DiagnosticsTitle"), Content = output, CloseButtonText = L("CloseButton") });
         StatusText.Text = L("ReadyText");
@@ -1770,7 +1770,7 @@ public sealed partial class MainWindow : Window
             StatusText.Text = L("AutomaticSubtitlesOpenMedia");
             return;
         }
-        if (generate && !File.Exists(AsrRuntimePaths.PythonExecutable))
+        if (generate && !File.Exists(AsrRuntimePaths.CrispAsrDllPath))
         {
             StatusText.Text = L("AsrInstallRequiredMessage");
             return;
@@ -1823,8 +1823,8 @@ public sealed partial class MainWindow : Window
     private async Task<bool> GenerateSubtitlesAsync(string source, long startMicroseconds, CancellationToken token)
     {
         StatusText.Text = L("StatusStartingAsr");
-        var worker = AsrRuntimePaths.WorkerScript;
-        await _asrEngine.StartAsync(_settings.Asr.PythonExecutable, worker, token);
+        var runtimeDirectory = AsrRuntimePaths.GetCrispAsrRuntimeDirectory(_settings.Asr.CrispAsrRuntimeDirectory);
+        await _asrEngine.StartAsync(runtimeDirectory, token);
         StatusText.Text = L("StatusLoadingAsr");
         var acceptingLoadProgress = true;
         var loadProgress = new Progress<AsrEvent>(update => { if (acceptingLoadProgress) UpdateAsrModelProgress(update); });

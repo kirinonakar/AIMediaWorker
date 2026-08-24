@@ -1,23 +1,27 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Text;
-using System.Text.Json;
-using System.Threading.Channels;
+using System.Runtime.InteropServices;
 
 namespace AIMediaWorker.Asr;
 
+/// <summary>
+/// In-process WinUI3 C# client for the prebuilt CrispASR native runtime.
+/// CrispASR owns ASR and forced alignment; this class only adapts its C ABI to
+/// the application's asynchronous subtitle and live-caption interfaces.
+/// </summary>
 public sealed class AsrWorkerClient : IAsrEngine
 {
-    private readonly ConcurrentDictionary<string, Channel<AsrEvent>> _pending = new(StringComparer.Ordinal);
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private const int SampleRate = 16_000;
+    private const long CentisecondMicroseconds = 10_000;
     private readonly object _lifecycleLock = new();
-    private Process? _process;
-    private CancellationTokenSource? _readerCancellation;
-    private Task? _stdoutReader;
-    private Task? _stderrReader;
-    private string? _pythonExecutable;
-    private string? _workerScript;
+    private readonly SemaphoreSlim _inferenceLock = new(1, 1);
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, LiveStream> _streams = new(StringComparer.Ordinal);
+    private nint _session;
+    private string? _runtimeDirectory;
+    private string? _modelPath;
+    private string? _alignerPath;
     private bool _disposed;
 
     public AsrWorkerState State { get; private set; } = AsrWorkerState.NotStarted;
@@ -25,270 +29,613 @@ public sealed class AsrWorkerClient : IAsrEngine
     public event EventHandler<string>? WorkerLog;
     public event EventHandler<AsrEvent>? LiveResultReceived;
 
-    public async Task StartAsync(string pythonExecutable, string workerScript, CancellationToken cancellationToken = default)
+    public Task StartAsync(string crispAsrRuntimeDirectory, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (State is AsrWorkerState.Ready or AsrWorkerState.Busy) return;
-        if (_process is not null) await StopProcessAsync().ConfigureAwait(false);
-        _workerScript = Path.GetFullPath(workerScript);
-        if (!File.Exists(_workerScript)) throw new FileNotFoundException("The ASR worker script was not found.", _workerScript);
-        _pythonExecutable = PythonEnvironment.ResolveExecutable(pythonExecutable, _workerScript);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var runtimeDirectory = Path.GetFullPath(crispAsrRuntimeDirectory);
+        if (State is AsrWorkerState.Ready or AsrWorkerState.Busy &&
+            string.Equals(_runtimeDirectory, runtimeDirectory, StringComparison.OrdinalIgnoreCase))
+            return Task.CompletedTask;
+
+        return StartCoreAsync(runtimeDirectory, cancellationToken);
+    }
+
+    private async Task StartCoreAsync(string runtimeDirectory, CancellationToken cancellationToken)
+    {
+        if (State is not AsrWorkerState.NotStarted)
+        {
+            await ShutdownAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         SetState(AsrWorkerState.Starting);
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = _pythonExecutable,
-            ArgumentList = { "-u", _workerScript },
-            WorkingDirectory = Path.GetDirectoryName(_workerScript)!,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            StandardInputEncoding = new UTF8Encoding(false),
-            StandardOutputEncoding = new UTF8Encoding(false),
-            StandardErrorEncoding = new UTF8Encoding(false)
-        };
-        startInfo.Environment["PYTHONUTF8"] = "1";
-        startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
-        // Native ML runtimes otherwise create a worker per logical processor. Keeping a
-        // bounded pool leaves CPU time for libmpv's demux, audio and presentation threads.
-        var nativeThreadBudget = Math.Clamp(Environment.ProcessorCount / 2, 1, 4).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        startInfo.Environment["OMP_NUM_THREADS"] = nativeThreadBudget;
-        startInfo.Environment["MKL_NUM_THREADS"] = nativeThreadBudget;
-        startInfo.Environment["OPENBLAS_NUM_THREADS"] = "1";
-        startInfo.Environment["NUMEXPR_NUM_THREADS"] = nativeThreadBudget;
-        startInfo.Environment["TOKENIZERS_PARALLELISM"] = "false";
-        var process = new Process
-        {
-            StartInfo = startInfo,
-            EnableRaisingEvents = true
-        };
-        process.Exited += OnProcessExited;
         try
         {
-            if (!process.Start()) throw new InvalidOperationException("Python did not start the ASR worker.");
-            TrySetBackgroundPriority(process);
-            lock (_lifecycleLock) _process = process;
-            _readerCancellation = new CancellationTokenSource();
-            _stdoutReader = Task.Run(() => ReadStdoutAsync(process, _readerCancellation.Token), CancellationToken.None);
-            _stderrReader = Task.Run(() => ReadStderrAsync(process, _readerCancellation.Token), CancellationToken.None);
-            var response = await SendAndWaitAsync(AsrRequest.Create("initialize"), cancellationToken).ConfigureAwait(false);
-            if (response.Event == "error") throw new AsrWorkerException(response.Code ?? "ASR_ERROR", response.Message ?? "ASR worker initialization failed.");
+            await Task.Run(() => CrispAsrNative.EnsureLoaded(runtimeDirectory), cancellationToken).ConfigureAwait(false);
+            lock (_lifecycleLock) _runtimeDirectory = runtimeDirectory;
             SetState(AsrWorkerState.Ready);
         }
         catch
         {
             SetState(AsrWorkerState.Failed);
-            TryTerminate(process);
-            await StopProcessAsync().ConfigureAwait(false);
-            process.Dispose();
             throw;
         }
     }
 
     public async Task RestartAsync(CancellationToken cancellationToken = default)
     {
-        if (_pythonExecutable is null || _workerScript is null) throw new InvalidOperationException("The ASR worker has not been configured.");
-        await StopProcessAsync().ConfigureAwait(false);
-        SetState(AsrWorkerState.NotStarted);
-        await StartAsync(_pythonExecutable, _workerScript, cancellationToken).ConfigureAwait(false);
+        var runtimeDirectory = _runtimeDirectory ?? throw new InvalidOperationException("The CrispASR runtime has not been configured.");
+        var modelPath = _modelPath;
+        var alignerPath = _alignerPath;
+
+        await ShutdownAsync(cancellationToken).ConfigureAwait(false);
+        await StartAsync(runtimeDirectory, cancellationToken).ConfigureAwait(false);
+        if (modelPath is not null)
+            await LoadModelAsync(modelPath, alignerPath, "auto", "auto", cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task LoadModelAsync(string modelPath, string? alignerPath, string device, string precision, IProgress<AsrEvent>? progress = null, CancellationToken cancellationToken = default)
+    public async Task LoadModelAsync(string modelPath, string? alignerPath, string device, string precision,
+                                     IProgress<AsrEvent>? progress = null,
+                                     CancellationToken cancellationToken = default)
     {
-        var request = AsrRequest.Create("load_model", new { model_path = modelPath, aligner_path = alignerPath, device, precision });
-        var response = await SendAndWaitAsync(request, cancellationToken, progress).ConfigureAwait(false);
-        ThrowIfError(response);
-    }
+        _ = device;
+        _ = precision;
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var runtimeDirectory = _runtimeDirectory ?? throw new InvalidOperationException("StartAsync must be called before loading an ASR model.");
+        var resolvedModelPath = ResolveModelPath(modelPath, runtimeDirectory);
+        var resolvedAlignerPath = ResolveModelPath(alignerPath ?? AsrRuntimePaths.AlignerModelFileName, runtimeDirectory);
 
-    public async IAsyncEnumerable<AsrEvent> TranscribeFileAsync(string path, string language, double chunkDurationSeconds = 30, bool useVad = true, AsrSegmentationOptions? segmentation = null, long startMicroseconds = 0, [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        if (startMicroseconds < 0) throw new ArgumentOutOfRangeException(nameof(startMicroseconds));
-        var input = File.Exists(path) ? Path.GetFullPath(path) : Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri.AbsoluteUri : throw new FileNotFoundException("ASR input media was not found.", path);
-        var request = AsrRequest.Create("transcribe_file", new { input, language, timestamps = true, chunk_duration = chunkDurationSeconds, vad = useVad, segmentation, start_us = startMicroseconds, playback_priority = true });
-        var channel = Register(request.Id);
-        using var registration = cancellationToken.Register(() => _ = CancelAsync(request.Id, CancellationToken.None));
+        if (!File.Exists(resolvedModelPath))
+        {
+            progress?.Report(new AsrEvent
+            {
+                Event = "progress",
+                Stage = "loading",
+                Progress = 0,
+                Message = $"Model not found: {resolvedModelPath}"
+            });
+            SetState(AsrWorkerState.Ready);
+            throw new AsrWorkerException("MODEL_NOT_FOUND", $"The Qwen3 ASR model was not found: {resolvedModelPath}");
+        }
+
+        if (!File.Exists(resolvedAlignerPath))
+        {
+            progress?.Report(new AsrEvent
+            {
+                Event = "progress",
+                Stage = "loading",
+                Progress = 0,
+                Message = $"Aligner model not found: {resolvedAlignerPath}"
+            });
+            SetState(AsrWorkerState.Ready);
+            throw new AsrWorkerException("MODEL_NOT_FOUND", $"The CrispASR forced aligner model was not found: {resolvedAlignerPath}");
+        }
+
         SetState(AsrWorkerState.Busy);
-        await WriteAsync(request, cancellationToken).ConfigureAwait(false);
+        var stopwatch = Stopwatch.StartNew();
+        progress?.Report(new AsrEvent
+        {
+            Event = "progress",
+            Stage = "loading",
+            Progress = 0.05,
+            ElapsedSeconds = 0,
+            Message = $"Loading {Path.GetFileName(resolvedModelPath)} with CrispASR qwen3-1.7b"
+        });
+
+        nint newSession = 0;
         try
         {
-            await foreach (var result in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            var threadCount = NativeThreadCount;
+            await _inferenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                ThrowIfError(result);
-                yield return result;
+                newSession = await Task.Run(() =>
+                    CrispAsrNative.OpenSession(resolvedModelPath, threadCount), cancellationToken).ConfigureAwait(false);
+
+                nint previousSession;
+                lock (_lifecycleLock)
+                {
+                    previousSession = _session;
+                    _session = newSession;
+                    _modelPath = resolvedModelPath;
+                    _alignerPath = resolvedAlignerPath;
+                    newSession = 0;
+                }
+                CrispAsrNative.CloseSession(previousSession);
             }
+            finally
+            {
+                _inferenceLock.Release();
+            }
+
+            stopwatch.Stop();
+            progress?.Report(new AsrEvent
+            {
+                Event = "progress",
+                Stage = "loading",
+                Progress = 1,
+                ElapsedSeconds = (int)Math.Round(stopwatch.Elapsed.TotalSeconds),
+                Message = "CrispASR Qwen3 ASR and forced aligner are ready."
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            CrispAsrNative.CloseSession(newSession);
+            throw;
+        }
+        catch (AsrWorkerException)
+        {
+            CrispAsrNative.CloseSession(newSession);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            CrispAsrNative.CloseSession(newSession);
+            throw new AsrWorkerException("MODEL_LOAD_ERROR", exception.Message);
         }
         finally
         {
-            _pending.TryRemove(request.Id, out _);
             if (State != AsrWorkerState.Failed) SetState(AsrWorkerState.Ready);
         }
     }
 
-    public async Task CancelAsync(string requestId, CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<AsrEvent> TranscribeFileAsync(
+        string path,
+        string language,
+        double chunkDurationSeconds = 30,
+        bool useVad = true,
+        AsrSegmentationOptions? segmentation = null,
+        long startMicroseconds = 0,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (_process is null || _process.HasExited) return;
-        var response = await SendAndWaitAsync(AsrRequest.Create("cancel", new { target_id = requestId }), cancellationToken).ConfigureAwait(false);
-        ThrowIfError(response);
+        _ = segmentation;
+        if (startMicroseconds < 0) throw new ArgumentOutOfRangeException(nameof(startMicroseconds));
+        var input = ResolveInput(path);
+        var requestId = $"job-{Guid.NewGuid():N}";
+        using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (!_requests.TryAdd(requestId, requestCancellation)) throw new InvalidOperationException($"Duplicate ASR request id: {requestId}");
+
+        var token = requestCancellation.Token;
+        SetState(AsrWorkerState.Busy);
+        try
+        {
+            yield return new AsrEvent { Id = requestId, Event = "progress", Stage = "decode", Progress = 0, Message = "Decoding audio to 16 kHz mono PCM." };
+            var samples = await DecodeMediaAsync(input, token).ConfigureAwait(false);
+            if (samples.Length == 0) throw new AsrWorkerException("AUDIO_EMPTY", "The media file contains no decodable audio samples.");
+
+            var chunkSamples = Math.Clamp((int)Math.Round(Math.Clamp(chunkDurationSeconds, 5, 180) * SampleRate), SampleRate, SampleRate * 180);
+            var processedSamples = 0;
+            while (processedSamples < samples.Length)
+            {
+                token.ThrowIfCancellationRequested();
+                var count = Math.Min(chunkSamples, samples.Length - processedSamples);
+                var chunk = samples.AsSpan(processedSamples, count).ToArray();
+                var progressValue = Math.Clamp((double)(processedSamples + count) / samples.Length, 0, 1);
+                if (!useVad || HasSpeech(chunk))
+                {
+                    var segments = await TranscribeChunkAsync(chunk, processedSamples, startMicroseconds, language, token).ConfigureAwait(false);
+                    foreach (var segment in segments)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        yield return new AsrEvent { Id = requestId, Event = "segment", Segment = segment };
+                    }
+                }
+
+                processedSamples += count;
+                yield return new AsrEvent
+                {
+                    Id = requestId,
+                    Event = "progress",
+                    Stage = "transcribe",
+                    Progress = progressValue,
+                    Message = "Transcribing with CrispASR."
+                };
+            }
+
+            yield return new AsrEvent { Id = requestId, Event = "completed", Progress = 1 };
+        }
+        finally
+        {
+            _requests.TryRemove(requestId, out _);
+            if (State != AsrWorkerState.Failed && _streams.IsEmpty) SetState(AsrWorkerState.Ready);
+        }
     }
 
-    public async Task<string> StartStreamingAsync(string language, CancellationToken cancellationToken = default)
+    public Task CancelAsync(string requestId, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_requests.TryGetValue(requestId, out var cancellation)) cancellation.Cancel();
+        return Task.CompletedTask;
+    }
+
+    public Task<string> StartStreamingAsync(string language, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureSessionLoaded();
         var streamId = $"stream-{Guid.NewGuid():N}";
-        var result = await SendAndWaitAsync(AsrRequest.Create("start_streaming", new { stream_id = streamId, language }), cancellationToken).ConfigureAwait(false);
-        ThrowIfError(result);
-        return streamId;
+        if (!_streams.TryAdd(streamId, new LiveStream(streamId, language)))
+            throw new InvalidOperationException($"Duplicate ASR stream id: {streamId}");
+        SetState(AsrWorkerState.Busy);
+        return Task.FromResult(streamId);
     }
 
     public async Task PushAudioAsync(string streamId, ReadOnlyMemory<byte> pcm16, CancellationToken cancellationToken = default)
     {
-        var result = await SendAndWaitAsync(AsrRequest.Create("push_audio", new { stream_id = streamId, audio_base64 = Convert.ToBase64String(pcm16.Span) }), cancellationToken).ConfigureAwait(false);
-        ThrowIfError(result);
+        if (!_streams.TryGetValue(streamId, out var stream)) throw new InvalidOperationException($"Unknown ASR stream: {streamId}");
+        if (pcm16.Length == 0) return;
+        if ((pcm16.Length & 1) != 0) throw new ArgumentException("PCM16 data must contain complete samples.", nameof(pcm16));
+
+        await stream.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        float[]? snapshot = null;
+        try
+        {
+            stream.Append(pcm16.Span);
+            if (stream.SampleCount - stream.LastDecodedSampleCount >= SampleRate * 2)
+            {
+                snapshot = stream.Samples.ToArray();
+                stream.LastDecodedSampleCount = stream.SampleCount;
+            }
+        }
+        finally
+        {
+            stream.Gate.Release();
+        }
+
+        if (snapshot is not null) await EmitLiveResultAsync(stream, snapshot, "partial", cancellationToken).ConfigureAwait(false);
     }
 
     public async Task StopStreamingAsync(string streamId, CancellationToken cancellationToken = default)
     {
-        var result = await SendAndWaitAsync(AsrRequest.Create("stop_streaming", new { stream_id = streamId, sample_rate = 16000, channels = 1 }), cancellationToken).ConfigureAwait(false);
-        ThrowIfError(result);
+        if (!_streams.TryGetValue(streamId, out var stream)) return;
+        await stream.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (stream.SampleCount > 0)
+                await EmitLiveResultAsync(stream, stream.Samples.ToArray(), "final", cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _streams.TryRemove(streamId, out _);
+            stream.Gate.Release();
+            if (_streams.IsEmpty && State != AsrWorkerState.Failed) SetState(AsrWorkerState.Ready);
+        }
     }
 
     public async Task ShutdownAsync(CancellationToken cancellationToken = default)
     {
-        if (_process is null || _process.HasExited) return;
+        if (State == AsrWorkerState.NotStarted && _session == 0) return;
         SetState(AsrWorkerState.Stopping);
-        try { _ = await SendAndWaitAsync(AsrRequest.Create("shutdown"), cancellationToken).ConfigureAwait(false); }
-        catch (Exception exception) when (exception is IOException or AsrWorkerException or OperationCanceledException) { }
-        await StopProcessAsync().ConfigureAwait(false);
+        foreach (var cancellation in _requests.Values) cancellation.Cancel();
+
+        await _inferenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            nint session;
+            lock (_lifecycleLock)
+            {
+                session = _session;
+                _session = 0;
+            }
+            CrispAsrNative.CloseSession(session);
+            _streams.Clear();
+        }
+        finally
+        {
+            _inferenceLock.Release();
+        }
+
         if (!_disposed) SetState(AsrWorkerState.NotStarted);
     }
 
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         try { await ShutdownAsync(cancellation.Token).ConfigureAwait(false); } catch { }
         _disposed = true;
-        await StopProcessAsync().ConfigureAwait(false);
-        _writeLock.Dispose();
+        foreach (var request in _requests.Values) request.Dispose();
+        _requests.Clear();
+        _inferenceLock.Dispose();
         GC.SuppressFinalize(this);
     }
 
-    private async Task<AsrEvent> SendAndWaitAsync(AsrRequest request, CancellationToken cancellationToken, IProgress<AsrEvent>? progress = null)
+    private async Task<IReadOnlyList<AsrSegment>> TranscribeChunkAsync(
+        float[] samples,
+        int absoluteSampleOffset,
+        long startMicroseconds,
+        string language,
+        CancellationToken cancellationToken)
     {
-        var channel = Register(request.Id);
+        await _inferenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await WriteAsync(request, cancellationToken).ConfigureAwait(false);
-            await foreach (var result in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            var session = RequireSession();
+            var alignerPath = _alignerPath;
+            var normalizedLanguage = NormalizeLanguage(language);
+            var threadCount = NativeThreadCount;
+            return await Task.Run(() =>
             {
-                if (result.Event == "progress") progress?.Report(result);
-                if (result.Event is "partial" or "final") LiveResultReceived?.Invoke(this, result);
-                if (result.Event is "completed" or "ready" or "status" or "cancelled" or "error") return result;
-            }
-            throw new IOException("The ASR worker ended the response without a terminal event.");
+                var nativeSegments = CrispAsrNative.Transcribe(session, samples, normalizedLanguage);
+                return MapSegments(nativeSegments, samples, absoluteSampleOffset, startMicroseconds, alignerPath, threadCount,
+                    exception => WorkerLog?.Invoke(this, $"CrispASR forced alignment fallback: {exception.Message}"));
+            }, cancellationToken).ConfigureAwait(false);
         }
-        finally { _pending.TryRemove(request.Id, out _); }
+        catch (AsrWorkerException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new AsrWorkerException("TRANSCRIBE_ERROR", exception.Message);
+        }
+        finally
+        {
+            _inferenceLock.Release();
+        }
     }
 
-    private Channel<AsrEvent> Register(string id)
+    private async Task EmitLiveResultAsync(LiveStream stream, float[] samples, string eventName, CancellationToken cancellationToken)
     {
-        var channel = Channel.CreateUnbounded<AsrEvent>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true, AllowSynchronousContinuations = false });
-        if (!_pending.TryAdd(id, channel)) throw new InvalidOperationException($"Duplicate ASR request id: {id}");
-        return channel;
+        var segments = await TranscribeChunkAsync(samples, 0, 0, stream.Language, cancellationToken).ConfigureAwait(false);
+        var text = string.Join(" ", segments.Select(segment => segment.Text).Where(text => !string.IsNullOrWhiteSpace(text))).Trim();
+        if (text.Length == 0) return;
+
+        var result = new AsrEvent
+        {
+            Id = stream.Id,
+            Event = eventName,
+            Text = text,
+            Segment = segments.FirstOrDefault()
+        };
+        LiveResultReceived?.Invoke(this, result);
     }
 
-    private async Task WriteAsync(AsrRequest request, CancellationToken cancellationToken)
+    private static IReadOnlyList<AsrSegment> MapSegments(
+        CrispAsrNative.NativeSegment[] nativeSegments,
+        float[] chunkSamples,
+        int absoluteSampleOffset,
+        long startMicroseconds,
+        string? alignerPath,
+        int threadCount,
+        Action<Exception>? alignmentLog)
     {
-        var process = _process;
-        if (process is null || process.HasExited) throw new AsrWorkerException("ASR_ERROR", "The ASR worker is not running.");
-        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var result = new List<AsrSegment>(nativeSegments.Length);
+        foreach (var nativeSegment in nativeSegments)
+        {
+            var text = nativeSegment.Text.Trim();
+            if (text.Length == 0) continue;
+
+            var segmentStartCentiseconds = Math.Max(0, nativeSegment.StartCentiseconds);
+            var segmentEndCentiseconds = Math.Max(segmentStartCentiseconds + 1, nativeSegment.EndCentiseconds);
+            var absoluteChunkStart = startMicroseconds + SamplesToMicroseconds(absoluteSampleOffset);
+            var segmentStart = absoluteChunkStart + segmentStartCentiseconds * CentisecondMicroseconds;
+            var segmentEnd = absoluteChunkStart + segmentEndCentiseconds * CentisecondMicroseconds;
+            var words = CreateWords(nativeSegment, text, chunkSamples, segmentStart, segmentEnd, alignerPath, threadCount, alignmentLog);
+            var confidenceValues = nativeSegment.Words.Where(word => word.Probability is > 0).Select(word => (double)word.Probability!.Value).ToArray();
+
+            result.Add(new AsrSegment
+            {
+                StartMicroseconds = segmentStart,
+                EndMicroseconds = Math.Max(segmentStart + 1, segmentEnd),
+                Text = text,
+                Confidence = confidenceValues.Length == 0 ? null : confidenceValues.Average(),
+                Words = words
+            });
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<AsrWord>? CreateWords(
+        CrispAsrNative.NativeSegment nativeSegment,
+        string text,
+        float[] chunkSamples,
+        long segmentStart,
+        long segmentEnd,
+        string? alignerPath,
+        int threadCount,
+        Action<Exception>? alignmentLog)
+    {
+        if (alignerPath is not null && File.Exists(alignerPath))
+        {
+            var localStart = (int)Math.Clamp(nativeSegment.StartCentiseconds * SampleRate / 100, 0, chunkSamples.Length);
+            var localEnd = (int)Math.Clamp(nativeSegment.EndCentiseconds * SampleRate / 100, localStart, chunkSamples.Length);
+            if (localEnd <= localStart)
+            {
+                localStart = 0;
+                localEnd = chunkSamples.Length;
+            }
+
+            try
+            {
+                var aligned = CrispAsrNative.AlignWords(alignerPath, text, chunkSamples[localStart..localEnd], threadCount);
+                var words = aligned
+                    .Where(word => !string.IsNullOrWhiteSpace(word.Text))
+                    .Select(word => new AsrWord
+                    {
+                        Text = word.Text.Trim(),
+                        StartMicroseconds = segmentStart + Math.Max(0, word.StartCentiseconds) * CentisecondMicroseconds,
+                        EndMicroseconds = segmentStart + Math.Max(Math.Max(0, word.StartCentiseconds) + 1, word.EndCentiseconds) * CentisecondMicroseconds
+                    })
+                    .ToArray();
+                if (words.Length > 0) return words;
+            }
+            catch (Exception exception)
+            {
+                // Native timestamps are a usable fallback when a short or noisy
+                // segment cannot be aligned by the optional second pass.
+                alignmentLog?.Invoke(exception);
+            }
+        }
+
+        if (nativeSegment.Words.Length > 0)
+        {
+            return nativeSegment.Words
+                .Where(word => !string.IsNullOrWhiteSpace(word.Text))
+                .Select(word => new AsrWord
+                {
+                    Text = word.Text.Trim(),
+                    StartMicroseconds = segmentStart + Math.Max(0, word.StartCentiseconds) * CentisecondMicroseconds,
+                    EndMicroseconds = segmentStart + Math.Max(Math.Max(0, word.StartCentiseconds) + 1, word.EndCentiseconds) * CentisecondMicroseconds
+                })
+                .ToArray();
+        }
+
+        var fallbackWords = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (fallbackWords.Length == 0) return null;
+        var duration = Math.Max(1, segmentEnd - segmentStart);
+        return fallbackWords.Select((word, index) => new AsrWord
+        {
+            Text = word,
+            StartMicroseconds = segmentStart + duration * index / fallbackWords.Length,
+            EndMicroseconds = segmentStart + duration * (index + 1) / fallbackWords.Length
+        }).ToArray();
+    }
+
+    private static async Task<float[]> DecodeMediaAsync(string input, CancellationToken cancellationToken)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            }
+        };
+        foreach (var argument in new[]
+        {
+            "-hide_banner", "-loglevel", "error", "-nostdin", "-i", input,
+            "-map", "0:a:0?", "-vn", "-ac", "1", "-ar", SampleRate.ToString(), "-f", "f32le", "pipe:1"
+        }) process.StartInfo.ArgumentList.Add(argument);
+
         try
         {
-            await process.StandardInput.WriteLineAsync(AsrJson.Serialize(request).AsMemory(), cancellationToken).ConfigureAwait(false);
-            await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+            if (!process.Start()) throw new InvalidOperationException("FFmpeg did not start.");
         }
-        finally { _writeLock.Release(); }
-    }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            throw new AsrWorkerException("AUDIO_DECODE_ERROR", $"FFmpeg is required to decode ASR input: {exception.Message}");
+        }
 
-    private async Task ReadStdoutAsync(Process process, CancellationToken cancellationToken)
-    {
+        using var output = new MemoryStream();
         try
         {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                var line = await process.StandardOutput.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-                if (line is null) break;
-                AsrEvent result;
-                try { result = AsrJson.DeserializeEvent(line); }
-                catch (JsonException exception) { WorkerLog?.Invoke(this, $"Invalid ASR protocol message: {exception.Message}"); continue; }
-                if (result.Id is null || !_pending.TryGetValue(result.Id, out var channel)) continue;
-                await channel.Writer.WriteAsync(result, cancellationToken).ConfigureAwait(false);
-                if (result.Event is "completed" or "ready" or "status" or "cancelled" or "error") channel.Writer.TryComplete();
-            }
+            var copyTask = process.StandardOutput.BaseStream.CopyToAsync(output, cancellationToken);
+            var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            await Task.WhenAll(copyTask, errorTask, process.WaitForExitAsync(cancellationToken)).ConfigureAwait(false);
+            var error = await errorTask.ConfigureAwait(false);
+            if (process.ExitCode != 0)
+                throw new AsrWorkerException("AUDIO_DECODE_ERROR", string.IsNullOrWhiteSpace(error) ? "FFmpeg could not decode the media." : error.Trim());
         }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task ReadStderrAsync(Process process, CancellationToken cancellationToken)
-    {
-        try
+        catch
         {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                var line = await process.StandardError.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-                if (line is null) break;
-                WorkerLog?.Invoke(this, line);
-            }
+            TryTerminate(process);
+            throw;
         }
-        catch (OperationCanceledException) { }
+
+        var bytes = output.ToArray();
+        if (bytes.Length == 0) return [];
+        if (bytes.Length % sizeof(float) != 0) throw new AsrWorkerException("AUDIO_DECODE_ERROR", "FFmpeg returned an incomplete float PCM frame.");
+        return MemoryMarshal.Cast<byte, float>(bytes).ToArray();
     }
 
-    private void OnProcessExited(object? sender, EventArgs e)
+    private static string ResolveInput(string path)
     {
-        if (State is AsrWorkerState.Stopping or AsrWorkerState.NotStarted || _disposed) return;
-        SetState(AsrWorkerState.Failed);
-        var exception = new AsrWorkerException("ASR_ERROR", "The Python ASR worker exited unexpectedly.");
-        foreach (var channel in _pending.Values) channel.Writer.TryComplete(exception);
+        if (File.Exists(path)) return Path.GetFullPath(path);
+        if (Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") return uri.AbsoluteUri;
+        throw new FileNotFoundException("ASR input media was not found.", path);
     }
 
-    private async Task StopProcessAsync()
+    private static string ResolveModelPath(string path, string runtimeDirectory)
     {
-        var process = Interlocked.Exchange(ref _process, null);
-        var stdoutReader = Interlocked.Exchange(ref _stdoutReader, null);
-        var stderrReader = Interlocked.Exchange(ref _stderrReader, null);
-        _readerCancellation?.Cancel();
-        if (process is not null)
+        var workerDirectory = AsrRuntimePaths.GetWorkerDirectory(runtimeDirectory);
+        if (Path.IsPathRooted(path)) return Path.GetFullPath(path);
+        return Path.Combine(AsrRuntimePaths.GetModelsDirectory(workerDirectory), Path.GetFileName(path));
+    }
+
+    private void EnsureSessionLoaded()
+    {
+        lock (_lifecycleLock)
         {
-            process.Exited -= OnProcessExited;
-            if (!process.HasExited)
-            {
-                try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false); }
-                catch (TimeoutException) { TryTerminate(process); }
-            }
-            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
-            catch (TimeoutException)
-            {
-                TryTerminate(process);
-                // Kill is asynchronous on Windows. Wait once more so disposing the Process
-                // handle cannot leave a still-terminating Python worker orphaned at app exit.
-                try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
-                catch (TimeoutException) { }
-            }
-            var readers = new[] { stdoutReader, stderrReader }.Where(task => task is not null).Cast<Task>().ToArray();
-            if (readers.Length > 0) try { await Task.WhenAll(readers).WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); } catch (Exception exception) when (exception is OperationCanceledException or TimeoutException or IOException) { }
-            process.Dispose();
+            if (_session == 0) throw new AsrWorkerException("MODEL_NOT_LOADED", "Load the Qwen3 ASR model before starting recognition.");
         }
-        _readerCancellation?.Dispose(); _readerCancellation = null;
     }
 
-    private static void TryTerminate(Process process) { try { if (!process.HasExited) process.Kill(true); } catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception) { } }
-    private static void TrySetBackgroundPriority(Process process)
+    private nint RequireSession()
     {
-        try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
-        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or PlatformNotSupportedException) { }
+        lock (_lifecycleLock)
+        {
+            if (_session == 0) throw new AsrWorkerException("MODEL_NOT_LOADED", "Load the Qwen3 ASR model before starting recognition.");
+            return _session;
+        }
     }
-    private static void ThrowIfError(AsrEvent result) { if (result.Event == "error") throw new AsrWorkerException(result.Code ?? "ASR_ERROR", result.Message ?? "The ASR worker reported an error."); }
-    private void SetState(AsrWorkerState state) { if (State == state) return; State = state; StateChanged?.Invoke(this, state); }
+
+    private static bool HasSpeech(ReadOnlySpan<float> samples)
+    {
+        if (samples.Length == 0) return false;
+        double sum = 0;
+        var peak = 0f;
+        foreach (var sample in samples)
+        {
+            var absolute = Math.Abs(sample);
+            peak = Math.Max(peak, absolute);
+            sum += sample * sample;
+        }
+        var rms = Math.Sqrt(sum / samples.Length);
+        return peak >= 0.01f || rms >= 0.004;
+    }
+
+    private static string? NormalizeLanguage(string? language) =>
+        string.IsNullOrWhiteSpace(language) || string.Equals(language, "auto", StringComparison.OrdinalIgnoreCase) ? null : language.Trim();
+
+    private static long SamplesToMicroseconds(long samples) => samples * 1_000_000 / SampleRate;
+
+    private static int NativeThreadCount => Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+
+    private static void TryTerminate(Process process)
+    {
+        try { if (!process.HasExited) process.Kill(true); }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+    }
+
+    private void SetState(AsrWorkerState state)
+    {
+        if (State == state) return;
+        State = state;
+        StateChanged?.Invoke(this, state);
+    }
+
+    private sealed class LiveStream(string id, string language)
+    {
+        public string Id { get; } = id;
+        public string Language { get; } = language;
+        public SemaphoreSlim Gate { get; } = new(1, 1);
+        public List<float> Samples { get; } = [];
+        public int SampleCount => Samples.Count;
+        public int LastDecodedSampleCount { get; set; }
+
+        public void Append(ReadOnlySpan<byte> pcm16)
+        {
+            for (var index = 0; index < pcm16.Length; index += 2)
+            {
+                var value = (short)(pcm16[index] | pcm16[index + 1] << 8);
+                Samples.Add(value / 32768f);
+            }
+
+            // Keep live inference bounded while preserving enough context for a
+            // rolling Qwen3 decode. The UI displays the latest partial text.
+            const int maximumSamples = SampleRate * 12;
+            if (Samples.Count > maximumSamples)
+            {
+                var remove = Samples.Count - SampleRate * 8;
+                Samples.RemoveRange(0, remove);
+                LastDecodedSampleCount = Math.Max(0, LastDecodedSampleCount - remove);
+            }
+        }
+    }
 }
 
 public sealed class AsrWorkerException(string code, string message) : Exception(message)

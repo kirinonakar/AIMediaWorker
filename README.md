@@ -1,6 +1,6 @@
 # AIMediaWorker
 
-AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 10, libmpv, FFmpeg, and a separately restartable Python Qwen3-ASR worker.
+AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 10, libmpv, FFmpeg, and the prebuilt CrispASR native runtime loaded directly from C#.
 
 It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures still video frames and window/region screen recordings with system audio; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
@@ -13,7 +13,7 @@ Media files can be opened through the picker, command line, folder explorer, pla
 - Visual Studio with the Windows App SDK workload, or the `dotnet` CLI.
 - x64 libmpv with its dependent DLLs.
 - FFmpeg and FFprobe 6 or newer on `PATH`.
-- Python 3.11 or 3.12 for ASR. Python 3.12 is the recommended environment.
+- The prebuilt native CrispASR runtime under `asr-worker/crispasr`.
 - For practical Qwen inference: an NVIDIA CUDA GPU with current drivers and enough VRAM. CPU mode is supported but substantially slower.
 
 The application does not bundle libmpv, FFmpeg, model weights, credentials, or API keys.
@@ -32,7 +32,6 @@ Release validation:
 ```powershell
 dotnet build AIMediaWorker.slnx -c Release
 dotnet test tests/AIMediaWorker.Tests/AIMediaWorker.Tests.csproj -c Release
-python -m unittest discover -s asr-worker/tests -v
 ```
 
 ## libmpv setup
@@ -79,23 +78,31 @@ FFmpeg is used as the audio extractor for ASR and as the H.264/AAC encoder for s
 
 Use the camera button in the playback toolbar or **Playback → Save current frame** to save the currently displayed video frame as PNG. Use **Tools → Screen recording** to record either a selected top-level window or a region chosen by dragging across the virtual desktop. The default Windows playback device is captured through WASAPI loopback and muxed with the video when **Stop and save** is selected. Screen recording requires `ffmpeg.exe` on `PATH`, as described above.
 
-## Python and Qwen setup
+## Native Qwen3 and CrispASR setup
 
-Open **Settings → Automatic speech recognition** and choose **Install**. The installer creates
-`asr-worker\.venv`, installs `asr-worker\requirements.txt`, and downloads both Qwen models to
-`asr-worker\models` beside the executable. It checks every stage and skips components that are
-already complete while reporting package and model-download progress.
+Place the already prepared native CrispASR runtime at
+`asr-worker\crispasr`. The WinUI3 C# process loads `crispasr.dll`
+directly and calls its C ABI for both Qwen3 ASR and forced alignment. No helper
+ASR executable is built or launched.
+
+Open **Settings → Automatic speech recognition** and choose **Install**. The
+installer checks the native runtime and downloads these exact files to
+`asr-worker\models` beside the executable:
+
+- `Qwen3-ASR-1.7B-Q8_0.gguf`
+- `mmproj-Qwen3-ASR-1.7B-bf16.gguf` (kept as the requested companion asset; the CrispASR C ABI does not load it)
+- `qwen3-forced-aligner-0.6b-q8_0.gguf`
 
 In **Settings → Automatic speech recognition**, configure:
 
 - Device (`Auto`, `Cpu`, `Cuda`), precision, VAD, language, and chunk duration.
 
-The Python executable and model storage paths are fixed below the executable's `asr-worker`
-directory.
+The CrispASR runtime and model storage paths are fixed below
+the executable's `asr-worker` directory.
 
-Offline processing extracts bounded chunks, optionally applies Silero VAD, restores global microsecond timestamps, uses forced alignment when configured, and emits subtitles before the complete file finishes. The live path uses a bounded rolling 30-second PCM window because transformer Qwen streaming does not expose the same official low-latency vLLM path.
+Offline processing extracts bounded chunks, applies a native amplitude gate when VAD is enabled, restores global microsecond timestamps, uses the CrispASR forced aligner, and emits subtitles before the complete file finishes. The live path uses a bounded rolling PCM window because the Qwen3 C ABI is consumed through synchronous session calls.
 
-Missing packages, weights, CUDA, FFmpeg, and out-of-memory errors are reported without crashing the WinUI process. Model licenses and access terms remain the user's responsibility.
+Missing runtime files, weights, CUDA, FFmpeg, and out-of-memory errors are reported without crashing the WinUI process. Model licenses and access terms remain the user's responsibility.
 
 ## Subtitle workflow
 
@@ -168,13 +175,13 @@ Per-user data is stored below `%LOCALAPPDATA%\AIMediaWorker`:
 
 Corrupt settings are preserved as `settings.json.corrupt-*` and replaced with safe defaults. The UI supports English, 한국어, and 日本語 resources plus System/Light/Dark themes. A language change applies to newly created views and fully applies after restarting the application.
 
-**Tools → Diagnostics** reports app, Windows, .NET, Windows App SDK, libmpv, FFmpeg, Python, PyTorch, CUDA, GPU/driver, ASR worker/model, RTX VSR capability, and log location.
+**Tools → Diagnostics** reports app, Windows, .NET, Windows App SDK, libmpv, FFmpeg, CrispASR runtime, the in-process ASR engine/model, GPU/driver, RTX VSR capability, and log location.
 
 ## Troubleshooting
 
 - **Playback unavailable**: confirm x64 `mpv-2.dll` and its dependencies are next to the executable. Check Diagnostics for an architecture mismatch.
 - **FFmpeg/FFprobe unavailable**: add both executables to `PATH`, restart the app, and inspect Diagnostics.
-- **MODEL_NOT_FOUND**: verify the local model directory or a model identifier accessible to the Python environment.
+- **MODEL_NOT_FOUND**: verify the three exact GGUF files under `asr-worker\models`.
 - **CUDA_OOM**: use a lower-precision mode, reduce competing GPU load, or select CPU mode.
 - **WebDAV 401/403**: edit the server and re-enter the credential. Only Basic authentication is currently supported by the built-in WebDAV browser.
 - **Remote seek unavailable**: the origin must support byte ranges. mpv can continue sequential playback where the protocol permits.

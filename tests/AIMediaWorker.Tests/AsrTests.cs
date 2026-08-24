@@ -6,19 +6,17 @@ namespace AIMediaWorker.Tests;
 public sealed class AsrTests
 {
     [Fact]
-    public void DefaultPythonCommandUsesNearestProjectVirtualEnvironment()
+    public void CrispAsrRuntimeUsesNearestProjectWorkerDirectory()
     {
         var root = Path.Combine(Path.GetTempPath(), "AIMediaWorker.Tests", Guid.NewGuid().ToString("N"));
-        var worker = Path.Combine(root, "build", "asr-worker", "main.py");
-        var python = Path.Combine(root, "build", "asr-worker", ".venv", "Scripts", "python.exe");
-        Directory.CreateDirectory(Path.GetDirectoryName(python)!);
-        Directory.CreateDirectory(Path.GetDirectoryName(worker)!);
-        File.WriteAllText(python, string.Empty);
+        var runtime = Path.Combine(root, "build", "asr-worker", "crispasr");
+        Directory.CreateDirectory(runtime);
         try
         {
-            Assert.Equal(Path.GetFullPath(python), PythonEnvironment.ResolveExecutable("python", worker));
-            Assert.Equal(Path.GetFullPath(python), PythonEnvironment.ResolveExecutable("C:\\custom\\python.exe", worker));
-            Assert.Equal(Path.Combine(root, "build", "asr-worker", "models"), AsrRuntimePaths.GetModelsDirectory(Path.Combine(root, "build")));
+            Assert.Equal(Path.Combine(root, "build", "asr-worker"), AsrRuntimePaths.GetWorkerDirectory(runtime));
+            Assert.Equal(Path.GetFullPath(runtime), AsrRuntimePaths.GetCrispAsrRuntimeDirectory(runtime));
+            Assert.Equal(Path.Combine(root, "build", "asr-worker", "models"), AsrRuntimePaths.GetModelsDirectory(runtime));
+            Assert.Equal(Path.Combine(root, "build", "asr-worker", "crispasr", "crispasr.dll"), AsrRuntimePaths.CrispAsrDllPath.Replace(AsrRuntimePaths.CrispAsrRuntimeDirectory, runtime, StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
@@ -82,49 +80,49 @@ public sealed class AsrTests
     }
 
     [Fact]
-    public async Task PythonWorkerLifecycleRoundTripsWhenPythonIsAvailable()
+    public async Task CrispAsrRuntimeLifecycleRoundTripsWhenRuntimeIsAvailable()
     {
         var root = FindRepositoryRoot();
-        var script = Path.Combine(root, "asr-worker", "main.py");
-        if (!File.Exists(script) || !File.Exists(PythonEnvironment.ResolveExecutable("python", script))) return;
+        var runtime = Path.Combine(root, "asr-worker", "crispasr");
+        if (!File.Exists(Path.Combine(runtime, "crispasr.dll"))) return;
         await using var client = new AsrWorkerClient();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await client.StartAsync("python", script, cancellation.Token);
+        await client.StartAsync(runtime, cancellation.Token);
         Assert.Equal(AsrWorkerState.Ready, client.State);
         await client.ShutdownAsync(cancellation.Token);
         Assert.Equal(AsrWorkerState.NotStarted, client.State);
     }
 
     [Fact]
-    public async Task PythonWorkerCanRestartWithoutLeavingTheClientFailed()
+    public async Task CrispAsrClientCanRestartWithoutLeavingTheClientFailed()
     {
-        var script = Path.Combine(FindRepositoryRoot(), "asr-worker", "main.py");
-        if (!File.Exists(script) || !File.Exists(PythonEnvironment.ResolveExecutable("python", script))) return;
+        var runtime = Path.Combine(FindRepositoryRoot(), "asr-worker", "crispasr");
+        if (!File.Exists(Path.Combine(runtime, "crispasr.dll"))) return;
         await using var client = new AsrWorkerClient();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await client.StartAsync("python", script, cancellation.Token);
+        await client.StartAsync(runtime, cancellation.Token);
 
         await client.RestartAsync(cancellation.Token);
 
         Assert.Equal(AsrWorkerState.Ready, client.State);
-        var streamId = await client.StartStreamingAsync("auto", cancellation.Token);
-        await client.StopStreamingAsync(streamId, cancellation.Token);
+        var error = await Assert.ThrowsAsync<AsrWorkerException>(() => client.StartStreamingAsync("auto", cancellation.Token));
+        Assert.Equal("MODEL_NOT_LOADED", error.Code);
     }
 
     [Fact]
     [Trait("Category", "Integration")]
-    public async Task PythonWorkerReportsMissingModelWithoutCrashing()
+    public async Task CrispAsrClientReportsMissingModelWithoutCrashing()
     {
-        var script = Path.Combine(FindRepositoryRoot(), "asr-worker", "main.py");
-        if (!File.Exists(script) || !File.Exists(PythonEnvironment.ResolveExecutable("python", script))) return;
+        var runtime = Path.Combine(FindRepositoryRoot(), "asr-worker", "crispasr");
+        if (!File.Exists(Path.Combine(runtime, "crispasr.dll"))) return;
         await using var client = new AsrWorkerClient();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await client.StartAsync("python", script, cancellation.Token);
-        var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "Qwen3-ASR-1.7B");
+        await client.StartAsync(runtime, cancellation.Token);
+        var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), AsrRuntimePaths.AsrModelFileName);
         var progress = new RecordingProgress();
         var error = await Assert.ThrowsAsync<AsrWorkerException>(() => client.LoadModelAsync(missing, null, "cpu", "float32", progress, cancellation.Token));
         Assert.Equal("MODEL_NOT_FOUND", error.Code);
-        Assert.Contains(progress.Events, update => update.Event == "progress" && update.Stage == "download");
+        Assert.Contains(progress.Events, update => update.Event == "progress" && update.Stage == "loading");
         Assert.Equal(AsrWorkerState.Ready, client.State);
     }
 

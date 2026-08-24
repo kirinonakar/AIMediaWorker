@@ -2,28 +2,46 @@ namespace AIMediaWorker.Asr;
 
 public static class AsrRuntimePaths
 {
+    public const string AsrModelFileName = "Qwen3-ASR-1.7B-Q8_0.gguf";
+    public const string MmprojModelFileName = "mmproj-Qwen3-ASR-1.7B-bf16.gguf";
+    public const string AlignerModelFileName = "qwen3-forced-aligner-0.6b-q8_0.gguf";
+
     public static string WorkerDirectory => Path.Combine(AppContext.BaseDirectory, "asr-worker");
-    public static string WorkerScript => Path.Combine(WorkerDirectory, "main.py");
-    public static string VirtualEnvironmentDirectory => Path.Combine(WorkerDirectory, ".venv");
-    public static string PythonExecutable => Path.Combine(VirtualEnvironmentDirectory, "Scripts", "python.exe");
+    public static string CrispAsrRuntimeDirectory => Path.Combine(WorkerDirectory, "crispasr");
     public static string ModelsDirectory => Path.Combine(WorkerDirectory, "models");
-    public static string RequirementsFile => Path.Combine(WorkerDirectory, "requirements.txt");
-    public static string ModelInstallerScript => Path.Combine(WorkerDirectory, "install_models.py");
+    public static string CrispAsrDllPath => Path.Combine(CrispAsrRuntimeDirectory, "crispasr.dll");
+    public static string AsrModelPath => Path.Combine(ModelsDirectory, AsrModelFileName);
+    public static string MmprojModelPath => Path.Combine(ModelsDirectory, MmprojModelFileName);
+    public static string AlignerModelPath => Path.Combine(ModelsDirectory, AlignerModelFileName);
 
     public static string GetWorkerDirectory(string? anchorPath)
     {
         if (string.IsNullOrWhiteSpace(anchorPath)) return WorkerDirectory;
 
         var fullPath = Path.GetFullPath(anchorPath);
-        if (File.Exists(fullPath) || Path.GetFileName(fullPath).Equals("main.py", StringComparison.OrdinalIgnoreCase))
-            return Path.GetDirectoryName(fullPath)!;
-        return Path.GetFileName(Path.TrimEndingDirectorySeparator(fullPath)).Equals("asr-worker", StringComparison.OrdinalIgnoreCase)
-            ? fullPath
-            : Path.Combine(fullPath, "asr-worker");
+        var pathName = Path.GetFileName(Path.TrimEndingDirectorySeparator(fullPath));
+        if (pathName.Equals("asr-worker", StringComparison.OrdinalIgnoreCase)) return fullPath;
+        if (pathName.Equals("crispasr", StringComparison.OrdinalIgnoreCase))
+            return Directory.GetParent(fullPath)?.FullName ?? WorkerDirectory;
+        if (pathName.Equals("models", StringComparison.OrdinalIgnoreCase))
+            return Directory.GetParent(fullPath)?.FullName ?? WorkerDirectory;
+
+        var directory = Directory.Exists(fullPath) ? fullPath : Path.GetDirectoryName(fullPath) ?? fullPath;
+        var directoryName = Path.GetFileName(Path.TrimEndingDirectorySeparator(directory));
+        if (directoryName.Equals("asr-worker", StringComparison.OrdinalIgnoreCase)) return directory;
+        if (directoryName.Equals("crispasr", StringComparison.OrdinalIgnoreCase))
+            return Directory.GetParent(directory)?.FullName ?? WorkerDirectory;
+        if (directoryName.Equals("models", StringComparison.OrdinalIgnoreCase))
+            return Directory.GetParent(directory)?.FullName ?? WorkerDirectory;
+        if (File.Exists(fullPath)) return directory;
+        return Path.Combine(fullPath, "asr-worker");
     }
 
-    public static string GetPythonExecutable(string? anchorPath) =>
-        Path.Combine(GetWorkerDirectory(anchorPath), ".venv", "Scripts", "python.exe");
+    public static string GetCrispAsrRuntimeDirectory(string? anchorPath)
+    {
+        var worker = GetWorkerDirectory(anchorPath);
+        return Path.Combine(worker, "crispasr");
+    }
 
     public static string GetModelsDirectory(string? anchorPath) =>
         Path.Combine(GetWorkerDirectory(anchorPath), "models");
