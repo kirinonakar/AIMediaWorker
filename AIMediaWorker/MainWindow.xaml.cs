@@ -126,11 +126,11 @@ public sealed partial class MainWindow : Window
     private bool _fullscreenCursorHidden;
     private string? _pendingLaunchSource;
     private string[]? _pendingDroppedFiles;
-    private bool _openingLaunchSource;
     private PendingPostOpenWork? _pendingPostOpenWork;
     private CancellationTokenSource? _postOpenCancellation;
     private Task? _historyLoadTask;
     private readonly Task _playbackInitializationTask;
+    private readonly Task? _initialLaunchOpenTask;
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
 
     public MainWindow() : this(null, new AppSettings()) { }
@@ -140,10 +140,15 @@ public sealed partial class MainWindow : Window
     public MainWindow(string? initialSource, AppSettings settings)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        // mpv_create and option setup do not require the video HWND. Start them before
+        // parsing the MainWindow XAML so native cold initialization overlaps WinUI work.
+        _ = _playback.PrepareAsync(_settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
         _browserDirectory = ResolveDefaultBrowserDirectory(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
         _webDavCredentials = new WebDavCredentialStore(_windowsCredentials);
         _webDavClient = new WebDavClient(_windowsCredentials, timeout: TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds));
+        StartupProfiler.Mark("xaml-start");
         InitializeComponent();
+        StartupProfiler.Mark("xaml-ready");
         _playback.StateChanged += OnPlaybackStateChanged;
         _playback.FirstFrameReady += OnFirstFrameReady;
         _playback.PositionChanged += OnPlaybackPositionChanged;
@@ -155,12 +160,15 @@ public sealed partial class MainWindow : Window
         _videoHost.Clicked += OnNativeVideoClicked;
         _videoHost.DoubleClicked += OnNativeVideoDoubleClicked;
         _playbackInitializationTask = InitializePlaybackAsync(_videoHost.Create());
+        _pendingLaunchSource = initialSource;
+        // Start waiting immediately. The continuation does not need the UI thread to issue
+        // loadfile, so it can run while the rest of this constructor and activation finish.
+        _initialLaunchOpenTask = string.IsNullOrWhiteSpace(initialSource) ? null : OpenInitialLaunchSourceAsync();
         ExtendsContentIntoTitleBar = true;
         RightPanelSectionList.SelectionChanged += OnRightPanelSectionChanged;
         RefreshRightPanelSections();
         GenerateSubtitlesMenuItem.IsChecked = _settings.Asr.GenerateSubtitles;
         TranslateMenuItem.IsChecked = _settings.Llm.TranslateSubtitles;
-        _pendingLaunchSource = initialSource;
         var handle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
         _appWindow?.Resize(new SizeInt32(1280, 820));
@@ -184,9 +192,33 @@ public sealed partial class MainWindow : Window
         BindDocument(new SubtitleDocument());
     }
 
+    private async Task OpenInitialLaunchSourceAsync()
+    {
+        try
+        {
+            await _playbackInitializationTask.ConfigureAwait(false);
+            if (!_playback.IsAvailable || _pendingDroppedFiles is { Length: > 0 } ||
+                _pendingLaunchSource is not { Length: > 0 } launchSource) return;
+            _pendingLaunchSource = null;
+            await _playback.OpenAsync(launchSource).ConfigureAwait(false);
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!DispatcherQueue.TryEnqueue(() =>
+                {
+                    try { CompleteMediaOpen(launchSource, null, null, preservePlaylist: false, showInExplorer: true); completion.SetResult(); }
+                    catch (Exception exception) { completion.SetException(exception); }
+                }))
+                throw new InvalidOperationException("Could not complete the initial media open on the UI thread.");
+            await completion.Task.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "startup", "INITIAL_MEDIA_OPEN_ERROR", exception.Message, exception);
+        }
+    }
+
     private async Task InitializePlaybackAsync(nint videoWindowHandle)
     {
-        await _playback.InitializeAsync(videoWindowHandle, _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
+        await _playback.InitializeAsync(videoWindowHandle, _settings.Playback.HardwareDecoder, _settings.Playback.Renderer).ConfigureAwait(false);
         if (!_playback.IsAvailable) return;
         _playback.SetVolume(_settings.Playback.DefaultVolume);
         _playback.SetRate(_settings.Playback.PlaybackRate);
@@ -268,13 +300,7 @@ public sealed partial class MainWindow : Window
                 _pendingLaunchSource = null;
                 await OpenFilesAsPlaylistAsync(droppedFiles);
             }
-            else if (_playback.IsAvailable && _pendingLaunchSource is { Length: > 0 } launchSource)
-            {
-                _pendingLaunchSource = null;
-                _openingLaunchSource = true;
-                try { await OpenMediaAsync(launchSource); }
-                finally { _openingLaunchSource = false; }
-            }
+            if (_initialLaunchOpenTask is not null) await _initialLaunchOpenTask;
             await historyLoad;
             RebuildRecentMenu();
             RefreshFavoritesList();
@@ -436,28 +462,10 @@ public sealed partial class MainWindow : Window
         {
             await _playbackInitializationTask;
             if (!_playback.IsAvailable) throw new InvalidOperationException(L("StatusPlaybackUnavailable"));
-            if (!preservePlaylist)
-            {
-                _playlist.Clear();
-                if (File.Exists(source)) { _playlist.Add(PlaylistEntry.FromLocal(source)); _playlistIndex = 0; }
-                else _playlistIndex = -1;
-            }
             RememberCurrentPosition();
             await _playback.OpenAsync(source, httpHeaders);
             await aiPipelineCancellation;
-            _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
-            _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
-            UpdateWindowTitle(_currentMediaSource.DisplayName);
-            if (_currentMediaSource is WebDavMediaSource webDavSource) SelectWebDavEntry(webDavSource.ServerId, webDavSource.Uri);
-            _ = SaveHistoryAfterOpenAsync(_currentMediaSource);
-            var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
-            _subtitleGenerationCompletedForCurrentMedia = false;
-            _translationCompletedForCurrentMedia = false;
-            StatusText.Text = source;
-            VideoStatusText.Visibility = Visibility.Collapsed;
-            QueuePostOpenWork(source, !preservePlaylist, _openingLaunchSource);
-            UpdatePlaylistButtons();
-            FocusPlaybackSurface();
+            CompleteMediaOpen(source, httpHeaders, mediaSource, preservePlaylist, showInExplorer: false);
         }
         catch (Exception exception)
         {
@@ -465,6 +473,29 @@ public sealed partial class MainWindow : Window
             await AppLog.WriteAsync("error", "playback", "OPEN_MEDIA_ERROR", exception.Message, exception);
             await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
         }
+    }
+
+    private void CompleteMediaOpen(string source, IReadOnlyDictionary<string, string>? httpHeaders, IMediaSource? mediaSource, bool preservePlaylist, bool showInExplorer)
+    {
+        if (!preservePlaylist)
+        {
+            _playlist.Clear();
+            if (File.Exists(source)) { _playlist.Add(PlaylistEntry.FromLocal(source)); _playlistIndex = 0; }
+            else _playlistIndex = -1;
+        }
+        _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
+        _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
+        UpdateWindowTitle(_currentMediaSource.DisplayName);
+        if (_currentMediaSource is WebDavMediaSource webDavSource) SelectWebDavEntry(webDavSource.ServerId, webDavSource.Uri);
+        _ = SaveHistoryAfterOpenAsync(_currentMediaSource);
+        var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
+        _subtitleGenerationCompletedForCurrentMedia = false;
+        _translationCompletedForCurrentMedia = false;
+        StatusText.Text = source;
+        VideoStatusText.Visibility = Visibility.Collapsed;
+        QueuePostOpenWork(source, !preservePlaylist, showInExplorer);
+        UpdatePlaylistButtons();
+        FocusPlaybackSurface();
     }
 
     private async Task SaveHistoryAfterOpenAsync(IMediaSource source)

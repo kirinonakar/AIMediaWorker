@@ -44,13 +44,24 @@ namespace AIMediaWorker
         /// </summary>
         public App()
         {
+            StartupProfiler.Mark("app-constructor");
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
             _ = MpvPlaybackEngine.PreloadAsync();
             var settingsService = SettingsService.CreateDefault();
-            LocalizationService.Apply(settingsService.LoadLanguage());
-            _settingsLoadTask = settingsService.LoadAsync();
+            StartupProfiler.Mark("settings-load-start");
+            // JSON metadata generation/JIT can complete synchronously for this small file.
+            // Force it off the UI thread so App XAML and native DLL loading can overlap it.
+            _settingsLoadTask = Task.Run(() => LoadSettingsAsync(settingsService));
+            StartupProfiler.Mark("app-xaml-start");
             InitializeComponent();
+            StartupProfiler.Mark("app-xaml-end");
             UnhandledException += (_, eventArgs) => _ = AppLog.WriteAsync("critical", "application", "UNHANDLED_EXCEPTION", eventArgs.Message, eventArgs.Exception);
+        }
+
+        private static async Task<AppSettings> LoadSettingsAsync(SettingsService settingsService)
+        {
+            try { return await settingsService.LoadAsync().ConfigureAwait(false); }
+            finally { StartupProfiler.Mark("settings-load-end"); }
         }
 
         private const string SingleInstanceKey = "AIMediaWorker.SingleInstance";
@@ -63,6 +74,7 @@ namespace AIMediaWorker
         [STAThread]
         public static void Main(string[] args)
         {
+            StartupProfiler.Start();
             WinRT.ComWrappersSupport.InitializeComWrappers();
 
             Microsoft.Windows.AppLifecycle.AppInstance primaryInstance;
@@ -110,10 +122,15 @@ namespace AIMediaWorker
                 // continuation, so capture the launch source before loading settings.
                 var launchSource = GetLaunchSource();
                 var settings = await _settingsLoadTask;
+                StartupProfiler.Mark("localization-apply-start");
+                LocalizationService.Apply(settings.General.Language);
+                StartupProfiler.Mark("localization-apply-end");
+                StartupProfiler.Mark("main-window-create-start");
                 var mainWindow = new MainWindow(launchSource, settings);
                 mainWindow.ApplySavedWindowPlacement(settings.Window);
                 _window = mainWindow;
                 _window.Activate();
+                StartupProfiler.Mark("window-activated");
                 Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += (_, args) =>
                 {
                     if (_window is not MainWindow window) return;

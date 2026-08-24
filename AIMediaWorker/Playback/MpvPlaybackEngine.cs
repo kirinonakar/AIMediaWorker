@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using AIMediaWorker.Diagnostics;
 
 namespace AIMediaWorker.Playback;
 
@@ -15,12 +16,14 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private nint _context;
     private CancellationTokenSource? _eventLoopCancellation;
     private Task? _eventLoop;
+    private Task? _preparationTask;
     private Task? _initializationTask;
     private CancellationTokenSource? _trackRefreshCancellation;
     private long _nextCommandId;
     private PlaybackState _state = PlaybackState.Uninitialized;
     private string? _editorSubtitlePath;
     private volatile bool _firstFrameReady;
+    private volatile bool _loadfileIssued;
     private bool _disposed;
 
     public PlaybackState State => _state;
@@ -54,22 +57,45 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
 
     private static void PreloadLibraryCore()
     {
+        StartupProfiler.Mark("mpv-dll-load-start");
         try { _ = MpvInterop.mpv_client_api_version(); }
         catch (Exception exception) when (exception is DllNotFoundException or BadImageFormatException)
         {
             // InitializeAsync reports the actionable playback error through the normal UI path.
         }
+        finally { StartupProfiler.Mark("mpv-dll-load-end"); }
+    }
+
+    /// <summary>
+    /// Creates the libmpv context and applies pre-initialization options. It deliberately
+    /// does not need an HWND, so callers can overlap this work with XAML construction.
+    /// </summary>
+    public Task PrepareAsync(HardwareDecoder hardwareDecoder, string renderer = "gpu-next", CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        lock (_sync)
+        {
+            _preparationTask ??= PrepareCoreAsync(hardwareDecoder, renderer);
+            return _preparationTask.WaitAsync(cancellationToken);
+        }
+    }
+
+    private async Task PrepareCoreAsync(HardwareDecoder hardwareDecoder, string renderer)
+    {
+        await PreloadAsync().ConfigureAwait(false);
+        await Task.Run(() => CreateAndConfigureCore(hardwareDecoder, renderer), CancellationToken.None).ConfigureAwait(false);
     }
 
     public async Task InitializeAsync(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer = "gpu-next", CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_context != 0) return;
+        if (IsAvailable) return;
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            await PreloadAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
-            var initialization = Task.Run(() => InitializeCore(videoWindowHandle, hardwareDecoder, renderer, cancellationToken), cancellationToken);
+            await PrepareAsync(hardwareDecoder, renderer, cancellationToken).ConfigureAwait(false);
+            if (IsAvailable) return;
+            var initialization = Task.Run(() => InitializeCore(videoWindowHandle, cancellationToken), cancellationToken);
             _initializationTask = initialization;
             await initialization.ConfigureAwait(false);
         }
@@ -100,13 +126,17 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         finally { _initializationTask = null; }
     }
 
-    private void InitializeCore(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer, CancellationToken cancellationToken)
+    private void CreateAndConfigureCore(HardwareDecoder hardwareDecoder, string renderer)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        StartupProfiler.Mark("mpv-create-start");
         _context = MpvInterop.mpv_create();
         if (_context == 0) throw new InvalidOperationException("libmpv could not create a playback context.");
-        SetOption("wid", unchecked((ulong)videoWindowHandle).ToString(CultureInfo.InvariantCulture));
+        StartupProfiler.Mark("mpv-create-end");
+        StartupProfiler.Mark("mpv-options-start");
+        SetOption("config", "no");
+        SetOption("load-scripts", "no");
         SetOption("terminal", "no");
+        SetOption("osc", "no");
         SetOption("input-default-bindings", "no");
         SetOption("keep-open", "yes");
         SetOption("idle", "yes");
@@ -142,7 +172,16 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         TrySetOption("osd-align-y", "top");
         TrySetOption("osd-margin-x", "20");
         TrySetOption("osd-margin-y", "16");
+        StartupProfiler.Mark("mpv-options-end");
+    }
+
+    private void InitializeCore(nint videoWindowHandle, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        SetOption("wid", unchecked((ulong)videoWindowHandle).ToString(CultureInfo.InvariantCulture));
+        StartupProfiler.Mark("mpv-initialize-start");
         MpvInterop.EnsureSuccess(MpvInterop.mpv_initialize(_context), "initialize libmpv");
+        StartupProfiler.Mark("mpv-initialize-end");
         LibraryVersion = GetString("mpv-version");
         _eventLoopCancellation = new CancellationTokenSource();
         _eventLoop = Task.Run(() => EventLoop(_eventLoopCancellation.Token), CancellationToken.None);
@@ -176,6 +215,8 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                     if (header.Key.Any(c => c is '\r' or '\n' or ':' or ',') || header.Value.Any(c => c is '\r' or '\n' or ',')) throw new ArgumentException("Invalid HTTP header.", nameof(httpHeaders));
                 SetProperty("http-header-fields", string.Join(',', httpHeaders.Select(header => $"{header.Key}: {header.Value}")));
             }
+            _loadfileIssued = true;
+            StartupProfiler.Mark("loadfile-command");
             MpvInterop.CommandAsync(_context, unchecked((ulong)Interlocked.Increment(ref _nextCommandId)), "loadfile", source, "replace");
             SetProperty("pause", "no");
         }
@@ -319,9 +360,11 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 if (mpvEvent.Error < 0) RaiseError("PLAYBACK_ERROR", MpvInterop.ErrorString(mpvEvent.Error));
                 break;
             case MpvInterop.MpvEventId.StartFile:
+                if (_loadfileIssued) StartupProfiler.Mark("start-file");
                 _firstFrameReady = false;
                 break;
             case MpvInterop.MpvEventId.FileLoaded:
+                StartupProfiler.Mark("file-loaded");
                 SetState(GetBool("pause") ? PlaybackState.Paused : PlaybackState.Playing);
                 break;
             case MpvInterop.MpvEventId.EndFile:
@@ -343,12 +386,20 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 }
                 break;
             case MpvInterop.MpvEventId.VideoReconfig:
+                if (_loadfileIssued) StartupProfiler.Mark("video-reconfig");
+                if (_firstFrameReady) ScheduleTrackRefresh();
+                break;
             case MpvInterop.MpvEventId.AudioReconfig:
+                if (_loadfileIssued) StartupProfiler.Mark("audio-reconfig");
                 if (_firstFrameReady) ScheduleTrackRefresh();
                 break;
             case MpvInterop.MpvEventId.PlaybackRestart:
                 if (_firstFrameReady) break;
                 _firstFrameReady = true;
+                var codec = GetString("video-codec");
+                var decoder = GetString("hwdec-current") ?? "software";
+                DecoderDescription = codec is null ? decoder : $"{codec} / {decoder}";
+                StartupProfiler.CompleteAtFirstFrame(DecoderDescription);
                 FirstFrameReady?.Invoke(this, EventArgs.Empty);
                 ScheduleTrackRefresh();
                 break;

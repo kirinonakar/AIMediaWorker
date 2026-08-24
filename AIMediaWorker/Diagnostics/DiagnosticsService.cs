@@ -33,6 +33,7 @@ public sealed class DiagnosticsService
             ["Aligner model"] = alignerModel ?? "not configured",
             ["GPU"] = graphics.Adapters.Count == 0 ? "not detected" : string.Join("; ", graphics.Adapters.Select(adapter => $"{adapter.Name} ({adapter.DriverVersion ?? "unknown driver"})")),
             ["RTX Video Super Resolution"] = graphics.Status,
+            ["Cold startup to first frame"] = StartupProfiler.LatestSummary ?? "not measured in this process",
             ["Log directory"] = AppLog.DirectoryPath
         };
         var torch = await GetPythonRuntimeAsync(pythonExecutable, cancellationToken).ConfigureAwait(false);
