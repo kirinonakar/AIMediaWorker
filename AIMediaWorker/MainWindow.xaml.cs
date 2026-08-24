@@ -225,7 +225,7 @@ public sealed partial class MainWindow : Window
         _rightPanelVisible = layout.IsRightPanelVisible;
         _bottomPanelVisible = layout.IsBottomPanelVisible;
         _rightPanelWidth = Math.Clamp(layout.RightPanelWidth, 240, 1200);
-        _bottomPanelHeight = Math.Clamp(layout.BottomPanelHeight, 100, 800);
+        _bottomPanelHeight = Math.Clamp(layout.BottomPanelHeight, WindowLayoutSettings.MinimumBottomPanelHeight, 800);
         ApplyPanelVisibility();
         if (_appWindow is null || !layout.HasPlacement) return;
         var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
@@ -273,7 +273,7 @@ public sealed partial class MainWindow : Window
             _rightPanelVisible = _settings.Window.IsRightPanelVisible;
             _bottomPanelVisible = _settings.Window.IsBottomPanelVisible;
             _rightPanelWidth = Math.Clamp(_settings.Window.RightPanelWidth, 240, 1200);
-            _bottomPanelHeight = Math.Clamp(_settings.Window.BottomPanelHeight, 100, 800);
+            _bottomPanelHeight = Math.Clamp(_settings.Window.BottomPanelHeight, WindowLayoutSettings.MinimumBottomPanelHeight, 800);
             ClampPanelSizesToAvailable();
             ApplyPanelVisibility();
             var recentLoad = _historyService.LoadRecentAsync();
@@ -1061,8 +1061,8 @@ public sealed partial class MainWindow : Window
                         TextWrapping = TextWrapping.Wrap,
                         TextTrimming = TextTrimming.CharacterEllipsis,
                         MaxLines = 2,
-                        FontSize = 11,
-                        LineHeight = 14,
+                        FontSize = 13,
+                        LineHeight = 17,
                         Foreground = ThemeBrush("TextOnAccentFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255))
                     },
                     Tag = cue
@@ -1525,7 +1525,7 @@ public sealed partial class MainWindow : Window
         if (MainContentGrid.ActualWidth > 0)
             _rightPanelWidth = Math.Min(_rightPanelWidth, Math.Max(240, MainContentGrid.ActualWidth - 326));
         if (RootGrid.ActualHeight > 0)
-            _bottomPanelHeight = Math.Min(_bottomPanelHeight, Math.Max(100, RootGrid.ActualHeight - 320));
+            _bottomPanelHeight = Math.Min(_bottomPanelHeight, Math.Max(WindowLayoutSettings.MinimumBottomPanelHeight, RootGrid.ActualHeight - 320));
     }
 
     private void OnRightPanelSplitterDragDelta(object sender, DragDeltaEventArgs e)
@@ -1540,8 +1540,8 @@ public sealed partial class MainWindow : Window
     private void OnBottomPanelSplitterDragDelta(object sender, DragDeltaEventArgs e)
     {
         if (_isFullscreen || !_bottomPanelVisible) return;
-        var maximum = Math.Max(100, RootGrid.ActualHeight - 320);
-        _bottomPanelHeight = Math.Clamp(_bottomPanelHeight - e.VerticalChange, 100, Math.Min(800, maximum));
+        var maximum = Math.Max(WindowLayoutSettings.MinimumBottomPanelHeight, RootGrid.ActualHeight - 320);
+        _bottomPanelHeight = Math.Clamp(_bottomPanelHeight - e.VerticalChange, WindowLayoutSettings.MinimumBottomPanelHeight, Math.Min(800, maximum));
         BottomPanelRow.Height = new GridLength(_bottomPanelHeight);
         if (_initialized) _settings.Window.BottomPanelHeight = _bottomPanelHeight;
     }

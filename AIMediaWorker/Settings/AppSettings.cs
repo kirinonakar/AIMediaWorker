@@ -139,6 +139,8 @@ public sealed class GeneralSettings
 
 public sealed class WindowLayoutSettings
 {
+    public const double MinimumBottomPanelHeight = 64;
+
     public bool HasPlacement { get; set; }
     public int X { get; set; }
     public int Y { get; set; }

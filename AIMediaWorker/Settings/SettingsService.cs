@@ -118,7 +118,7 @@ public sealed class SettingsService
         settings.Window.Width = Math.Clamp(settings.Window.Width, 640, 7680);
         settings.Window.Height = Math.Clamp(settings.Window.Height, 420, 4320);
         settings.Window.RightPanelWidth = Math.Clamp(settings.Window.RightPanelWidth, 240, 1200);
-        settings.Window.BottomPanelHeight = Math.Clamp(settings.Window.BottomPanelHeight, 100, 800);
+        settings.Window.BottomPanelHeight = Math.Clamp(settings.Window.BottomPanelHeight, WindowLayoutSettings.MinimumBottomPanelHeight, 800);
         settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
         return settings;
     }
