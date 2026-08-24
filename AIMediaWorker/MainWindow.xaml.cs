@@ -22,6 +22,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Rectangle = Microsoft.UI.Xaml.Shapes.Rectangle;
 using Line = Microsoft.UI.Xaml.Shapes.Line;
 using Windows.Graphics;
@@ -78,6 +79,7 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _dialogLock = new(1, 1);
     private CancellationTokenSource? _waveformCancellation;
     private WaveformData _waveform = WaveformData.Empty;
+    private string? _waveformSource;
     private Rectangle? _waveformPlayhead;
     private readonly WaveformGenerator _waveformGenerator = new();
     private readonly WaveformCache _waveformCache = new(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIMediaWorker", "Waveforms"));
@@ -138,6 +140,7 @@ public sealed partial class MainWindow : Window
         Closed += OnWindowClosed;
         RootGrid.ActualThemeChanged += OnRootActualThemeChanged;
         ApplyTheme(_settings.General.Theme);
+        RootGrid.AddHandler(UIElement.PreviewKeyDownEvent, new KeyEventHandler(OnRootPreviewKeyDown), true);
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnRootKeyDown), true);
         PositionSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPositionSliderPointerPressed), true);
         PositionSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
@@ -225,8 +228,6 @@ public sealed partial class MainWindow : Window
             SubtitleVisibilityMenuItem.IsChecked = _settings.Playback.ShowSubtitles;
             RateCombo.ItemsSource = new[] { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0 };
             RateCombo.SelectedItem = RateCombo.Items.Cast<double>().OrderBy(value => Math.Abs(value - _settings.Playback.PlaybackRate)).First();
-            SeekBackButton.Content = $"−{_settings.Playback.SeekIntervalSeconds:0.#}s";
-            SeekForwardButton.Content = $"+{_settings.Playback.SeekIntervalSeconds:0.#}s";
             UpdateShortcutHints();
             UpdatePlaylistButtons();
             StatusText.Text = _playback.IsAvailable ? L("StatusLibmpvReady") : L("StatusPlaybackUnavailable");
@@ -244,7 +245,7 @@ public sealed partial class MainWindow : Window
             else _ = RefreshBrowserAsync(_browserDirectory);
             await historyLoad;
             RebuildRecentMenu();
-            RebuildFavoritesMenu();
+            RefreshFavoritesList();
             RefreshWebDavServerList();
             ApplyTheme(_settings.General.Theme);
         }
@@ -370,7 +371,7 @@ public sealed partial class MainWindow : Window
             _translationCompletedForCurrentMedia = false;
             StatusText.Text = source;
             VideoStatusText.Visibility = Visibility.Collapsed;
-            QueuePostOpenWork(source, httpHeaders is null || httpHeaders.Count == 0, !preservePlaylist);
+            QueuePostOpenWork(source, !preservePlaylist);
             UpdatePlaylistButtons();
         }
         catch (Exception exception)
@@ -392,14 +393,16 @@ public sealed partial class MainWindow : Window
         catch (Exception exception) { await AppLog.WriteAsync("error", "history", "HISTORY_SAVE_AFTER_OPEN_ERROR", exception.Message, exception); }
     }
 
-    private void QueuePostOpenWork(string source, bool generateWaveform, bool populateSiblingPlaylist)
+    private void QueuePostOpenWork(string source, bool populateSiblingPlaylist)
     {
         _waveformCancellation?.Cancel();
+        _waveformSource = null;
+        _waveform = WaveformData.Empty;
+        DrawWaveform();
         _postOpenCancellation?.Cancel();
         _postOpenCancellation?.Dispose();
         _postOpenCancellation = new CancellationTokenSource();
-        _pendingPostOpenWork = new PendingPostOpenWork(source, generateWaveform, populateSiblingPlaylist, _postOpenCancellation.Token);
-        if (!generateWaveform) { _waveform = WaveformData.Empty; DrawWaveform(); }
+        _pendingPostOpenWork = new PendingPostOpenWork(source, populateSiblingPlaylist, _postOpenCancellation.Token);
         if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) StartPostOpenWorkIfReady();
     }
 
@@ -425,7 +428,6 @@ public sealed partial class MainWindow : Window
                 tasks.Add(RefreshBrowserForOpenedFileAsync(fullPath));
                 if (work.PopulateSiblingPlaylist) tasks.Add(PopulateSiblingPlaylistAsync(fullPath));
             }
-            if (work.GenerateWaveform) tasks.Add(GenerateWaveformAsync(work.Source));
             await Task.WhenAll(tasks);
         }
         catch (OperationCanceledException) { }
@@ -505,7 +507,11 @@ public sealed partial class MainWindow : Window
     private void OnFrameStepClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.FrameStep());
     private void OnSeekBackClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(_playback.Position - TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds), () => _playback.SeekRelative(TimeSpan.FromSeconds(-_settings.Playback.SeekIntervalSeconds)));
     private void OnSeekForwardClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(_playback.Position + TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds), () => _playback.SeekRelative(TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds)));
-    private void OnMuteClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.SetMute(!_playback.IsMuted));
+    private void OnMuteClick(object sender, RoutedEventArgs e)
+    {
+        TryPlayback(() => _playback.SetMute(!_playback.IsMuted));
+        MuteIcon.Source = PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
+    }
     private void OnToggleSubtitleVisibilityClick(object sender, RoutedEventArgs e)
     {
         var visible = SubtitleVisibilityMenuItem.IsChecked;
@@ -517,7 +523,7 @@ public sealed partial class MainWindow : Window
     private void OnRepeatClick(object sender, RoutedEventArgs e)
     {
         _repeatMode = _repeatMode switch { RepeatMode.Off => RepeatMode.One, RepeatMode.One => RepeatMode.All, _ => RepeatMode.Off };
-        RepeatButton.Content = _repeatMode switch { RepeatMode.One => "↻1", RepeatMode.All => "↻∞", _ => "↪" };
+        RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.All => "repeat-all", _ => "repeat" });
         ToolTipService.SetToolTip(RepeatButton, _repeatMode switch { RepeatMode.One => "Repeat current media", RepeatMode.All => "Repeat playlist", _ => "Repeat off" });
         UpdatePlaylistButtons();
     }
@@ -902,7 +908,21 @@ public sealed partial class MainWindow : Window
             if (!token.IsCancellationRequested) { DrawWaveform(); StatusText.Text = L("StatusWaveformReady"); }
         }
         catch (OperationCanceledException) { }
-        catch (Exception exception) { if (!token.IsCancellationRequested) StatusText.Text = F("StatusWaveformUnavailable", exception.Message); }
+        catch (Exception exception)
+        {
+            if (!token.IsCancellationRequested)
+            {
+                if (string.Equals(_waveformSource, source, StringComparison.OrdinalIgnoreCase)) _waveformSource = null;
+                StatusText.Text = F("StatusWaveformUnavailable", exception.Message);
+            }
+        }
+    }
+
+    private void StartWaveformGenerationForSubtitleGeneration(string source)
+    {
+        if (_currentHttpHeaders is { Count: > 0 } || string.Equals(_waveformSource, source, StringComparison.OrdinalIgnoreCase)) return;
+        _waveformSource = source;
+        _ = GenerateWaveformAsync(source);
     }
 
     private void DrawWaveform()
@@ -968,7 +988,7 @@ public sealed partial class MainWindow : Window
 
     private void OnPlaybackStateChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
-        PlayPauseButton.Content = _playback.State == PlaybackState.Playing ? "⏸" : "▶"; StatusText.Text = _playback.State.ToString();
+        PlayPauseIcon.Source = PlaybackIconSource(_playback.State == PlaybackState.Playing ? "pause" : "play"); StatusText.Text = _playback.State.ToString();
         if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) StartPostOpenWorkIfReady();
         if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null) StartCheckedAiPipeline();
     });
@@ -1014,8 +1034,27 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() => StatusText.Text = $"{e.Code}: {e.Message}");
     }
 
+    private void OnRootPreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Space || e.OriginalSource is TextBox or PasswordBox) return;
+        var ctrl = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+        var shift = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+        var alt = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+        if (!_settings.General.Shortcuts.TryGetValue(ShortcutActions.PlayPause, out var gesture) || !ShortcutGesture.Matches(gesture, e.Key.ToString(), ctrl, shift, alt)) return;
+        e.Handled = true;
+        FocusPlaybackSurface();
+        OnPlayPauseClick(this, new RoutedEventArgs());
+    }
+
+    private void FocusPlaybackSurface()
+    {
+        VideoFocusTarget.Focus(FocusState.Programmatic);
+        DispatcherQueue.TryEnqueue(() => VideoFocusTarget.Focus(FocusState.Programmatic));
+    }
+
     private void OnRootKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (e.Key == Windows.System.VirtualKey.Space && e.Handled) return;
         var ctrl = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         var shift = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         var alt = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
@@ -1090,8 +1129,8 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(BeginningButton, "Go to beginning (Home)");
         ToolTipService.SetToolTip(PreviousButton, $"Previous media ({Shortcut(ShortcutActions.PreviousMedia)})");
         ToolTipService.SetToolTip(NextButton, $"Next media ({Shortcut(ShortcutActions.NextMedia)})");
-        ToolTipService.SetToolTip(SeekBackButton, $"Seek backward ({Shortcut(ShortcutActions.SeekBackward)})");
-        ToolTipService.SetToolTip(SeekForwardButton, $"Seek forward ({Shortcut(ShortcutActions.SeekForward)})");
+        ToolTipService.SetToolTip(SeekBackButton, $"Seek backward {_settings.Playback.SeekIntervalSeconds:0.#}s ({Shortcut(ShortcutActions.SeekBackward)})");
+        ToolTipService.SetToolTip(SeekForwardButton, $"Seek forward {_settings.Playback.SeekIntervalSeconds:0.#}s ({Shortcut(ShortcutActions.SeekForward)})");
         ToolTipService.SetToolTip(MuteButton, "Mute (M)");
         ToolTipService.SetToolTip(VolumeSlider, "Volume (↑ / ↓)");
         ToolTipService.SetToolTip(PositionSlider, $"Seek (Home / End) · Play from beginning ({Shortcut(ShortcutActions.PlayFromBeginning)})");
@@ -1418,6 +1457,7 @@ public sealed partial class MainWindow : Window
             StatusText.Text = L("AutomaticSubtitlesOpenMedia");
             return;
         }
+        if (generate) StartWaveformGenerationForSubtitleGeneration(source);
         if (generate && string.IsNullOrWhiteSpace(_settings.Asr.ModelPath))
         {
             StatusText.Text = L("AsrModelMissingMessage");
@@ -1483,7 +1523,7 @@ public sealed partial class MainWindow : Window
         BindDocument(document);
         _rightPanelVisible = true;
         ApplyPanelVisibility();
-        RightPanelTabs.SelectedIndex = 3;
+        RightPanelTabs.SelectedItem = SubtitlesTab;
         StatusText.Text = F("StatusGeneratingSubtitles", 0d);
         EnableGeneratedSubtitleOverlay();
         var translationQueue = Channel.CreateUnbounded<SubtitleCue>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
@@ -1754,14 +1794,6 @@ public sealed partial class MainWindow : Window
     {
         return new LlmProviderFactory(new WindowsCredentialService()).Create(_settings.Llm.Provider);
     }
-    private void OnWebDavClick(object sender, RoutedEventArgs e)
-    {
-        _rightPanelVisible = true;
-        ApplyPanelVisibility();
-        RightPanelTabs.SelectedIndex = 2;
-        WebDavServerList.Focus(FocusState.Programmatic);
-    }
-
     private async void OnAddWebDavServerClick(object sender, RoutedEventArgs e)
     {
         try
@@ -1802,8 +1834,11 @@ public sealed partial class MainWindow : Window
             _webDavCredentials.Save(server.Id, new WebDavConnectionCredential(WebDavConnectionCredential.NormalizeAddress(parsedAddress), (int)port.Value, username.Text.Trim(), password.Password));
             _settings.Network.WebDavServers.Add(server);
             await SettingsService.CreateDefault().SaveAsync(_settings);
+            _rightPanelVisible = true;
+            ApplyPanelVisibility();
+            RightPanelTabs.SelectedItem = WebDavTab;
             RefreshWebDavServerList(server);
-            WebDavConnectionStatusText.Text = F("WebDavServerAddedMessage", server.Name);
+            await ConnectWebDavServerAsync(server);
         }
         catch (Exception exception)
         {
@@ -1939,8 +1974,7 @@ public sealed partial class MainWindow : Window
                 _settings = settings;
                 LocalizationService.Apply(settings.General.Language);
                 ApplyTheme(settings.General.Theme);
-                SeekBackButton.Content = $"−{settings.Playback.SeekIntervalSeconds:0.#}s";
-                SeekForwardButton.Content = $"+{settings.Playback.SeekIntervalSeconds:0.#}s";
+                RefreshFavoritesList();
                 UpdateShortcutHints();
                 if (!_playback.IsAvailable) return;
                 TryPlayback(() =>
@@ -1970,6 +2004,11 @@ public sealed partial class MainWindow : Window
         ApplyTitleBarTheme(RootGrid.ActualTheme);
     }
 
+    private static SvgImageSource PlaybackIconSource(string name) => new()
+    {
+        UriSource = new Uri($"ms-appx:///Assets/Playback/{name}.svg")
+    };
+
     private void OnRootActualThemeChanged(FrameworkElement sender, object args) => ApplyTitleBarTheme(sender.ActualTheme);
 
     private void ApplyTitleBarTheme(ElementTheme theme)
@@ -1993,36 +2032,6 @@ public sealed partial class MainWindow : Window
         titleBar.ButtonPressedForegroundColor = foreground;
         titleBar.ButtonInactiveBackgroundColor = background;
         titleBar.ButtonInactiveForegroundColor = inactiveForeground;
-    }
-
-    private void OnAddFavoriteClick(object sender, RoutedEventArgs e)
-    {
-        if (_currentMediaSource is null) return;
-        _historyService.AddFavorite(_currentMediaSource);
-        _ = _historyService.SaveAsync();
-        RebuildFavoritesMenu();
-        StatusText.Text = L("StatusAddedFavorite");
-    }
-
-    private async void OnAddFavoriteFolderClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.VideosLibrary };
-            picker.FileTypeFilter.Add("*");
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var folder = await picker.PickSingleFolderAsync();
-            if (folder is null) return;
-            _historyService.AddFavorite(new LocalMediaSource(folder.Path), true);
-            await _historyService.SaveAsync();
-            RebuildFavoritesMenu();
-            StatusText.Text = F("StatusAddedFavoriteFolder", folder.Name);
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "file-picker", "FOLDER_PICKER_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("FolderUnavailableTitle"), exception.Message);
-        }
     }
 
     private async void OnChooseBrowserFolderClick(object sender, RoutedEventArgs e)
@@ -2094,6 +2103,17 @@ public sealed partial class MainWindow : Window
         await OpenMediaAsync(entry.Path, preservePlaylist: true);
     }
 
+    private void OnBrowserEntryRightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: BrowserEntry entry }) FolderEntryList.SelectedItem = entry;
+    }
+
+    private async void OnAddBrowserFavoriteClick(object sender, RoutedEventArgs e)
+    {
+        if (FolderEntryList.SelectedItem is not BrowserEntry entry) return;
+        await AddFavoriteAsync(new LocalMediaSource(entry.Path), entry.IsDirectory);
+    }
+
     private async void OnPlaylistDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (PlaylistList.SelectedItem is not PlaylistEntry entry) return;
@@ -2121,28 +2141,64 @@ public sealed partial class MainWindow : Window
         await OpenMediaAsync(entry.Uri.AbsoluteUri, headers, new WebDavMediaSource(server.Id, entry.Uri, entry.Name));
     }
 
+    private void OnWebDavEntryRightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WebDavEntry entry }) WebDavPanelEntryList.SelectedItem = entry;
+    }
+
+    private async void OnAddWebDavFavoriteClick(object sender, RoutedEventArgs e)
+    {
+        if (WebDavPanelEntryList.SelectedItem is not WebDavEntry entry || _webDavPanelServerId is not { } serverId) return;
+        await AddFavoriteAsync(new WebDavMediaSource(serverId, entry.Uri, entry.Name), entry.IsCollection);
+    }
+
     private static bool IsPlayableMediaPath(string path) => Path.GetExtension(path).ToLowerInvariant() is ".mp4" or ".mkv" or ".webm" or ".avi" or ".mov" or ".wmv" or ".m4v" or ".ts" or ".m2ts" or ".mp3" or ".flac" or ".wav" or ".m4a" or ".aac" or ".ogg" or ".opus";
 
-    private void RebuildFavoritesMenu()
+    private async Task AddFavoriteAsync(IMediaSource source, bool isFolder)
     {
-        FavoritesMenu.Items.Clear();
-        foreach (var favorite in _historyService.Favorites.OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase))
-        {
-            var group = new MenuFlyoutSubItem { Text = favorite.DisplayName, Tag = favorite };
-            var open = new MenuFlyoutItem { Text = favorite.IsFolder ? L("BrowseButton") : L("OpenButton") };
-            open.Click += async (_, _) => await OpenFavoriteAsync(favorite);
-            var remove = new MenuFlyoutItem { Text = L("RemoveFavoriteButton") };
-            remove.Click += async (_, _) =>
-            {
-                _historyService.RemoveFavorite(favorite.Location);
-                await _historyService.SaveAsync();
-                RebuildFavoritesMenu();
-            };
-            group.Items.Add(open);
-            group.Items.Add(remove);
-            FavoritesMenu.Items.Add(group);
-        }
-        if (FavoritesMenu.Items.Count == 0) FavoritesMenu.Items.Add(new MenuFlyoutItem { Text = L("NoFavoritesText"), IsEnabled = false });
+        _historyService.AddFavorite(source, isFolder);
+        await _historyService.SaveAsync();
+        RefreshFavoritesList();
+        StatusText.Text = isFolder ? F("StatusAddedFavoriteFolder", source.DisplayName) : L("StatusAddedFavorite");
+    }
+
+    private void RefreshFavoritesList()
+    {
+        var entries = _historyService.Favorites
+            .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .Select(item => new FavoriteListEntry(item))
+            .ToArray();
+        FavoriteList.ItemsSource = entries;
+        FavoritesEmptyText.Visibility = entries.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateFavoriteCommands();
+    }
+
+    private void OnFavoriteSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateFavoriteCommands();
+
+    private void UpdateFavoriteCommands()
+    {
+        var hasSelection = FavoriteList.SelectedItems.Count > 0;
+        OpenFavoriteButton.IsEnabled = hasSelection;
+        RemoveSelectedFavoritesButton.IsEnabled = hasSelection;
+    }
+
+    private async void OnOpenFavoriteClick(object sender, RoutedEventArgs e)
+    {
+        if (FavoriteList.SelectedItem is FavoriteListEntry entry) await OpenFavoriteAsync(entry.Item);
+    }
+
+    private async void OnFavoriteDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (FavoriteList.SelectedItem is FavoriteListEntry entry) await OpenFavoriteAsync(entry.Item);
+    }
+
+    private async void OnRemoveSelectedFavoritesClick(object sender, RoutedEventArgs e)
+    {
+        var selected = FavoriteList.SelectedItems.OfType<FavoriteListEntry>().ToArray();
+        if (selected.Length == 0) return;
+        foreach (var entry in selected) _historyService.RemoveFavorite(entry.Item.Location);
+        await _historyService.SaveAsync();
+        RefreshFavoritesList();
     }
 
     private async Task OpenFavoriteAsync(FavoriteItem favorite)
@@ -2155,29 +2211,18 @@ public sealed partial class MainWindow : Window
                 if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("FavoriteServerMissingMessage")); return; }
                 _rightPanelVisible = true;
                 ApplyPanelVisibility();
-                RightPanelTabs.SelectedIndex = 2;
+                RightPanelTabs.SelectedItem = WebDavTab;
                 await ConnectWebDavServerAsync(server, new Uri(favorite.Location));
                 return;
             }
-            await BrowseLocalFavoriteFolderAsync(favorite);
+            if (!Directory.Exists(favorite.Location)) { await ShowMessageAsync(L("FolderUnavailableTitle"), favorite.Location); return; }
+            _rightPanelVisible = true;
+            ApplyPanelVisibility();
+            RightPanelTabs.SelectedItem = ExplorerTab;
+            await RefreshBrowserAsync(favorite.Location);
             return;
         }
         await OpenRecentAsync(new RecentMediaItem(favorite.SourceType, favorite.DisplayName, favorite.Location, favorite.Added, 0));
-    }
-
-    private async Task BrowseLocalFavoriteFolderAsync(FavoriteItem favorite)
-    {
-        if (!Directory.Exists(favorite.Location)) { await ShowMessageAsync(L("FolderUnavailableTitle"), favorite.Location); return; }
-        string[] files;
-        try
-        {
-            files = await Task.Run(() => Directory.EnumerateFiles(favorite.Location).OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase).Take(1000).ToArray());
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { await ShowMessageAsync(L("FolderUnavailableTitle"), exception.Message); return; }
-        if (files.Length == 0) { await ShowMessageAsync(L("FavoriteFolderTitle"), L("FavoriteFolderEmptyMessage")); return; }
-        var list = new ListView { ItemsSource = files, SelectionMode = ListViewSelectionMode.Single, MinWidth = 520, MinHeight = 360 };
-        var dialog = CreateDialog(favorite.DisplayName, list, L("OpenButton"));
-        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary && list.SelectedItem is string selected) await OpenMediaAsync(selected);
     }
 
     private void RebuildRecentMenu()
@@ -2397,7 +2442,15 @@ public sealed partial class MainWindow : Window
         public string DisplayName => System.IO.Path.GetFileName(Path);
     }
 
-    private sealed record PendingPostOpenWork(string Source, bool GenerateWaveform, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
+    private sealed record FavoriteListEntry(FavoriteItem Item)
+    {
+        public string DisplayName => Item.DisplayName;
+        public string Location => Item.Location;
+        public string SourceIconGlyph => Item.SourceType == MediaSourceKind.WebDav ? "\uE774" : string.Empty;
+        public string IconGlyph => Item.IsFolder ? "\uE8B7" : "\uE8A5";
+    }
+
+    private sealed record PendingPostOpenWork(string Source, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
     private sealed record OverlayCueSnapshot(Guid Id, long StartMicroseconds, long EndMicroseconds, string Text, string? Style, string? Speaker);
     private static OverlayCueSnapshot? FindActiveOverlayCue(IEnumerable<OverlayCueSnapshot> cues, long positionMicroseconds) => cues.LastOrDefault(cue => cue.StartMicroseconds <= positionMicroseconds && positionMicroseconds < cue.EndMicroseconds);
 

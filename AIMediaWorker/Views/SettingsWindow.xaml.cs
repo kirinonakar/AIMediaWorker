@@ -26,6 +26,16 @@ public sealed partial class SettingsWindow : Window
     public Array Precisions { get; } = Enum.GetValues<AsrPrecision>();
     public Array ThinkingLevels { get; } = Enum.GetValues<ThinkingLevel>();
     public string[] Providers { get; } = ["Unsloth Desktop", "Google", "OllamaCloud", "OpenCodeGo", "OpenCodeZen"];
+    public IReadOnlyList<string> SettingsSections { get; } =
+    [
+        L("GeneralExpander.Header"),
+        L("PlaybackExpander.Header"),
+        L("SubtitleExpander.Header"),
+        L("AsrExpander.Header"),
+        L("NetworkExpander.Header"),
+        L("CaptureExpander.Header"),
+        L("LlmExpander.Header")
+    ];
     public event EventHandler<AppSettings>? SettingsSaved;
 
     public SettingsWindow(Window owner)
@@ -35,12 +45,21 @@ public sealed partial class SettingsWindow : Window
         WindowOwner.Attach(this, owner);
         var handle = WindowNative.GetWindowHandle(this);
         var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
-        appWindow?.Resize(new SizeInt32(960, 900));
+        appWindow?.Resize(new SizeInt32(1120, 940));
         if (appWindow?.Presenter is OverlappedPresenter presenter)
         {
             presenter.IsResizable = false;
             presenter.IsMaximizable = false;
         }
+        SettingsSectionList.SelectionChanged += OnSettingsSectionChanged;
+        SettingsSectionList.SelectedIndex = 0;
+    }
+
+    private void OnSettingsSectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var selectedIndex = Math.Clamp(SettingsSectionList.SelectedIndex, 0, 6);
+        FrameworkElement[] sections = [GeneralSection, PlaybackSection, SubtitleSection, AsrSection, NetworkSection, CaptureSection, LlmSection];
+        for (var index = 0; index < sections.Length; index++) sections[index].Visibility = index == selectedIndex ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)

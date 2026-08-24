@@ -14,11 +14,12 @@
             <Style x:Key="PlaybackControlButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
                 <Setter Property="Width" Value="44" />
                 <Setter Property="MinWidth" Value="44" />
-                <Setter Property="Height" Value="32" />
+                <Setter Property="Height" Value="38" />
                 <Setter Property="Padding" Value="0" />
                 <Setter Property="Background" Value="Transparent" />
-                <Setter Property="BorderBrush" Value="Transparent" />
-                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="8" />
                 <Setter Property="HorizontalContentAlignment" Value="Center" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
             </Style>
@@ -31,9 +32,6 @@
             <MenuBarItem x:Uid="FileMenu" Title="File">
                 <MenuFlyoutItem x:Uid="OpenMedia" Text="Open media…" Click="OnOpenMediaClick" /><MenuFlyoutItem x:Uid="OpenUrl" Text="Open URL…" Click="OnOpenUrlClick" />
                 <MenuFlyoutSubItem x:Uid="RecentMedia" x:Name="RecentMenu" Text="Recent media" />
-                <MenuFlyoutSubItem x:Uid="Favorites" x:Name="FavoritesMenu" Text="Favorites" />
-                <MenuFlyoutItem x:Uid="AddFavorite" Text="Add current media to favorites" Click="OnAddFavoriteClick" />
-                <MenuFlyoutItem x:Uid="AddFavoriteFolder" Text="Add local folder to favorites…" Click="OnAddFavoriteFolderClick" />
                 <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="LoadSubtitle" Text="Load subtitle…" Click="OnLoadSubtitleClick" />
                 <MenuFlyoutItem x:Uid="SaveSubtitle" x:Name="SaveSubtitleMenuItem" Text="Save subtitle" Click="OnSaveSubtitleClick" /><MenuFlyoutItem x:Uid="SaveAs" x:Name="SaveSubtitleAsMenuItem" Text="Save subtitle as…" Click="OnSaveSubtitleAsClick" />
                 <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="Exit" x:Name="ExitMenuItem" Text="Exit" Click="OnExitClick" />
@@ -65,7 +63,7 @@
                 <ToggleMenuFlyoutItem x:Uid="ShowBottomPanel" x:Name="ShowBottomPanelMenuItem" Text="Show timeline panel" IsChecked="True" Click="OnToggleBottomPanelClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="ToolsMenu" Title="Tools">
-                <MenuFlyoutItem x:Uid="WebDavBrowser" Text="WebDAV" Click="OnWebDavClick" /><MenuFlyoutItem x:Uid="CameraCaptions" Text="Camera and live captions…" Click="OnCameraClick" />
+                <MenuFlyoutItem x:Uid="AddWebDavServerMenu" Text="Add WebDAV server…" Click="OnAddWebDavServerClick" /><MenuFlyoutItem x:Uid="CameraCaptions" Text="Camera and live captions…" Click="OnCameraClick" />
                 <MenuFlyoutItem x:Uid="Diagnostics" Text="Diagnostics…" Click="OnDiagnosticsClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SettingsMenu" Title="Settings"><MenuFlyoutItem x:Uid="Preferences" Text="Preferences…" Click="OnSettingsClick" /></MenuBarItem>
@@ -73,12 +71,15 @@
         <Grid x:Name="MainContentGrid" Grid.Row="1" MinHeight="260">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="320" /><ColumnDefinition x:Name="RightPanelSplitterColumn" Width="6" /><ColumnDefinition x:Name="RightPanelColumn" Width="360" MinWidth="0" /></Grid.ColumnDefinitions>
             <Border x:Name="VideoPlaceholder" Grid.Column="0" Background="Black" Margin="8,4,4,4" DoubleTapped="OnVideoDoubleTapped">
-                <TextBlock x:Uid="InitialVideoStatus" x:Name="VideoStatusText" Text="Open a local file or stream URL" Foreground="White" Opacity="0.72" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <Grid>
+                    <TextBlock x:Uid="InitialVideoStatus" x:Name="VideoStatusText" Text="Open a local file or stream URL" Foreground="White" Opacity="0.72" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Button x:Name="VideoFocusTarget" Width="1" Height="1" Opacity="0" IsTabStop="False" IsHitTestVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top" />
+                </Grid>
             </Border>
             <primitives:Thumb x:Name="RightPanelSplitter" Grid.Column="1" DragDelta="OnRightPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
             <Grid x:Name="SubtitlePanel" Grid.Column="2" Margin="4,4,8,4">
                 <TabView x:Name="RightPanelTabs" IsAddTabButtonVisible="False">
-                    <TabViewItem Header="Explorer" IsClosable="False">
+                    <TabViewItem x:Name="ExplorerTab" Header="Explorer" IsClosable="False">
                         <Grid RowSpacing="6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                             <CommandBar DefaultLabelPosition="Collapsed">
@@ -88,31 +89,24 @@
                             </CommandBar>
                             <TextBox x:Name="BrowserPathBox" Grid.Row="1" IsReadOnly="True" />
                             <ListView x:Name="FolderEntryList" Grid.Row="2" SelectionMode="Single" DoubleTapped="OnFolderEntryDoubleTapped">
-                                <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding Details}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
+                                <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnBrowserEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddBrowserFavorite" Text="Add to favorites" Click="OnAddBrowserFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding Details}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
                         </Grid>
                     </TabViewItem>
                     <TabViewItem Header="Playlist" IsClosable="False">
                         <Grid RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><CommandBar DefaultLabelPosition="Collapsed"><AppBarButton Icon="OpenFile" Label="Add media" Click="OnOpenMediaClick" /><AppBarButton Icon="Delete" Label="Clear" Click="OnClearPlaylistClick" /></CommandBar><ListView x:Name="PlaylistList" Grid.Row="1" SelectionMode="Single" DoubleTapped="OnPlaylistDoubleTapped"><ListView.ItemTemplate><DataTemplate><Grid Padding="5"><TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Path}" /></Grid></DataTemplate></ListView.ItemTemplate></ListView></Grid>
                     </TabViewItem>
-                    <TabViewItem Header="WebDAV" IsClosable="False">
+                    <TabViewItem x:Name="WebDavTab" Header="WebDAV" IsClosable="False">
                         <Grid RowSpacing="6">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
-                            <Button x:Name="AddWebDavServerButton" Click="OnAddWebDavServerClick" HorizontalAlignment="Stretch">
-                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
-                                    <FontIcon Glyph="&#xE710;" FontSize="14" />
-                                    <TextBlock x:Uid="WebDavAddServerText" Text="Add WebDAV server" />
-                                </StackPanel>
-                            </Button>
-                            <TextBlock x:Uid="WebDavServersPanelLabel" Grid.Row="1" Text="Servers" FontWeight="SemiBold" Margin="4,4,4,0" />
-                            <Grid Grid.Row="2" MaxHeight="150">
+                            <TextBlock x:Uid="WebDavServersPanelLabel" Text="Servers" FontWeight="SemiBold" Margin="4,4,4,0" />
+                            <Grid Grid.Row="1" MaxHeight="150">
                                 <ListView x:Name="WebDavServerList" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnWebDavServerClick">
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
@@ -126,23 +120,51 @@
                                 </ListView>
                                 <TextBlock x:Uid="WebDavNoServersText" x:Name="WebDavEmptyServersText" Text="No servers added" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" />
                             </Grid>
-                            <CommandBar Grid.Row="3" DefaultLabelPosition="Collapsed">
+                            <CommandBar Grid.Row="2" DefaultLabelPosition="Collapsed">
+                                <AppBarButton x:Uid="WebDavAddServerCommand" Icon="Add" Label="Add WebDAV server" Click="OnAddWebDavServerClick" />
                                 <AppBarButton x:Uid="ParentButton" x:Name="WebDavParentButton" Icon="Back" Label="Parent folder" Click="OnWebDavParentClick" IsEnabled="False" />
                                 <AppBarButton x:Uid="RefreshCommand" x:Name="WebDavRefreshButton" Icon="Refresh" Label="Refresh" Click="OnWebDavRefreshClick" IsEnabled="False" />
                                 <AppBarElementContainer>
                                     <ProgressRing x:Name="WebDavProgressRing" Width="20" Height="20" Margin="8,0" IsActive="False" />
                                 </AppBarElementContainer>
                             </CommandBar>
-                            <StackPanel Grid.Row="4" Margin="4,0" Spacing="2">
+                            <StackPanel Grid.Row="3" Margin="4,0" Spacing="2">
                                 <TextBlock x:Uid="WebDavSelectServerText" x:Name="WebDavPanelPathText" Text="Select a server to connect" TextTrimming="CharacterEllipsis" Opacity="0.7" />
                                 <TextBlock x:Name="WebDavConnectionStatusText" Text="" TextTrimming="CharacterEllipsis" Opacity="0.7" FontSize="11" />
                             </StackPanel>
-                            <ListView x:Name="WebDavPanelEntryList" Grid.Row="5" SelectionMode="Single" DoubleTapped="OnWebDavPanelEntryDoubleTapped">
-                                <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
+                            <ListView x:Name="WebDavPanelEntryList" Grid.Row="4" SelectionMode="Single" DoubleTapped="OnWebDavPanelEntryDoubleTapped">
+                                <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnWebDavEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddWebDavFavorite" Text="Add to favorites" Click="OnAddWebDavFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
                         </Grid>
                     </TabViewItem>
-                    <TabViewItem Header="Subtitles" IsClosable="False">
+                    <TabViewItem x:Uid="FavoritesTab" x:Name="FavoritesTab" Header="Favorites" IsClosable="False">
+                        <Grid RowSpacing="6">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                            <CommandBar DefaultLabelPosition="Collapsed">
+                                <AppBarButton x:Uid="OpenFavoriteButton" x:Name="OpenFavoriteButton" Icon="OpenFile" Label="Open" Click="OnOpenFavoriteClick" IsEnabled="False" />
+                                <AppBarButton x:Uid="RemoveSelectedFavoritesButton" x:Name="RemoveSelectedFavoritesButton" Icon="Delete" Label="Remove from favorites" Click="OnRemoveSelectedFavoritesClick" IsEnabled="False" />
+                            </CommandBar>
+                            <Grid Grid.Row="1">
+                                <ListView x:Name="FavoriteList" SelectionMode="Multiple" SelectionChanged="OnFavoriteSelectionChanged" DoubleTapped="OnFavoriteDoubleTapped">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Padding="6" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <FontIcon Glyph="{Binding SourceIconGlyph}" VerticalAlignment="Center" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                <FontIcon Grid.Column="1" Glyph="{Binding IconGlyph}" VerticalAlignment="Center" />
+                                                <StackPanel Grid.Column="2" Spacing="2">
+                                                    <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Location}" TextTrimming="CharacterEllipsis" Opacity="0.55" FontSize="11" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                                <TextBlock x:Uid="FavoritesEmptyText" x:Name="FavoritesEmptyText" Text="No favorites" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" IsHitTestVisible="False" />
+                            </Grid>
+                        </Grid>
+                    </TabViewItem>
+                    <TabViewItem x:Name="SubtitlesTab" Header="Subtitles" IsClosable="False">
                         <Grid RowSpacing="6">
                             <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <ListView x:Name="SubtitleList" SelectionMode="Multiple" IsItemClickEnabled="True" ItemClick="OnSubtitleItemClick">
@@ -156,19 +178,19 @@
         </Grid>
         <Grid x:Name="PlaybackControls" Grid.Row="5" Padding="8,4" ColumnSpacing="6">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="120" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="95" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <Button x:Name="BeginningButton" Grid.Column="0" Style="{StaticResource PlaybackControlButtonStyle}" Content="↤" Click="OnGoToBeginningClick" ToolTipService.ToolTip="Go to beginning (Home)" />
-            <Button x:Name="PreviousButton" Grid.Column="1" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏮" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media (Ctrl+B)" />
-            <Button x:Name="SeekBackButton" Grid.Column="2" Style="{StaticResource PlaybackControlButtonStyle}" Content="−5s" Click="OnSeekBackClick" ToolTipService.ToolTip="Seek backward" />
-            <Button x:Name="PlayPauseButton" Grid.Column="3" Style="{StaticResource PlaybackControlButtonStyle}" Content="▶" Click="OnPlayPauseClick" ToolTipService.ToolTip="Play / Pause (Space)" />
-            <Button Grid.Column="4" Style="{StaticResource PlaybackControlButtonStyle}" Content="■" Click="OnStopClick" ToolTipService.ToolTip="Stop" />
-            <Button x:Name="SeekForwardButton" Grid.Column="5" Style="{StaticResource PlaybackControlButtonStyle}" Content="+5s" Click="OnSeekForwardClick" ToolTipService.ToolTip="Seek forward" />
-            <Button x:Name="NextButton" Grid.Column="6" Style="{StaticResource PlaybackControlButtonStyle}" Content="⏭" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media (Ctrl+F)" />
+            <Button x:Name="BeginningButton" Grid.Column="0" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnGoToBeginningClick" ToolTipService.ToolTip="Go to beginning (Home)"><Image Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/beginning.svg" /></Image.Source></Image></Button>
+            <Button x:Name="PreviousButton" Grid.Column="1" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media (Ctrl+B)"><Image Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/previous.svg" /></Image.Source></Image></Button>
+            <Button x:Name="SeekBackButton" Grid.Column="2" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSeekBackClick" ToolTipService.ToolTip="Seek backward"><Image Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/seek-back.svg" /></Image.Source></Image></Button>
+            <Button x:Name="PlayPauseButton" Grid.Column="3" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnPlayPauseClick" ToolTipService.ToolTip="Play / Pause (Space)"><Image x:Name="PlayPauseIcon" Width="21" Height="21"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/play.svg" /></Image.Source></Image></Button>
+            <Button Grid.Column="4" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnStopClick" ToolTipService.ToolTip="Stop"><Image Width="18" Height="18"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/stop.svg" /></Image.Source></Image></Button>
+            <Button x:Name="SeekForwardButton" Grid.Column="5" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSeekForwardClick" ToolTipService.ToolTip="Seek forward"><Image Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/seek-forward.svg" /></Image.Source></Image></Button>
+            <Button x:Name="NextButton" Grid.Column="6" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media (Ctrl+F)"><Image Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/next.svg" /></Image.Source></Image></Button>
             <Slider x:Name="PositionSlider" Grid.Column="7" Minimum="0" Maximum="1" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
             <TextBlock x:Name="PositionText" Grid.Column="8" Text="00:00 / 00:00" VerticalAlignment="Center" FontFamily="Consolas" />
             <Slider x:Name="VolumeSlider" Grid.Column="9" Minimum="0" Maximum="130" Value="100" ValueChanged="OnVolumeChanged" />
-            <Button x:Name="MuteButton" Grid.Column="10" Style="{StaticResource PlaybackControlButtonStyle}" Content="🔊" Click="OnMuteClick" />
+            <Button x:Name="MuteButton" Grid.Column="10" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnMuteClick"><Image x:Name="MuteIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/volume.svg" /></Image.Source></Image></Button>
             <TextBlock x:Uid="SpeedLabel" Grid.Column="11" Text="Speed" VerticalAlignment="Center" /><ComboBox x:Name="RateCombo" Grid.Column="12" SelectionChanged="OnRateChanged" />
-            <Button x:Name="RepeatButton" Grid.Column="13" Style="{StaticResource PlaybackControlButtonStyle}" Content="↪" Click="OnRepeatClick" ToolTipService.ToolTip="Repeat off" />
+            <Button x:Name="RepeatButton" Grid.Column="13" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnRepeatClick" ToolTipService.ToolTip="Repeat off"><Image x:Name="RepeatIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/repeat.svg" /></Image.Source></Image></Button>
         </Grid>
         <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="3" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
         <Grid x:Name="VisualizationPanel" Grid.Row="4" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
