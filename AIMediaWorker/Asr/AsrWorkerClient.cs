@@ -256,7 +256,15 @@ public sealed class AsrWorkerClient : IAsrEngine
                 try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false); }
                 catch (TimeoutException) { TryTerminate(process); }
             }
-            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch (TimeoutException) { TryTerminate(process); }
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+            catch (TimeoutException)
+            {
+                TryTerminate(process);
+                // Kill is asynchronous on Windows. Wait once more so disposing the Process
+                // handle cannot leave a still-terminating Python worker orphaned at app exit.
+                try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+                catch (TimeoutException) { }
+            }
             var readers = new[] { stdoutReader, stderrReader }.Where(task => task is not null).Cast<Task>().ToArray();
             if (readers.Length > 0) try { await Task.WhenAll(readers).WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); } catch (Exception exception) when (exception is OperationCanceledException or TimeoutException or IOException) { }
             process.Dispose();

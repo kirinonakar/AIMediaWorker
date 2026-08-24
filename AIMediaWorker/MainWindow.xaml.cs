@@ -80,6 +80,7 @@ public sealed partial class MainWindow : Window
     private bool _translationCompletedForCurrentMedia;
     private readonly SemaphoreSlim _dialogLock = new(1, 1);
     private CancellationTokenSource? _waveformCancellation;
+    private Task? _waveformTask;
     private WaveformData _waveform = WaveformData.Empty;
     private string? _waveformSource;
     private Rectangle? _waveformPlayhead;
@@ -95,6 +96,9 @@ public sealed partial class MainWindow : Window
     private long _dragOldStart;
     private long _dragOldEnd;
     private bool _allowClose;
+    private bool _closeInProgress;
+    private bool _restartRequested;
+    private Task? _shutdownTask;
     private TimeSpan? _abStart;
     private CancellationTokenSource? _overlaySyncCancellation;
     private string? _renderedOverlayContent;
@@ -1072,7 +1076,7 @@ public sealed partial class MainWindow : Window
     {
         if (_currentHttpHeaders is { Count: > 0 } || string.Equals(_waveformSource, source, StringComparison.OrdinalIgnoreCase)) return;
         _waveformSource = source;
-        _ = GenerateWaveformAsync(source);
+        _waveformTask = GenerateWaveformAsync(source);
     }
 
     private void DrawWaveform()
@@ -2350,6 +2354,12 @@ public sealed partial class MainWindow : Window
                 _settingsWindow?.Close();
                 Close();
             };
+            _settingsWindow.RestartRequested += (_, _) =>
+            {
+                _restartRequested = true;
+                _settingsWindow?.Close();
+                Close();
+            };
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Activate();
         }
@@ -2918,18 +2928,43 @@ public sealed partial class MainWindow : Window
     private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
         if (!_isFullscreen && sender.Presenter is OverlappedPresenter presenter && presenter.State != OverlappedPresenterState.Minimized) CaptureWindowPlacement(sender, presenter);
-        if (_allowClose || !_document.IsDirty) return;
+        if (_allowClose) return;
+
+        // Closed is too late for asynchronous cleanup: WinUI can stop its dispatcher before
+        // child processes and native playback have finished shutting down. Keep the window
+        // alive until all owned resources have been released, then issue the final Close.
         args.Cancel = true;
-        var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("UnsavedChangesTitle"), Content = L("UnsavedChangesCloseMessage"), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
-        var result = await ShowDialogAsync(dialog);
-        if (result == ContentDialogResult.None) return;
-        if (result == ContentDialogResult.Primary)
+        if (_closeInProgress) return;
+        _closeInProgress = true;
+        try
         {
-            if (_document.FilePath is null) await SaveSubtitleAsAsync(); else await SaveSubtitleAsync(_document.FilePath);
-            if (_document.IsDirty) return;
+            if (_document.IsDirty)
+            {
+                var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("UnsavedChangesTitle"), Content = L("UnsavedChangesCloseMessage"), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
+                var result = await ShowDialogAsync(dialog);
+                if (result == ContentDialogResult.None) return;
+                if (result == ContentDialogResult.Primary)
+                {
+                    if (_document.FilePath is null) await SaveSubtitleAsAsync(); else await SaveSubtitleAsync(_document.FilePath);
+                    if (_document.IsDirty) return;
+                }
+            }
+
+            _shutdownTask ??= ShutdownAsync();
+            await _shutdownTask;
+            _allowClose = true;
+            Close();
         }
-        _allowClose = true;
-        Close();
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "shutdown", "APPLICATION_SHUTDOWN_ERROR", exception.Message, exception);
+            _allowClose = true;
+            Close();
+        }
+        finally
+        {
+            if (!_allowClose) _closeInProgress = false;
+        }
     }
 
     private async Task<bool> ConfirmDiscardChangesAsync(string action)
@@ -2980,7 +3015,7 @@ public sealed partial class MainWindow : Window
             ? new System.Text.UTF8Encoding(false, true)
             : System.Text.Encoding.GetEncoding(name, System.Text.EncoderFallback.ExceptionFallback, System.Text.DecoderFallback.ExceptionFallback);
     }
-    private async void OnWindowClosed(object sender, WindowEventArgs args)
+    private async Task ShutdownAsync()
     {
         _fullscreenHoverTimer?.Stop();
         SetFullscreenCursorHidden(false);
@@ -2989,16 +3024,41 @@ public sealed partial class MainWindow : Window
             _appWindow.Changed -= OnAppWindowChanged;
         }
         RememberCurrentPosition();
+
+        _waveformCancellation?.Cancel();
+        _postOpenCancellation?.Cancel();
+        _overlaySyncCancellation?.Cancel();
+        CancelPendingSeekAiRestart();
+        _aiOperationCancellation?.Cancel();
+        _webDavListingCancellation?.Cancel();
+
+        if (_waveformTask is { IsCompleted: false } waveformTask)
+        {
+            try { await waveformTask.WaitAsync(TimeSpan.FromSeconds(3)); }
+            catch (OperationCanceledException) { }
+            catch (TimeoutException exception) { await AppLog.WriteAsync("warning", "shutdown", "WAVEFORM_SHUTDOWN_TIMEOUT", exception.Message, exception); }
+        }
+
+        _settingsWindow?.Close();
+        if (_cameraWindow is { } cameraWindow) await cameraWindow.CloseAsync();
+        if (_screenRecordingWindow is { } screenRecordingWindow) await screenRecordingWindow.CloseAsync();
+
+        if (_aiPipelineTask is { IsCompleted: false } aiPipeline)
+        {
+            try { await aiPipeline.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (OperationCanceledException) { }
+            catch (TimeoutException exception) { await AppLog.WriteAsync("warning", "shutdown", "AI_PIPELINE_SHUTDOWN_TIMEOUT", exception.Message, exception); }
+        }
+
         try { await _historyService.SaveAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "HISTORY_SAVE_ERROR", exception.Message, exception); }
         try { await SettingsService.CreateDefault().SaveAsync(_settings); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "SETTINGS_SAVE_ERROR", exception.Message, exception); }
-        _waveformCancellation?.Cancel(); _waveformCancellation?.Dispose();
-        _postOpenCancellation?.Cancel(); _postOpenCancellation?.Dispose();
-        _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose();
-        CancelPendingSeekAiRestart();
-        _aiOperationCancellation?.Cancel(); _aiOperationCancellation?.Dispose();
-        _webDavListingCancellation?.Cancel(); _webDavListingCancellation?.Dispose();
+        _waveformCancellation?.Dispose(); _waveformCancellation = null;
+        _postOpenCancellation?.Dispose(); _postOpenCancellation = null;
+        _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = null;
+        _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null;
+        _webDavListingCancellation?.Dispose(); _webDavListingCancellation = null;
         _webDavClient.Dispose();
         try { await _asrEngine.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "ASR_DISPOSE_ERROR", exception.Message, exception); }
@@ -3013,6 +3073,27 @@ public sealed partial class MainWindow : Window
             _videoHost.Dispose();
         }
         try { File.Delete(_editorOverlayPath); } catch (IOException) { }
+
+        if (_restartRequested)
+        {
+            try { Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().UnregisterKey(); } catch { }
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath ?? "AIMediaWorker.exe") { UseShellExecute = true });
+            }
+            catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "APPLICATION_RESTART_ERROR", exception.Message, exception); }
+        }
+    }
+
+    private void OnWindowClosed(object sender, WindowEventArgs args)
+    {
+        if (_appWindow is not null)
+        {
+            _appWindow.Closing -= OnAppWindowClosing;
+            _appWindow.Changed -= OnAppWindowChanged;
+        }
+        Closed -= OnWindowClosed;
+        Application.Current.Exit();
     }
 
     private sealed record PlaylistEntry(string Path)

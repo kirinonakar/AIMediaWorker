@@ -4,7 +4,6 @@ using AIMediaWorker.Settings;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.Windows.AppLifecycle;
 using Windows.Graphics;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
@@ -50,6 +49,7 @@ public sealed partial class SettingsWindow : Window
     public string LlmHeading { get; } = L("LlmExpander.Header");
     public event EventHandler<AppSettings>? SettingsSaved;
     public event EventHandler? DllUnloadRequested;
+    public event EventHandler? RestartRequested;
 
     public SettingsWindow(Window owner)
     {
@@ -395,8 +395,7 @@ public sealed partial class SettingsWindow : Window
                 };
                 if (await dialog.ShowAsync() == ContentDialogResult.Primary)
                 {
-                    Close();
-                    RestartApplication();
+                    RestartRequested?.Invoke(this, EventArgs.Empty);
                     return;
                 }
             }
@@ -430,17 +429,6 @@ public sealed partial class SettingsWindow : Window
     }
 
     private void OnCancelClick(object sender, RoutedEventArgs e) => Close();
-    private static void RestartApplication()
-    {
-        try { AppInstance.GetCurrent().UnregisterKey(); } catch { }
-        try
-        {
-            AppInstance.Restart(string.Empty);
-        }
-        catch { }
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath ?? "AIMediaWorker.exe") { UseShellExecute = true });
-        Application.Current.Exit();
-    }
     private static string? EmptyToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);

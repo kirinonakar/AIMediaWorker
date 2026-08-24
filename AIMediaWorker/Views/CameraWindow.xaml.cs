@@ -22,7 +22,9 @@ public sealed partial class CameraWindow : Window
     private readonly AudioCaptureService _audio = new();
     private readonly LiveAsrController _liveAsr;
     private AppSettings _settings = new();
-    private bool _closing;
+    private AppWindow? _appWindow;
+    private Task? _shutdownTask;
+    private bool _allowClose;
 
     public CameraWindow(Window owner)
     {
@@ -34,7 +36,9 @@ public sealed partial class CameraWindow : Window
         _liveAsr.Failed += OnLiveFailed;
         Closed += OnClosed;
         var handle = WindowNative.GetWindowHandle(this);
-        AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle))?.Resize(new SizeInt32(1100, 720));
+        _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
+        _appWindow?.Resize(new SizeInt32(1100, 720));
+        if (_appWindow is not null) _appWindow.Closing += OnAppWindowClosing;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -202,17 +206,41 @@ public sealed partial class CameraWindow : Window
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
 
-    private async void OnClosed(object sender, WindowEventArgs args)
+    public async Task CloseAsync()
     {
-        if (_closing) return; _closing = true;
+        _shutdownTask ??= ShutdownAsync();
+        await _shutdownTask;
+        if (_allowClose) return;
+        _allowClose = true;
+        Close();
+    }
+
+    private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_allowClose) return;
+        args.Cancel = true;
+        await CloseAsync();
+    }
+
+    private async Task ShutdownAsync()
+    {
+        Preview.SetMediaPlayer(null);
         try
         {
-            Preview.SetMediaPlayer(null);
             if (_camera.IsRecording) await _camera.StopRecordingAsync();
-            await _liveAsr.DisposeAsync();
-            await _asr.DisposeAsync();
-            await _camera.DisposeAsync();
         }
         catch (Exception exception) { await AppLog.WriteAsync("error", "camera", "CAMERA_SHUTDOWN_ERROR", exception.Message, exception); }
+        try { await _liveAsr.DisposeAsync(); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "camera", "LIVE_ASR_SHUTDOWN_ERROR", exception.Message, exception); }
+        try { await _asr.DisposeAsync(); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "camera", "CAMERA_ASR_SHUTDOWN_ERROR", exception.Message, exception); }
+        try { await _camera.DisposeAsync(); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "camera", "CAMERA_CAPTURE_SHUTDOWN_ERROR", exception.Message, exception); }
+    }
+
+    private void OnClosed(object sender, WindowEventArgs args)
+    {
+        if (_appWindow is not null) _appWindow.Closing -= OnAppWindowClosing;
+        Closed -= OnClosed;
     }
 }

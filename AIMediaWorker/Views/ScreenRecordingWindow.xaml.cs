@@ -21,8 +21,8 @@ public sealed partial class ScreenRecordingWindow : Window
     private string? _recordingFileName;
     private Task? _startOperation;
     private Task? _stopOperation;
+    private Task? _shutdownTask;
     private bool _allowClose;
-    private bool _closing;
 
     public ScreenRecordingWindow(Window owner)
     {
@@ -192,9 +192,22 @@ public sealed partial class ScreenRecordingWindow : Window
 
     private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (_allowClose || _closing) return;
+        if (_allowClose) return;
         args.Cancel = true;
-        _closing = true;
+        await CloseAsync();
+    }
+
+    public async Task CloseAsync()
+    {
+        _shutdownTask ??= ShutdownAsync();
+        await _shutdownTask;
+        if (_allowClose) return;
+        _allowClose = true;
+        Close();
+    }
+
+    private async Task ShutdownAsync()
+    {
         try
         {
             if (_startOperation is { } starting)
@@ -204,18 +217,14 @@ public sealed partial class ScreenRecordingWindow : Window
             if (_session.IsRecording || _stopOperation is not null) await StopRecordingAsync();
             await _session.DisposeAsync();
         }
-        finally
-        {
-            _allowClose = true;
-            Close();
-        }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "screen-recording", "SCREEN_RECORDING_SHUTDOWN_ERROR", exception.Message, exception); }
     }
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
         _timer.Stop();
         if (_appWindow is not null) _appWindow.Closing -= OnAppWindowClosing;
-        if (!_closing) _ = _session.DisposeAsync();
+        Closed -= OnClosed;
     }
 
     private static string L(string key) => LocalizationService.Get(key);
