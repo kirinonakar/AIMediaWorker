@@ -24,7 +24,7 @@ public static class LocalizationService
     public static void Apply(AppLanguage language)
     {
         var tag = ToLanguageTag(language);
-        ApplicationLanguages.PrimaryLanguageOverride = language == AppLanguage.Default ? string.Empty : tag;
+        ApplicationLanguages.PrimaryLanguageOverride = tag;
         ResourceContext.SetGlobalQualifierValue("Language", tag);
     }
 
