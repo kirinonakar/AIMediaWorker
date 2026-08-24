@@ -43,11 +43,11 @@ namespace AIMediaWorker
         public App()
         {
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+            _ = MpvPlaybackEngine.PreloadAsync();
             var settingsService = SettingsService.CreateDefault();
             LocalizationService.Apply(settingsService.LoadLanguage());
-            InitializeComponent();
             _settingsLoadTask = settingsService.LoadAsync();
-            _ = MpvPlaybackEngine.PreloadAsync();
+            InitializeComponent();
             UnhandledException += (_, eventArgs) => _ = AppLog.WriteAsync("critical", "application", "UNHANDLED_EXCEPTION", eventArgs.Message, eventArgs.Exception);
         }
 
@@ -63,25 +63,29 @@ namespace AIMediaWorker
                 // continuation, so capture the launch source before loading settings.
                 var launchSource = GetLaunchSource();
                 var settings = await _settingsLoadTask;
-                try
-                {
-                    var webDavCredentials = new WebDavCredentialStore(new WindowsCredentialService());
-                    var migratedWebDavCredentials = false;
-                    foreach (var server in settings.Network.WebDavServers) migratedWebDavCredentials |= webDavCredentials.MigrateLegacy(server);
-                    if (migratedWebDavCredentials) await SettingsService.CreateDefault().SaveAsync(settings);
-                }
-                catch (Exception exception) { await AppLog.WriteAsync("warning", "credentials", "WEBDAV_CREDENTIAL_MIGRATION_ERROR", exception.Message, exception); }
-                LocalizationService.Apply(settings.General.Language);
                 var mainWindow = new MainWindow(launchSource, settings);
                 mainWindow.ApplySavedWindowPlacement(settings.Window);
                 _window = mainWindow;
                 _window.Activate();
+                _ = MigrateWebDavCredentialsAsync(settings);
             }
             catch (Exception exception)
             {
                 await AppLog.WriteAsync("critical", "startup", "STARTUP_ERROR", exception.Message, exception);
                 throw;
             }
+        }
+
+        private static async Task MigrateWebDavCredentialsAsync(AppSettings settings)
+        {
+            try
+            {
+                var webDavCredentials = new WebDavCredentialStore(new WindowsCredentialService());
+                var migratedWebDavCredentials = false;
+                foreach (var server in settings.Network.WebDavServers) migratedWebDavCredentials |= webDavCredentials.MigrateLegacy(server);
+                if (migratedWebDavCredentials) await SettingsService.CreateDefault().SaveAsync(settings);
+            }
+            catch (Exception exception) { await AppLog.WriteAsync("warning", "credentials", "WEBDAV_CREDENTIAL_MIGRATION_ERROR", exception.Message, exception); }
         }
 
         private static string? GetLaunchSource()

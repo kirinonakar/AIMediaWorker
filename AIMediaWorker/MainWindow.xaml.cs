@@ -121,6 +121,7 @@ public sealed partial class MainWindow : Window
     private PendingPostOpenWork? _pendingPostOpenWork;
     private CancellationTokenSource? _postOpenCancellation;
     private Task? _historyLoadTask;
+    private readonly Task _playbackInitializationTask;
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
 
     public MainWindow() : this(null, new AppSettings()) { }
@@ -134,6 +135,17 @@ public sealed partial class MainWindow : Window
         _webDavCredentials = new WebDavCredentialStore(_windowsCredentials);
         _webDavClient = new WebDavClient(_windowsCredentials, timeout: TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds));
         InitializeComponent();
+        _playback.StateChanged += OnPlaybackStateChanged;
+        _playback.FirstFrameReady += OnFirstFrameReady;
+        _playback.PositionChanged += OnPlaybackPositionChanged;
+        _playback.TracksChanged += OnTracksChanged;
+        _playback.ErrorOccurred += OnPlaybackError;
+        _playback.MediaEnded += OnMediaEnded;
+        _videoHost = new NativeVideoHost(this, VideoPlaceholder);
+        _videoHost.FilesDropped += OnNativeVideoFilesDropped;
+        _videoHost.Clicked += OnNativeVideoClicked;
+        _videoHost.DoubleClicked += OnNativeVideoDoubleClicked;
+        _playbackInitializationTask = _playback.InitializeAsync(_videoHost.Create(), _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
         ExtendsContentIntoTitleBar = true;
         RightPanelSectionList.SelectionChanged += OnRightPanelSectionChanged;
         RefreshRightPanelSections();
@@ -157,12 +169,6 @@ public sealed partial class MainWindow : Window
         PositionSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPositionSliderPointerPressed), true);
         PositionSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
         PositionSlider.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
-        _playback.StateChanged += OnPlaybackStateChanged;
-        _playback.FirstFrameReady += OnFirstFrameReady;
-        _playback.PositionChanged += OnPlaybackPositionChanged;
-        _playback.TracksChanged += OnTracksChanged;
-        _playback.ErrorOccurred += OnPlaybackError;
-        _playback.MediaEnded += OnMediaEnded;
         _fullscreenHoverTimer = DispatcherQueue.CreateTimer();
         _fullscreenHoverTimer.Interval = TimeSpan.FromMilliseconds(100);
         _fullscreenHoverTimer.Tick += OnFullscreenHoverTick;
@@ -227,12 +233,7 @@ public sealed partial class MainWindow : Window
             ClampPanelSizesToAvailable();
             ApplyPanelVisibility();
             var historyLoad = _historyLoadTask ??= _historyService.LoadAsync();
-            _videoHost = new NativeVideoHost(this, VideoPlaceholder);
-            _videoHost.FilesDropped += OnNativeVideoFilesDropped;
-            _videoHost.Clicked += OnNativeVideoClicked;
-            _videoHost.DoubleClicked += OnNativeVideoDoubleClicked;
-            var playbackInitialization = _playback.InitializeAsync(_videoHost.Create(), _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
-            await playbackInitialization;
+            await _playbackInitializationTask;
             if (_playback.IsAvailable)
             {
                 _playback.SetVolume(_settings.Playback.DefaultVolume); _playback.SetRate(_settings.Playback.PlaybackRate);
@@ -372,8 +373,14 @@ public sealed partial class MainWindow : Window
 
     private async Task OpenMediaAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, IMediaSource? mediaSource = null, bool preservePlaylist = false)
     {
-        await CancelAiPipelineAsync();
-        if (!await ConfirmDiscardChangesAsync(L("ActionOpenMedia"))) return;
+        // Cancelling an active ASR/translation request can take a second or two while its
+        // provider returns. Signal it now, but do not make the new media wait to start.
+        var aiPipelineCancellation = CancelAiPipelineAsync();
+        if (!await ConfirmDiscardChangesAsync(L("ActionOpenMedia")))
+        {
+            await aiPipelineCancellation;
+            return;
+        }
         try
         {
             if (!preservePlaylist)
@@ -384,6 +391,7 @@ public sealed partial class MainWindow : Window
             }
             RememberCurrentPosition();
             await _playback.OpenAsync(source, httpHeaders);
+            await aiPipelineCancellation;
             _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
             _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
             _ = SaveHistoryAfterOpenAsync(_currentMediaSource);
@@ -398,6 +406,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            await aiPipelineCancellation;
             await AppLog.WriteAsync("error", "playback", "OPEN_MEDIA_ERROR", exception.Message, exception);
             await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
         }
