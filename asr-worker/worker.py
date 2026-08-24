@@ -25,6 +25,8 @@ from subtitle.segmenter import SegmentationOptions, SubtitleSegmenter
 
 
 MAX_SAFE_ALIGNED_CHUNK_SECONDS = 29.0
+PLAYBACK_PRIORITY_CHUNK_SECONDS = 15.0
+PLAYBACK_PRIORITY_COOLDOWN_SECONDS = 0.075
 
 
 class JobCancelled(RuntimeError):
@@ -174,6 +176,11 @@ class AsrWorker:
         chunk_duration = min(180.0, max(5.0, float(request.get("chunk_duration", 30.0))))
         if timestamps:
             chunk_duration = min(chunk_duration, MAX_SAFE_ALIGNED_CHUNK_SECONDS)
+        playback_priority = bool(request.get("playback_priority", False))
+        if playback_priority:
+            # Shorter inference bursts and a small cooperative gap between them give the
+            # renderer predictable opportunities to submit decode/presentation work.
+            chunk_duration = min(chunk_duration, PLAYBACK_PRIORITY_CHUNK_SECONDS)
         use_vad = bool(request.get("vad", True))
         options = request.get("segmentation") or {}
         segmenter = SubtitleSegmenter(SegmentationOptions(
@@ -230,6 +237,8 @@ class AsrWorker:
             offset += window_duration
             completed = offset - start_seconds
             self.emit({"id": request_id, "event": "progress", "progress": min(1.0, completed / remaining_duration) if remaining_duration > 0 else 1.0})
+            if playback_priority and offset < duration and cancel.wait(PLAYBACK_PRIORITY_COOLDOWN_SECONDS):
+                self._check_cancel(cancel)
         self.emit({"id": request_id, "event": "completed"})
 
     def _transcribe_audio(self, request_id: str, request: dict[str, Any], cancel: threading.Event) -> None:

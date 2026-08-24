@@ -284,9 +284,7 @@
         </Grid>
         <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="4" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
         <Grid x:Name="VisualizationPanel" Grid.Row="5" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="48" /></Grid.RowDefinitions>
-            <Canvas x:Name="WaveformCanvas" Grid.Row="0" SizeChanged="OnVisualizationSizeChanged" />
-            <Canvas x:Name="TimelineCanvas" Grid.Row="1" Background="Transparent" SizeChanged="OnVisualizationSizeChanged" PointerPressed="OnTimelinePointerPressed" PointerMoved="OnTimelinePointerMoved" PointerReleased="OnTimelinePointerReleased" PointerCanceled="OnTimelinePointerReleased" PointerWheelChanged="OnTimelinePointerWheelChanged" />
+            <Canvas x:Name="TimelineCanvas" Background="Transparent" SizeChanged="OnVisualizationSizeChanged" PointerPressed="OnTimelinePointerPressed" PointerMoved="OnTimelinePointerMoved" PointerReleased="OnTimelinePointerReleased" PointerCanceled="OnTimelinePointerReleased" PointerWheelChanged="OnTimelinePointerWheelChanged" />
         </Grid>
         <Grid x:Name="StatusPanel" Grid.Row="3" Padding="8,4" ColumnSpacing="8">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>

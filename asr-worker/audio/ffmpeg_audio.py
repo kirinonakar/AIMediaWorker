@@ -16,6 +16,12 @@ class FfmpegCancelled(RuntimeError):
     pass
 
 
+def _background_creation_flags() -> int:
+    if os.name != "nt":
+        return 0
+    return subprocess.CREATE_NO_WINDOW | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+
+
 def probe_duration(path: str, ffprobe: str = "ffprobe") -> float:
     network_options = ["-rw_timeout", "30000000"] if path.lower().startswith(("http://", "https://")) else []
     process = subprocess.run(
@@ -26,7 +32,7 @@ def probe_duration(path: str, ffprobe: str = "ffprobe") -> float:
         encoding="utf-8",
         errors="replace",
         check=False,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=_background_creation_flags(),
     )
     if process.returncode != 0:
         raise FfmpegError(process.stderr.strip() or "ffprobe could not read the media duration")
@@ -46,7 +52,7 @@ def extract_window(path: str, start_seconds: float, duration_seconds: float, ffm
     os.close(descriptor)
     command = [
         ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{max(0.0, start_seconds):.6f}",
-        *(["-rw_timeout", "30000000"] if path.lower().startswith(("http://", "https://")) else []), "-i", path, "-t", f"{max(0.01, duration_seconds):.6f}", "-vn", "-ac", "1", "-ar", "16000",
+        *(["-rw_timeout", "30000000"] if path.lower().startswith(("http://", "https://")) else []), "-i", path, "-t", f"{max(0.01, duration_seconds):.6f}", "-vn", "-threads", "1", "-ac", "1", "-ar", "16000",
         "-c:a", "pcm_s16le", "-y", output,
     ]
     try:
@@ -57,7 +63,7 @@ def extract_window(path: str, start_seconds: float, duration_seconds: float, ffm
             text=True,
             encoding="utf-8",
             errors="replace",
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            creationflags=_background_creation_flags(),
         )
     except OSError as exception:
         Path(output).unlink(missing_ok=True)

@@ -14,7 +14,6 @@ Last updated: 2026-08-23
 - Edited-document overlay synchronization through a debounced temporary ASS track and `sub-reload`.
 - Playback/cue highlight synchronization and virtualized WinUI `ListView` editor.
 - Timeline visible-range rendering, click seek, cue move, start/end resize, pan, zoom and playhead/cue-boundary snapping.
-- FFmpeg streaming waveform generation using bounded min/max peaks, cancellation, source-fingerprint cache and cache invalidation.
 - Python NDJSON worker lifecycle, crash detection, restart support, cancellation, status and orphan-process cleanup.
 - Official `qwen-asr` integration for Qwen3-ASR-1.7B and Qwen3-ForcedAligner-0.6B, model/device/precision configuration, FFmpeg chunk extraction, optional Silero VAD, global offset restoration, incremental segments and long-media bounded processing.
 - Configurable punctuation/silence/duration/line-length subtitle segmentation.
@@ -28,7 +27,7 @@ Last updated: 2026-08-23
 - ID-mapped chunked subtitle translation and hierarchical short/detailed/chapter summarization with progress and cancellation.
 - JSON settings with atomic replacement, corruption recovery, separate Preferences UI, System/Light/Dark theme selection and core shortcut handling.
 - Data-loss confirmation on close, media replacement and subtitle replacement.
-- Unit/integration tests for subtitle formats/editing, timeline transforms, settings recovery, recent media, credential identifiers, WebDAV URI handling, ASR protocol/worker lifecycle, LLM mapping/hierarchical summarization and waveform cache.
+- Unit/integration tests for subtitle formats/editing, timeline transforms, settings recovery, recent media, credential identifiers, WebDAV URI handling, ASR protocol/worker lifecycle and LLM mapping/hierarchical summarization.
 
 ## Completed in Final Integration
 
@@ -47,9 +46,9 @@ Last updated: 2026-08-23
 - Drag-and-drop and multi-file playlist opening, sibling-folder playlists, previous/next, repeat modes, deferred exact seeking, subtitle visibility toggle, and command-line autoplay.
 - Enter fullscreen toggle, Escape restore, frame-free fullscreen, edge-hover menu/controls/side panel, and independently hideable timeline and side panels.
 - The fullscreen splitter rows collapse completely, shortcut hints are exposed in menus/tooltips, Ctrl+W follows the guarded close workflow, and Preferences are grouped into seven focused tabs.
-- libmpv startup initialization runs off the UI thread; the waveform and timeline share one time transform, with the red playhead overlaid at full waveform height.
+- libmpv startup initialization runs off the UI thread; the subtitle timeline follows playback with an overlaid red playhead.
 - Fullscreen targets the window's current display, repairs its presenter/chrome after multi-monitor topology or display moves, and uses virtual-screen coordinates plus an expanded shared-edge hover zone for the right overlay.
-- First-open work uses asynchronous libmpv commands, deferred history/Explorer synchronization, throttled waveform progress, and bounded folder enumeration; the unpackaged title bar explicitly loads the shipped application icon.
+- First-open work uses asynchronous libmpv commands, deferred history/Explorer synchronization, and bounded folder enumeration; the unpackaged title bar explicitly loads the shipped application icon.
 - Main side-panel Explorer, Playlist, WebDAV, and Subtitles tabs; connected WebDAV listings mirror into the main panel while server registration remains available in the WebDAV manager.
 - Explorer and WebDAV name filtering plus cyclic name/newest/oldest sorting with state-specific icons.
 - Persistent main-window position, size, maximized state, panel visibility, and user-resizable side/timeline panel dimensions with current-display bounds correction.
@@ -72,7 +71,7 @@ Last updated: 2026-08-23
 - WinUI never imports PyTorch; all ASR runs in a separately restartable Python process over versioned NDJSON.
 - `libmpv` owns decode, A/V sync, GPU rendering and normal subtitle rendering in a native child HWND.
 - Subtitle times are integer microseconds and only convert to floating-point seconds at external process/API boundaries.
-- Long audio and waveforms stream through FFmpeg; complete decoded audio is never retained in managed memory.
+- Long audio is extracted through bounded FFmpeg chunks; complete decoded media is never retained in managed memory.
 - Secrets use Windows Credential Manager and are only attached to in-memory HTTP/mpv requests.
 - The test project references a UI-free linked core assembly so unit tests do not require Windows App SDK activation.
 

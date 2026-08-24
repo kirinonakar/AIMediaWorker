@@ -67,6 +67,32 @@ class StartPositionTests(unittest.TestCase):
         self.assertEqual([29.0, 29.0, 7.0], extraction_durations)
         self.assertTrue(all(duration < 30 for duration in extraction_durations))
 
+    def test_playback_priority_uses_short_inference_windows(self) -> None:
+        worker = AsrWorker()
+        extraction_durations: list[float] = []
+        worker.emit = lambda _event: None
+        worker.engine = SimpleNamespace(transcribe=lambda *_: SimpleNamespace(text="hello", words=[]))
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as source:
+            def fake_extract(_path: str, _start: float, duration: float, **_kwargs: object) -> str:
+                extraction_durations.append(duration)
+                handle, path = tempfile.mkstemp(suffix=".wav")
+                import os
+                os.close(handle)
+                return path
+
+            with patch("worker.probe_duration", return_value=35.0), patch("worker.extract_window", side_effect=fake_extract):
+                worker._transcribe_file("job", {
+                    "input": source.name,
+                    "language": "English",
+                    "vad": False,
+                    "timestamps": True,
+                    "chunk_duration": 30,
+                    "playback_priority": True,
+                }, threading.Event())
+
+        self.assertEqual([15.0, 15.0, 5.0], extraction_durations)
+
 
 if __name__ == "__main__":
     unittest.main()

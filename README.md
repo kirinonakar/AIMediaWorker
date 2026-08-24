@@ -2,7 +2,7 @@
 
 AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 10, libmpv, FFmpeg, and a separately restartable Python Qwen3-ASR worker.
 
-It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; edits SRT/WebVTT/ASS subtitles on a timeline; generates bounded-memory waveforms; captures still video frames and window/region screen recordings with system audio; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
+It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; edits SRT/WebVTT/ASS subtitles on a timeline; captures still video frames and window/region screen recordings with system audio; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
 Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs; Explorer and WebDAV entries support name filtering and cyclic name/newest/oldest sorting. Drag the divider beside the side panel or above the timeline to resize either panel. The bottom playback toolbar provides previous/next media, seek, play/pause, stop, current-frame PNG capture, progress, time, volume, speed, and repeat controls. Window size, position, maximized state, panel visibility, and panel dimensions are restored on the next launch.
 
@@ -73,7 +73,7 @@ ffmpeg -version
 ffprobe -version
 ```
 
-FFmpeg is used as a streaming PCM source for waveforms, as the audio extractor for ASR, and as the H.264/AAC encoder for screen recordings. The implementation retains bounded min/max peaks instead of complete decoded audio and terminates child processes when work is cancelled.
+FFmpeg is used as the audio extractor for ASR and as the H.264/AAC encoder for screen recordings. Child processes are terminated when work is cancelled.
 
 ## Screenshots and screen recording
 
@@ -164,7 +164,6 @@ Per-user data is stored below `%LOCALAPPDATA%\AIMediaWorker`:
 - `settings.json`: atomically replaced application settings.
 - `recent.json`: recent media and playback positions.
 - `favorites.json`: favorite media and folders.
-- `Waveforms`: source-fingerprint waveform cache.
 - `Logs\app.jsonl`: size-rotated structured diagnostics without credentials.
 
 Corrupt settings are preserved as `settings.json.corrupt-*` and replaced with safe defaults. The UI supports English, 한국어, and 日本語 resources plus System/Light/Dark themes. A language change applies to newly created views and fully applies after restarting the application.

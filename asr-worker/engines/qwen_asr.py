@@ -29,6 +29,7 @@ class QwenAsrEngine:
         self.aligner_path: str | None = None
         self._torch: Any | None = None
         self._model_class: Any | None = None
+        self._inference_stream: Any | None = None
 
     def prepare_runtime(self, progress: Callable[[str, str, float, int, int], None] | None = None) -> tuple[Any, Any]:
         if self._torch is not None and self._model_class is not None:
@@ -101,6 +102,9 @@ class QwenAsrEngine:
             if progress:
                 progress("loading", loading_name, time.monotonic() - loading_started, 0, 0)
             self.model = Qwen3ASRModel.from_pretrained(model_local_path, **kwargs)
+            if actual_device.startswith("cuda") and hasattr(torch.cuda, "Stream"):
+                least_priority = torch.cuda.get_stream_priority_range()[0] if hasattr(torch.cuda, "get_stream_priority_range") else 0
+                self._inference_stream = torch.cuda.Stream(device=actual_device, priority=least_priority)
         finally:
             loading_finished.set()
             if loading_thread is not None:
@@ -112,6 +116,7 @@ class QwenAsrEngine:
         self.model = None
         self.model_path = None
         self.aligner_path = None
+        self._inference_stream = None
         try:
             import torch
             if torch.cuda.is_available():
@@ -123,11 +128,19 @@ class QwenAsrEngine:
         if self.model is None:
             raise RuntimeError("ASR model is not loaded")
         canonical_language = LANGUAGES.get(language.strip().lower(), language if language.strip() else None)
-        results = self.model.transcribe(
-            audio=audio_path,
-            language=canonical_language,
-            return_time_stamps=bool(timestamps and self.aligner_path),
-        )
+        arguments = {
+            "audio": audio_path,
+            "language": canonical_language,
+            "return_time_stamps": bool(timestamps and self.aligner_path),
+        }
+        if self._inference_stream is None or self._torch is None:
+            results = self.model.transcribe(**arguments)
+        else:
+            # Run ASR on CUDA's lowest-priority stream. This does not change results, but
+            # allows latency-sensitive GPU work to be scheduled ahead when supported.
+            with self._torch.cuda.stream(self._inference_stream):
+                results = self.model.transcribe(**arguments)
+            self._inference_stream.synchronize()
         if not results:
             return Transcription("", [])
         result = results[0]

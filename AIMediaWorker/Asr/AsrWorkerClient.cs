@@ -50,6 +50,14 @@ public sealed class AsrWorkerClient : IAsrEngine
         };
         startInfo.Environment["PYTHONUTF8"] = "1";
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
+        // Native ML runtimes otherwise create a worker per logical processor. Keeping a
+        // bounded pool leaves CPU time for libmpv's demux, audio and presentation threads.
+        var nativeThreadBudget = Math.Clamp(Environment.ProcessorCount / 2, 1, 4).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        startInfo.Environment["OMP_NUM_THREADS"] = nativeThreadBudget;
+        startInfo.Environment["MKL_NUM_THREADS"] = nativeThreadBudget;
+        startInfo.Environment["OPENBLAS_NUM_THREADS"] = "1";
+        startInfo.Environment["NUMEXPR_NUM_THREADS"] = nativeThreadBudget;
+        startInfo.Environment["TOKENIZERS_PARALLELISM"] = "false";
         var process = new Process
         {
             StartInfo = startInfo,
@@ -59,6 +67,7 @@ public sealed class AsrWorkerClient : IAsrEngine
         try
         {
             if (!process.Start()) throw new InvalidOperationException("Python did not start the ASR worker.");
+            TrySetBackgroundPriority(process);
             lock (_lifecycleLock) _process = process;
             _readerCancellation = new CancellationTokenSource();
             _stdoutReader = Task.Run(() => ReadStdoutAsync(process, _readerCancellation.Token), CancellationToken.None);
@@ -96,7 +105,7 @@ public sealed class AsrWorkerClient : IAsrEngine
     {
         if (startMicroseconds < 0) throw new ArgumentOutOfRangeException(nameof(startMicroseconds));
         var input = File.Exists(path) ? Path.GetFullPath(path) : Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri.AbsoluteUri : throw new FileNotFoundException("ASR input media was not found.", path);
-        var request = AsrRequest.Create("transcribe_file", new { input, language, timestamps = true, chunk_duration = chunkDurationSeconds, vad = useVad, segmentation, start_us = startMicroseconds });
+        var request = AsrRequest.Create("transcribe_file", new { input, language, timestamps = true, chunk_duration = chunkDurationSeconds, vad = useVad, segmentation, start_us = startMicroseconds, playback_priority = true });
         var channel = Register(request.Id);
         using var registration = cancellationToken.Register(() => _ = CancelAsync(request.Id, CancellationToken.None));
         SetState(AsrWorkerState.Busy);
@@ -273,6 +282,11 @@ public sealed class AsrWorkerClient : IAsrEngine
     }
 
     private static void TryTerminate(Process process) { try { if (!process.HasExited) process.Kill(true); } catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception) { } }
+    private static void TrySetBackgroundPriority(Process process)
+    {
+        try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or PlatformNotSupportedException) { }
+    }
     private static void ThrowIfError(AsrEvent result) { if (result.Event == "error") throw new AsrWorkerException(result.Code ?? "ASR_ERROR", result.Message ?? "The ASR worker reported an error."); }
     private void SetState(AsrWorkerState state) { if (State == state) return; State = state; StateChanged?.Invoke(this, state); }
 }

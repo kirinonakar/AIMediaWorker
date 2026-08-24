@@ -4,7 +4,6 @@ using AIMediaWorker.Subtitle.Editing;
 using AIMediaWorker.Subtitle.Parsing;
 using AIMediaWorker.Subtitle.Writing;
 using AIMediaWorker.Timeline;
-using AIMediaWorker.Waveform;
 using AIMediaWorker.Views;
 using AIMediaWorker.Settings;
 using AIMediaWorker.Asr;
@@ -24,7 +23,6 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Rectangle = Microsoft.UI.Xaml.Shapes.Rectangle;
-using Line = Microsoft.UI.Xaml.Shapes.Line;
 using Windows.Graphics;
 using Windows.Storage.Pickers;
 using Windows.Storage;
@@ -76,17 +74,11 @@ public sealed partial class MainWindow : Window
     private readonly AsrWorkerClient _asrEngine = new();
     private CancellationTokenSource? _aiOperationCancellation;
     private Task? _aiPipelineTask;
+    private int _generatedSubtitleUiRefreshQueued;
     private CancellationTokenSource? _seekAiRestartCancellation;
     private bool _subtitleGenerationCompletedForCurrentMedia;
     private bool _translationCompletedForCurrentMedia;
     private readonly SemaphoreSlim _dialogLock = new(1, 1);
-    private CancellationTokenSource? _waveformCancellation;
-    private Task? _waveformTask;
-    private WaveformData _waveform = WaveformData.Empty;
-    private string? _waveformSource;
-    private Rectangle? _waveformPlayhead;
-    private readonly WaveformGenerator _waveformGenerator = new();
-    private readonly WaveformCache _waveformCache = new(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIMediaWorker", "Waveforms"));
     private readonly MediaHistoryService _historyService = MediaHistoryService.CreateDefault();
     private readonly ObservableCollection<FavoriteListEntry> _favoriteEntries = [];
     private IMediaSource? _currentMediaSource;
@@ -532,10 +524,6 @@ public sealed partial class MainWindow : Window
 
     private void QueuePostOpenWork(string source, bool populateSiblingPlaylist, bool showInExplorer)
     {
-        _waveformCancellation?.Cancel();
-        _waveformSource = null;
-        _waveform = WaveformData.Empty;
-        DrawWaveform();
         _postOpenCancellation?.Cancel();
         _postOpenCancellation?.Dispose();
         _postOpenCancellation = new CancellationTokenSource();
@@ -1049,9 +1037,9 @@ public sealed partial class MainWindow : Window
             var shift = (visible.End - visible.Start) / 8;
             _timelineTransform.PanTo(_timelineTransform.ViewStartMicroseconds + (delta > 0 ? -shift : shift));
         }
-        DrawTimeline(); DrawWaveform(); e.Handled = true;
+        DrawTimeline(); e.Handled = true;
     }
-    private void OnVisualizationSizeChanged(object sender, SizeChangedEventArgs e) { DrawTimeline(); DrawWaveform(); }
+    private void OnVisualizationSizeChanged(object sender, SizeChangedEventArgs e) => DrawTimeline();
 
     private void DrawTimeline()
     {
@@ -1096,94 +1084,6 @@ public sealed partial class MainWindow : Window
             Canvas.SetTop(playhead, 0);
             TimelineCanvas.Children.Add(playhead);
         }
-        UpdateWaveformPlayhead();
-    }
-
-    private async Task GenerateWaveformAsync(string source)
-    {
-        _waveformCancellation?.Cancel();
-        _waveformCancellation?.Dispose();
-        _waveformCancellation = new CancellationTokenSource();
-        var token = _waveformCancellation.Token;
-        _waveform = WaveformData.Empty;
-        DrawWaveform();
-        try
-        {
-            var cached = await _waveformCache.TryLoadAsync(source, token);
-            if (cached is not null) _waveform = cached;
-            else
-            {
-                var progress = new ThrottledProgress(value => DispatcherQueue.TryEnqueue(() => StatusText.Text = F("StatusGeneratingWaveform", value)));
-                _waveform = await _waveformGenerator.GenerateAsync(source, progress: progress, cancellationToken: token);
-                await _waveformCache.SaveAsync(source, _waveform, token);
-            }
-            if (!token.IsCancellationRequested) { DrawWaveform(); StatusText.Text = L("StatusWaveformReady"); }
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception exception)
-        {
-            if (!token.IsCancellationRequested)
-            {
-                if (string.Equals(_waveformSource, source, StringComparison.OrdinalIgnoreCase)) _waveformSource = null;
-                StatusText.Text = F("StatusWaveformUnavailable", exception.Message);
-            }
-        }
-    }
-
-    private void StartWaveformGenerationForSubtitleGeneration(string source)
-    {
-        if (_currentHttpHeaders is { Count: > 0 } || string.Equals(_waveformSource, source, StringComparison.OrdinalIgnoreCase)) return;
-        _waveformSource = source;
-        _waveformTask = GenerateWaveformAsync(source);
-    }
-
-    private void DrawWaveform()
-    {
-        WaveformCanvas.Children.Clear();
-        _waveformPlayhead = null;
-        if (WaveformCanvas.ActualWidth <= 0) return;
-        if (_waveform.Peaks.Count == 0)
-        {
-            var text = new TextBlock { Text = L("WaveformEmptyMessage"), Opacity = 0.55 };
-            Canvas.SetLeft(text, 12); Canvas.SetTop(text, 12); WaveformCanvas.Children.Add(text);
-            UpdateWaveformPlayhead();
-            return;
-        }
-        var width = WaveformCanvas.ActualWidth;
-        var height = WaveformCanvas.ActualHeight;
-        var center = height / 2;
-        var count = Math.Max(1, (int)Math.Ceiling(width));
-        var brush = ThemeBrush("AccentTextFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 75, 150, 240));
-        var durationMicroseconds = Math.Max(1d, _waveform.Duration.TotalMilliseconds * 1000d);
-        for (var pixel = 0; pixel < count; pixel++)
-        {
-            var startTime = _timelineTransform.XToTime(pixel);
-            if (startTime >= durationMicroseconds) break;
-            var endTime = _timelineTransform.XToTime(pixel + 1);
-            var start = Math.Min(_waveform.Peaks.Count - 1, (int)Math.Floor(startTime / durationMicroseconds * _waveform.Peaks.Count));
-            var end = Math.Min(_waveform.Peaks.Count, Math.Max(start + 1, (int)Math.Ceiling(endTime / durationMicroseconds * _waveform.Peaks.Count)));
-            var minimum = 0f; var maximum = 0f;
-            for (var index = start; index < end; index++) { minimum = Math.Min(minimum, _waveform.Peaks[index].Minimum); maximum = Math.Max(maximum, _waveform.Peaks[index].Maximum); }
-            WaveformCanvas.Children.Add(new Line { X1 = pixel, X2 = pixel, Y1 = center - maximum * center, Y2 = center - minimum * center, Stroke = brush, StrokeThickness = 1 });
-        }
-        UpdateWaveformPlayhead();
-    }
-
-    private void UpdateWaveformPlayhead()
-    {
-        if (WaveformCanvas.ActualWidth <= 0 || WaveformCanvas.ActualHeight <= 0) return;
-        if (_waveformPlayhead is null)
-        {
-            _waveformPlayhead = new Rectangle
-            {
-                Width = 2,
-                Fill = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 255, 69, 0)),
-                IsHitTestVisible = false
-            };
-            WaveformCanvas.Children.Add(_waveformPlayhead);
-        }
-        _waveformPlayhead.Height = WaveformCanvas.ActualHeight;
-        Canvas.SetLeft(_waveformPlayhead, _timelineTransform.TimeToX((long)(_playback.Position.TotalMilliseconds * 1000)));
     }
 
     private void BindDocument(SubtitleDocument document)
@@ -1222,8 +1122,8 @@ public sealed partial class MainWindow : Window
         PositionText.Text = $"{FormatTime(_playback.Position)} / {FormatTime(_playback.Duration)}"; DecoderText.Text = _playback.DecoderDescription ?? string.Empty;
         ResolutionText.Text = _playback.VideoWidth is { } width && _playback.VideoHeight is { } height ? $"{width}×{height}" : string.Empty;
         var positionMicroseconds = Math.Max(0, _playback.Position.Ticks / 10);
-        var visualizationWidth = Math.Max(TimelineCanvas.ActualWidth, WaveformCanvas.ActualWidth);
-        if (visualizationWidth > 0 && _timelineTransform.EnsureVisible(positionMicroseconds, visualizationWidth)) DrawWaveform();
+        var visualizationWidth = TimelineCanvas.ActualWidth;
+        if (visualizationWidth > 0) _timelineTransform.EnsureVisible(positionMicroseconds, visualizationWidth);
         var cue = _document.FindActiveCue(positionMicroseconds);
         if (!_subtitleEditorHasFocus)
         {
@@ -1802,7 +1702,6 @@ public sealed partial class MainWindow : Window
             StatusText.Text = L("AutomaticSubtitlesOpenMedia");
             return;
         }
-        if (generate) StartWaveformGenerationForSubtitleGeneration(source);
         if (generate && !File.Exists(AsrRuntimePaths.PythonExecutable))
         {
             StatusText.Text = L("AsrInstallRequiredMessage");
@@ -1887,8 +1786,7 @@ public sealed partial class MainWindow : Window
                     var cue = new SubtitleCue { StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds, Text = segment.Text, Confidence = segment.Confidence, Source = SubtitleCueSource.AutomaticSpeechRecognition };
                     track.Cues.Add(cue);
                     translationQueue.Writer.TryWrite(cue);
-                    DrawTimeline();
-                    ScheduleSubtitleOverlaySync();
+                    ScheduleGeneratedSubtitleUiRefresh();
                 }
             }
         }
@@ -1904,7 +1802,7 @@ public sealed partial class MainWindow : Window
             else translatedCount = await translationTask;
         }
         if (!ReferenceEquals(_document, document)) return false;
-        document.Sort(); document.MarkDirty(); ScheduleSubtitleOverlaySync();
+        document.Sort(); document.MarkDirty(); DrawTimeline(); ScheduleSubtitleOverlaySync();
         StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
         return TranslateMenuItem.IsChecked && translatedCount == track.Cues.Count;
     }
@@ -2098,8 +1996,7 @@ public sealed partial class MainWindow : Window
                 .Select(item => (IUndoableSubtitleCommand)new EditSubtitleTextCommand(targetDocument, cuesById[item.Key], item.Value))
                 .ToArray();
             if (commands.Length > 0) _history.Execute(new CompositeSubtitleCommand("Translate subtitle batch", commands));
-            DrawTimeline();
-            ScheduleSubtitleOverlaySync();
+            ScheduleGeneratedSubtitleUiRefresh();
             StatusText.Text = F("StatusTranslating", batch.Completed, batch.Total);
         }
     }
@@ -3026,6 +2923,23 @@ public sealed partial class MainWindow : Window
         _ = SyncSubtitleOverlayAsync(token);
     }
 
+    private void ScheduleGeneratedSubtitleUiRefresh()
+    {
+        if (Interlocked.Exchange(ref _generatedSubtitleUiRefreshQueued, 1) != 0) return;
+        _ = DispatchGeneratedSubtitleUiRefreshAsync();
+    }
+
+    private async Task DispatchGeneratedSubtitleUiRefreshAsync()
+    {
+        await Task.Delay(200);
+        if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            Interlocked.Exchange(ref _generatedSubtitleUiRefreshQueued, 0);
+            DrawTimeline();
+            ScheduleSubtitleOverlaySync();
+        })) Interlocked.Exchange(ref _generatedSubtitleUiRefreshQueued, 0);
+    }
+
     private void EnableGeneratedSubtitleOverlay()
     {
         if (!_playback.IsAvailable) return;
@@ -3173,19 +3087,11 @@ public sealed partial class MainWindow : Window
         await _historyService.LoadRecentAsync();
         RememberCurrentPosition();
 
-        _waveformCancellation?.Cancel();
         _postOpenCancellation?.Cancel();
         _overlaySyncCancellation?.Cancel();
         CancelPendingSeekAiRestart();
         _aiOperationCancellation?.Cancel();
         _webDavListingCancellation?.Cancel();
-
-        if (_waveformTask is { IsCompleted: false } waveformTask)
-        {
-            try { await waveformTask.WaitAsync(TimeSpan.FromSeconds(3)); }
-            catch (OperationCanceledException) { }
-            catch (TimeoutException exception) { await AppLog.WriteAsync("warning", "shutdown", "WAVEFORM_SHUTDOWN_TIMEOUT", exception.Message, exception); }
-        }
 
         _settingsWindow?.Close();
         if (_cameraWindow is { } cameraWindow) await cameraWindow.CloseAsync();
@@ -3202,7 +3108,6 @@ public sealed partial class MainWindow : Window
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "HISTORY_SAVE_ERROR", exception.Message, exception); }
         try { await SettingsService.CreateDefault().SaveAsync(_settings); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "SETTINGS_SAVE_ERROR", exception.Message, exception); }
-        _waveformCancellation?.Dispose(); _waveformCancellation = null;
         _postOpenCancellation?.Dispose(); _postOpenCancellation = null;
         _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = null;
         _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null;
@@ -3273,23 +3178,6 @@ public sealed partial class MainWindow : Window
     private sealed record PendingPostOpenWork(string Source, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
     private sealed record OverlayCueSnapshot(Guid Id, long StartMicroseconds, long EndMicroseconds, string Text, string? Style, string? Speaker);
     private static OverlayCueSnapshot? FindActiveOverlayCue(IEnumerable<OverlayCueSnapshot> cues, long positionMicroseconds) => cues.LastOrDefault(cue => cue.StartMicroseconds <= positionMicroseconds && positionMicroseconds < cue.EndMicroseconds);
-
-    private sealed class ThrottledProgress(Action<double> callback, int intervalMilliseconds = 200) : IProgress<double>
-    {
-        private readonly object _sync = new();
-        private long _lastReport = Environment.TickCount64 - intervalMilliseconds;
-
-        public void Report(double value)
-        {
-            lock (_sync)
-            {
-                var now = Environment.TickCount64;
-                if (value < 1 && now - _lastReport < intervalMilliseconds) return;
-                _lastReport = now;
-            }
-            callback(value);
-        }
-    }
 
     private sealed record BrowserEntry(string Path, bool IsDirectory, long? Length, DateTime LastModified)
     {
