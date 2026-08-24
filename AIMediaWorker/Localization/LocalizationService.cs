@@ -15,7 +15,8 @@ public static class LocalizationService
 
     public static string Get(string key)
     {
-        var value = ResourceManager.Current.MainResourceMap.GetValue($"Resources/{key}", ResourceContext.GetForViewIndependentUse());
+        var resourcePath = key.Replace('.', '/');
+        var value = ResourceManager.Current.MainResourceMap.GetValue($"Resources/{resourcePath}", ResourceContext.GetForViewIndependentUse());
         return value?.ValueAsString ?? key;
     }
 }

@@ -8,8 +8,14 @@
             <Grid Grid.Row="1" ColumnSpacing="16">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="210" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                 <Border Padding="4" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
-                    <ListView x:Name="SettingsSectionList" ItemsSource="{x:Bind SettingsSections}" SelectionMode="Single">
-                        <ListView.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Padding="10,8" TextWrapping="Wrap" /></DataTemplate></ListView.ItemTemplate>
+                    <ListView x:Name="SettingsSectionList" SelectionMode="Single">
+                        <ListViewItem><TextBlock x:Uid="SettingsGeneralSection" Text="General" Padding="10,8" /></ListViewItem>
+                        <ListViewItem><TextBlock x:Uid="SettingsPlaybackSection" Text="Playback" Padding="10,8" /></ListViewItem>
+                        <ListViewItem><TextBlock x:Uid="SettingsSubtitleSection" Text="Subtitle" Padding="10,8" /></ListViewItem>
+                        <ListViewItem><TextBlock x:Uid="SettingsAsrSection" Text="Speech recognition" Padding="10,8" TextWrapping="Wrap" /></ListViewItem>
+                        <ListViewItem><TextBlock x:Uid="SettingsNetworkSection" Text="Network" Padding="10,8" /></ListViewItem>
+                        <ListViewItem><TextBlock x:Uid="SettingsCaptureSection" Text="Capture" Padding="10,8" /></ListViewItem>
+                        <ListViewItem><TextBlock x:Uid="SettingsAiSection" Text="AI" Padding="10,8" /></ListViewItem>
                     </ListView>
                 </Border>
                 <Grid Grid.Column="1">
@@ -19,7 +25,7 @@
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <TextBlock x:Uid="LanguageSetting" Text="Language" VerticalAlignment="Center" /><ComboBox x:Name="LanguageCombo" Grid.Column="1" ItemsSource="{x:Bind Languages}" />
                 <TextBlock x:Uid="ThemeSetting" Grid.Row="1" Text="Theme" VerticalAlignment="Center" /><ComboBox x:Name="ThemeCombo" Grid.Row="1" Grid.Column="1" ItemsSource="{x:Bind Themes}" />
-                <TextBlock x:Uid="RecentItemsSetting" Grid.Row="2" Text="Recent items" VerticalAlignment="Center" /><NumberBox x:Name="RecentCountBox" Grid.Row="2" Grid.Column="1" Minimum="1" Maximum="100" SpinButtonPlacementMode="Inline" />
+                <TextBlock x:Uid="RecentItemsSetting" Grid.Row="2" Text="Recent items" VerticalAlignment="Center" /><NumberBox x:Name="RecentCountBox" Grid.Row="2" Grid.Column="1" Minimum="1" Maximum="20" SpinButtonPlacementMode="Inline" />
                 <CheckBox x:Uid="ResumeSetting" x:Name="ResumeCheck" Grid.Row="3" Grid.Column="1" Content="Resume playback position" />
             </Grid></Expander>
                 </StackPanel></ScrollViewer>

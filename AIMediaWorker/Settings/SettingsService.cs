@@ -92,7 +92,7 @@ public sealed class SettingsService
             settings.General.Shortcuts[ShortcutActions.NextMedia] = "Ctrl+F";
         }
         foreach (var item in ShortcutActions.CreateDefaults()) settings.General.Shortcuts.TryAdd(item.Key, item.Value);
-        settings.General.RecentMediaCount = Math.Clamp(settings.General.RecentMediaCount, 1, 100);
+        settings.General.RecentMediaCount = Math.Clamp(settings.General.RecentMediaCount, 1, 20);
         settings.Network.TimeoutSeconds = Math.Clamp(settings.Network.TimeoutSeconds, 5, 300);
         settings.Playback.SeekIntervalSeconds = Math.Clamp(settings.Playback.SeekIntervalSeconds, 1, 60);
         settings.Window.Width = Math.Clamp(settings.Window.Width, 640, 7680);

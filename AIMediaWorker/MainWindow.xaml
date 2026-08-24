@@ -78,25 +78,27 @@
             </Border>
             <primitives:Thumb x:Name="RightPanelSplitter" Grid.Column="1" DragDelta="OnRightPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
             <Grid x:Name="SubtitlePanel" Grid.Column="2" Margin="4,4,8,4">
-                <TabView x:Name="RightPanelTabs" IsAddTabButtonVisible="False">
-                    <TabViewItem x:Name="ExplorerTab" Header="Explorer" IsClosable="False">
+                <Grid ColumnSpacing="4">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
+                    <Grid>
+                    <Grid x:Name="ExplorerSection">
                         <Grid RowSpacing="6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                             <CommandBar DefaultLabelPosition="Collapsed">
-                                <AppBarButton Icon="OpenFile" Label="Choose folder" Click="OnChooseBrowserFolderClick" />
-                                <AppBarButton Icon="Back" Label="Parent folder" Click="OnBrowserParentClick" />
-                                <AppBarButton Icon="Refresh" Label="Refresh" Click="OnBrowserRefreshClick" />
+                                <AppBarButton x:Uid="BrowserChooseFolder" Icon="OpenFile" Label="Choose folder" Click="OnChooseBrowserFolderClick" />
+                                <AppBarButton x:Uid="BrowserParentFolder" Icon="Back" Label="Parent folder" Click="OnBrowserParentClick" />
+                                <AppBarButton x:Uid="BrowserRefresh" Icon="Refresh" Label="Refresh" Click="OnBrowserRefreshClick" />
                             </CommandBar>
                             <TextBox x:Name="BrowserPathBox" Grid.Row="1" IsReadOnly="True" />
                             <ListView x:Name="FolderEntryList" Grid.Row="2" SelectionMode="Single" DoubleTapped="OnFolderEntryDoubleTapped">
                                 <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnBrowserEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddBrowserFavorite" Text="Add to favorites" Click="OnAddBrowserFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding Details}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
                         </Grid>
-                    </TabViewItem>
-                    <TabViewItem Header="Playlist" IsClosable="False">
-                        <Grid RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><CommandBar DefaultLabelPosition="Collapsed"><AppBarButton Icon="OpenFile" Label="Add media" Click="OnOpenMediaClick" /><AppBarButton Icon="Delete" Label="Clear" Click="OnClearPlaylistClick" /></CommandBar><ListView x:Name="PlaylistList" Grid.Row="1" SelectionMode="Single" DoubleTapped="OnPlaylistDoubleTapped"><ListView.ItemTemplate><DataTemplate><Grid Padding="5"><TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Path}" /></Grid></DataTemplate></ListView.ItemTemplate></ListView></Grid>
-                    </TabViewItem>
-                    <TabViewItem x:Name="WebDavTab" Header="WebDAV" IsClosable="False">
+                    </Grid>
+                    <Grid x:Name="PlaylistSection" Visibility="Collapsed">
+                        <Grid RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><CommandBar DefaultLabelPosition="Collapsed"><AppBarButton x:Uid="PlaylistAddMedia" Icon="OpenFile" Label="Add media" Click="OnOpenMediaClick" /><AppBarButton x:Uid="PlaylistClear" Icon="Delete" Label="Clear" Click="OnClearPlaylistClick" /></CommandBar><ListView x:Name="PlaylistList" Grid.Row="1" SelectionMode="Single" DoubleTapped="OnPlaylistDoubleTapped"><ListView.ItemTemplate><DataTemplate><Grid Padding="5"><TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Path}" /></Grid></DataTemplate></ListView.ItemTemplate></ListView></Grid>
+                    </Grid>
+                    <Grid x:Name="WebDavSection" Visibility="Collapsed">
                         <Grid RowSpacing="6">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -136,8 +138,8 @@
                                 <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnWebDavEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddWebDavFavorite" Text="Add to favorites" Click="OnAddWebDavFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
                         </Grid>
-                    </TabViewItem>
-                    <TabViewItem x:Uid="FavoritesTab" x:Name="FavoritesTab" Header="Favorites" IsClosable="False">
+                    </Grid>
+                    <Grid x:Name="FavoritesSection" Visibility="Collapsed">
                         <Grid RowSpacing="6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                             <CommandBar DefaultLabelPosition="Collapsed">
@@ -145,7 +147,7 @@
                                 <AppBarButton x:Uid="RemoveSelectedFavoritesButton" x:Name="RemoveSelectedFavoritesButton" Icon="Delete" Label="Remove from favorites" Click="OnRemoveSelectedFavoritesClick" IsEnabled="False" />
                             </CommandBar>
                             <Grid Grid.Row="1">
-                                <ListView x:Name="FavoriteList" SelectionMode="Multiple" SelectionChanged="OnFavoriteSelectionChanged" DoubleTapped="OnFavoriteDoubleTapped">
+                                <ListView x:Name="FavoriteList" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnFavoriteItemClick" SelectionChanged="OnFavoriteSelectionChanged">
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <Grid Padding="6" ColumnSpacing="8">
@@ -163,8 +165,8 @@
                                 <TextBlock x:Uid="FavoritesEmptyText" x:Name="FavoritesEmptyText" Text="No favorites" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" IsHitTestVisible="False" />
                             </Grid>
                         </Grid>
-                    </TabViewItem>
-                    <TabViewItem x:Name="SubtitlesTab" Header="Subtitles" IsClosable="False">
+                    </Grid>
+                    <Grid x:Name="SubtitlesSection" Visibility="Collapsed">
                         <Grid RowSpacing="6">
                             <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <ListView x:Name="SubtitleList" SelectionMode="Multiple" IsItemClickEnabled="True" ItemClick="OnSubtitleItemClick">
@@ -172,8 +174,20 @@
                             </ListView>
                             <CommandBar Grid.Row="1" DefaultLabelPosition="Collapsed"><AppBarButton x:Uid="AddCueButton" Icon="Add" Label="Add" Click="OnAddCueClick" /><AppBarButton x:Uid="SplitCueButton" Icon="Cut" Label="Split" Click="OnSplitCueClick" /><AppBarButton x:Uid="DeleteCueButton" Icon="Delete" Label="Delete" Click="OnDeleteCueClick" /><AppBarSeparator /><AppBarButton x:Uid="UndoButton" Icon="Undo" Label="Undo" Click="OnUndoClick" /><AppBarButton x:Uid="RedoButton" Icon="Redo" Label="Redo" Click="OnRedoClick" /></CommandBar>
                         </Grid>
-                    </TabViewItem>
-                </TabView>
+                    </Grid>
+                    </Grid>
+                    <Border Grid.Column="1" Padding="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
+                        <ListView x:Name="RightPanelSectionList" SelectionMode="Single" HorizontalContentAlignment="Center">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Width="40" Height="42" ToolTipService.ToolTip="{Binding Label}">
+                                        <FontIcon Glyph="{Binding IconGlyph}" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Border>
+                </Grid>
             </Grid>
         </Grid>
         <Grid x:Name="PlaybackControls" Grid.Row="5" Padding="8,4" ColumnSpacing="6">
@@ -182,7 +196,7 @@
             <Button x:Name="PreviousButton" Grid.Column="1" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media (Ctrl+B)"><Image Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/previous.svg" /></Image.Source></Image></Button>
             <Button x:Name="SeekBackButton" Grid.Column="2" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSeekBackClick" ToolTipService.ToolTip="Seek backward"><Image Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/seek-back.svg" /></Image.Source></Image></Button>
             <Button x:Name="PlayPauseButton" Grid.Column="3" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnPlayPauseClick" ToolTipService.ToolTip="Play / Pause (Space)"><Image x:Name="PlayPauseIcon" Width="21" Height="21"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/play.svg" /></Image.Source></Image></Button>
-            <Button Grid.Column="4" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnStopClick" ToolTipService.ToolTip="Stop"><Image Width="18" Height="18"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/stop.svg" /></Image.Source></Image></Button>
+            <Button x:Name="StopButton" Grid.Column="4" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnStopClick" ToolTipService.ToolTip="Stop"><Image Width="18" Height="18"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/stop.svg" /></Image.Source></Image></Button>
             <Button x:Name="SeekForwardButton" Grid.Column="5" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSeekForwardClick" ToolTipService.ToolTip="Seek forward"><Image Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/seek-forward.svg" /></Image.Source></Image></Button>
             <Button x:Name="NextButton" Grid.Column="6" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media (Ctrl+F)"><Image Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/next.svg" /></Image.Source></Image></Button>
             <Slider x:Name="PositionSlider" Grid.Column="7" Minimum="0" Maximum="1" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
@@ -206,7 +220,10 @@
             </Grid>
             <TextBlock x:Uid="AudioLabel" Grid.Column="1" Text="Audio" VerticalAlignment="Center" /><ComboBox x:Name="AudioTrackCombo" Grid.Column="2" DisplayMemberPath="DisplayName" SelectionChanged="OnAudioTrackChanged" />
             <TextBlock x:Uid="SubtitlesLabel" Grid.Column="3" Text="Subtitles" VerticalAlignment="Center" /><ComboBox x:Name="SubtitleTrackCombo" Grid.Column="4" DisplayMemberPath="DisplayName" SelectionChanged="OnSubtitleTrackChanged" />
-            <TextBlock x:Name="DecoderText" Grid.Column="5" VerticalAlignment="Center" Opacity="0.7" />
+            <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <TextBlock x:Name="ResolutionText" Opacity="0.7" />
+                <TextBlock x:Name="DecoderText" Opacity="0.7" />
+            </StackPanel>
         </Grid>
     </Grid>
 </Window>

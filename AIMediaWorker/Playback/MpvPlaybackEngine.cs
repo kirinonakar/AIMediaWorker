@@ -33,6 +33,8 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public bool AreSubtitlesVisible { get; private set; } = true;
     public IReadOnlyList<MediaTrack> Tracks { get { lock (_sync) return new ReadOnlyCollection<MediaTrack>(_tracks.ToArray()); } }
     public string? DecoderDescription { get; private set; }
+    public int? VideoWidth { get; private set; }
+    public int? VideoHeight { get; private set; }
     public string? LibraryVersion { get; private set; }
 
     public event EventHandler? StateChanged;
@@ -147,6 +149,8 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             CurrentSource = source;
             Position = TimeSpan.Zero;
             Duration = TimeSpan.Zero;
+            VideoWidth = null;
+            VideoHeight = null;
             _editorSubtitlePath = null;
             cancellationToken.ThrowIfCancellationRequested();
             if (httpHeaders is null || httpHeaders.Count == 0) SetProperty("http-header-fields", string.Empty);
@@ -347,6 +351,8 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             changed = true;
         }
         if (duration is not null) Duration = TimeSpan.FromSeconds(Math.Max(0, duration.Value));
+        VideoWidth = GetInt("dwidth") ?? GetInt("width");
+        VideoHeight = GetInt("dheight") ?? GetInt("height");
         DecoderDescription = GetString("video-codec") is { } codec ? $"{codec} / {GetString("hwdec-current") ?? "software"}" : null;
         if (changed) PositionChanged?.Invoke(this, EventArgs.Empty);
     }

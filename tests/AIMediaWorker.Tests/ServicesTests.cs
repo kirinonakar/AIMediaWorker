@@ -80,6 +80,8 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal("Ctrl+Shift+N", loaded.General.Shortcuts[ShortcutActions.PlayFromBeginning]);
         Assert.Equal("Ctrl+B", loaded.General.Shortcuts[ShortcutActions.PreviousMedia]);
         Assert.Equal("Ctrl+F", loaded.General.Shortcuts[ShortcutActions.NextMedia]);
+        Assert.Equal("Ctrl+1", loaded.General.Shortcuts[ShortcutActions.ToggleTimelinePanel]);
+        Assert.Equal("Ctrl+2", loaded.General.Shortcuts[ShortcutActions.ToggleSidePanel]);
     }
 
     [Fact]
@@ -134,6 +136,26 @@ public sealed class ServicesTests : IDisposable
         var loaded = new MediaHistoryService(path);
         await loaded.LoadAsync();
         Assert.Equal(2, loaded.Recent.Count);
+    }
+
+    [Fact]
+    public async Task RecentMediaNeverExceedsTwentyItems()
+    {
+        var path = Path.Combine(_folder, "history-limit.json");
+        var history = new MediaHistoryService(path);
+        for (var index = 0; index < 25; index++)
+        {
+            history.AddRecent(new HttpMediaSource(new Uri($"https://example.test/media-{index}.mp4")), index, 100);
+        }
+
+        Assert.Equal(20, history.Recent.Count);
+        Assert.Equal("https://example.test/media-24.mp4", history.Recent[0].Location);
+        Assert.Equal("https://example.test/media-5.mp4", history.Recent[^1].Location);
+
+        await history.SaveAsync();
+        var loaded = new MediaHistoryService(path);
+        await loaded.LoadAsync();
+        Assert.Equal(20, loaded.Recent.Count);
     }
 
     [Fact]

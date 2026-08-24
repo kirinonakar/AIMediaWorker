@@ -9,6 +9,7 @@ public sealed record FavoriteItem(MediaSourceKind SourceType, string DisplayName
 
 public sealed class MediaHistoryService
 {
+    private const int MaximumRecentItems = 20;
     private readonly string _path;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
@@ -25,7 +26,7 @@ public sealed class MediaHistoryService
             if (!File.Exists(_path)) return;
             await using var stream = File.OpenRead(_path);
             var data = await JsonSerializer.DeserializeAsync<HistoryData>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-            Recent = data?.Recent ?? [];
+            Recent = (data?.Recent ?? []).Take(MaximumRecentItems).ToList();
             Favorites = data?.Favorites ?? [];
         }
         catch (OperationCanceledException) { throw; }
@@ -41,7 +42,8 @@ public sealed class MediaHistoryService
         var key = Normalize(source.Location);
         Recent.RemoveAll(item => Normalize(item.Location) == key);
         Recent.Insert(0, new RecentMediaItem(source.Kind, source.DisplayName, source.Location, DateTimeOffset.UtcNow, Math.Max(0, positionMicroseconds)));
-        if (Recent.Count > Math.Max(1, limit)) Recent.RemoveRange(Math.Max(1, limit), Recent.Count - Math.Max(1, limit));
+        var effectiveLimit = Math.Clamp(limit, 1, MaximumRecentItems);
+        if (Recent.Count > effectiveLimit) Recent.RemoveRange(effectiveLimit, Recent.Count - effectiveLimit);
     }
 
     public void AddFavorite(IMediaSource source, bool isFolder = false)

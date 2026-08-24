@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
+using Microsoft.Windows.AppLifecycle;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -15,6 +16,7 @@ using Windows.ApplicationModel;
 using Windows.ApplicationModel.Activation;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
+using Windows.Storage;
 using AIMediaWorker.Settings;
 using AIMediaWorker.Localization;
 using AIMediaWorker.Diagnostics;
@@ -65,7 +67,7 @@ namespace AIMediaWorker
                 }
                 catch (Exception exception) { await AppLog.WriteAsync("warning", "credentials", "WEBDAV_CREDENTIAL_MIGRATION_ERROR", exception.Message, exception); }
                 LocalizationService.Apply(settings.General.Language);
-                var launchSource = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(value => File.Exists(value) || Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https");
+                var launchSource = GetLaunchSource();
                 var mainWindow = new MainWindow(launchSource, settings);
                 mainWindow.ApplySavedWindowPlacement(settings.Window);
                 _window = mainWindow;
@@ -76,6 +78,20 @@ namespace AIMediaWorker
                 await AppLog.WriteAsync("critical", "startup", "STARTUP_ERROR", exception.Message, exception);
                 throw;
             }
+        }
+
+        private static string? GetLaunchSource()
+        {
+            var activation = Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs();
+            if (activation.Kind == ExtendedActivationKind.File && activation.Data is IFileActivatedEventArgs fileActivation)
+            {
+                var activatedFile = fileActivation.Files.OfType<StorageFile>().FirstOrDefault();
+                if (activatedFile is not null) return activatedFile.Path;
+            }
+
+            return Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(value =>
+                File.Exists(value) ||
+                Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https");
         }
 
     }

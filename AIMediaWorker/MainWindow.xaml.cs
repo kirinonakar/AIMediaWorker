@@ -125,6 +125,8 @@ public sealed partial class MainWindow : Window
         _webDavCredentials = new WebDavCredentialStore(_windowsCredentials);
         _webDavClient = new WebDavClient(_windowsCredentials, timeout: TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds));
         InitializeComponent();
+        RightPanelSectionList.SelectionChanged += OnRightPanelSectionChanged;
+        RefreshRightPanelSections();
         GenerateSubtitlesMenuItem.IsChecked = _settings.Asr.GenerateSubtitles;
         TranslateMenuItem.IsChecked = _settings.Llm.TranslateSubtitles;
         _pendingLaunchSource = initialSource;
@@ -501,7 +503,11 @@ public sealed partial class MainWindow : Window
     private void OnPlayPauseClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.TogglePause);
     private void PlayFromBeginning() => SeekAndRestartAi(TimeSpan.Zero, () => { _playback.Seek(TimeSpan.Zero, true); _playback.Play(); });
     private void OnGoToBeginningClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(TimeSpan.Zero, () => _playback.Seek(TimeSpan.Zero, true));
-    private void OnStopClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.Stop);
+    private void OnStopClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(TimeSpan.Zero, () =>
+    {
+        _playback.Seek(TimeSpan.Zero, true);
+        _playback.Pause();
+    });
     private async void OnPreviousMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(-1);
     private async void OnNextMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(1);
     private void OnFrameStepClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.FrameStep());
@@ -524,7 +530,7 @@ public sealed partial class MainWindow : Window
     {
         _repeatMode = _repeatMode switch { RepeatMode.Off => RepeatMode.One, RepeatMode.One => RepeatMode.All, _ => RepeatMode.Off };
         RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.All => "repeat-all", _ => "repeat" });
-        ToolTipService.SetToolTip(RepeatButton, _repeatMode switch { RepeatMode.One => "Repeat current media", RepeatMode.All => "Repeat playlist", _ => "Repeat off" });
+        ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.All => "TooltipRepeatPlaylist", _ => "TooltipRepeatOff" }));
         UpdatePlaylistButtons();
     }
 
@@ -988,7 +994,16 @@ public sealed partial class MainWindow : Window
 
     private void OnPlaybackStateChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
-        PlayPauseIcon.Source = PlaybackIconSource(_playback.State == PlaybackState.Playing ? "pause" : "play"); StatusText.Text = _playback.State.ToString();
+        PlayPauseIcon.Source = PlaybackIconSource(_playback.State == PlaybackState.Playing ? "pause" : "play");
+        StatusText.Text = L(_playback.State switch
+        {
+            PlaybackState.Playing => "PlaybackStatePlaying",
+            PlaybackState.Paused => "PlaybackStatePaused",
+            PlaybackState.Loading => "PlaybackStateLoading",
+            PlaybackState.Idle => "PlaybackStateIdle",
+            PlaybackState.Failed => "PlaybackStateFailed",
+            _ => "PlaybackStateUninitialized"
+        });
         if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) StartPostOpenWorkIfReady();
         if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null) StartCheckedAiPipeline();
     });
@@ -996,6 +1011,7 @@ public sealed partial class MainWindow : Window
     {
         _updatingPosition = true; PositionSlider.Maximum = Math.Max(1, _playback.Duration.TotalSeconds); if (!_positionSliderDragging) PositionSlider.Value = Math.Clamp(_playback.Position.TotalSeconds, 0, PositionSlider.Maximum); _updatingPosition = false;
         PositionText.Text = $"{FormatTime(_playback.Position)} / {FormatTime(_playback.Duration)}"; DecoderText.Text = _playback.DecoderDescription ?? string.Empty;
+        ResolutionText.Text = _playback.VideoWidth is { } width && _playback.VideoHeight is { } height ? $"{width}×{height}" : string.Empty;
         var positionMicroseconds = Math.Max(0, _playback.Position.Ticks / 10);
         var visualizationWidth = Math.Max(TimelineCanvas.ActualWidth, WaveformCanvas.ActualWidth);
         if (visualizationWidth > 0 && _timelineTransform.EnsureVisible(positionMicroseconds, visualizationWidth)) DrawWaveform();
@@ -1077,7 +1093,9 @@ public sealed partial class MainWindow : Window
         var playFromBeginning = Is(ShortcutActions.PlayFromBeginning);
         var previousMedia = Is(ShortcutActions.PreviousMedia);
         var nextMedia = Is(ShortcutActions.NextMedia);
-        if (isTextInput && !save && !saveAs && !close && !playPauseAlternate && !playFromBeginning && !previousMedia && !nextMedia) return;
+        var toggleTimelinePanel = Is(ShortcutActions.ToggleTimelinePanel);
+        var toggleSidePanel = Is(ShortcutActions.ToggleSidePanel);
+        if (isTextInput && !save && !saveAs && !close && !playPauseAlternate && !playFromBeginning && !previousMedia && !nextMedia && !toggleTimelinePanel && !toggleSidePanel) return;
         if (close) OnExitClick(this, new RoutedEventArgs());
         else if (saveAs) OnSaveSubtitleAsClick(this, new RoutedEventArgs());
         else if (save) OnSaveSubtitleClick(this, new RoutedEventArgs());
@@ -1094,6 +1112,8 @@ public sealed partial class MainWindow : Window
         else if (Is(ShortcutActions.DeleteCue)) OnDeleteCueClick(this, new RoutedEventArgs());
         else if (Is(ShortcutActions.Fullscreen)) ToggleFullscreen();
         else if (Is(ShortcutActions.ToggleSubtitles)) { SubtitleVisibilityMenuItem.IsChecked = !_playback.AreSubtitlesVisible; OnToggleSubtitleVisibilityClick(this, new RoutedEventArgs()); }
+        else if (toggleTimelinePanel) { ShowBottomPanelMenuItem.IsChecked = !_bottomPanelVisible; OnToggleBottomPanelClick(this, new RoutedEventArgs()); }
+        else if (toggleSidePanel) { ShowRightPanelMenuItem.IsChecked = !_rightPanelVisible; OnToggleRightPanelClick(this, new RoutedEventArgs()); }
         else return;
         e.Handled = true;
     }
@@ -1123,18 +1143,22 @@ public sealed partial class MainWindow : Window
         UndoMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.Undo);
         RedoMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.Redo);
         SubtitleVisibilityMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSubtitles);
+        ShowBottomPanelMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleTimelinePanel);
+        ShowRightPanelMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSidePanel);
         FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F")} · Esc";
 
         ToolTipService.SetToolTip(PlayPauseButton, $"{L("PlayPause.Text")} ({Combine(Shortcut(ShortcutActions.PlayPause), Shortcut(ShortcutActions.PlayPauseAlternate))})");
-        ToolTipService.SetToolTip(BeginningButton, "Go to beginning (Home)");
-        ToolTipService.SetToolTip(PreviousButton, $"Previous media ({Shortcut(ShortcutActions.PreviousMedia)})");
-        ToolTipService.SetToolTip(NextButton, $"Next media ({Shortcut(ShortcutActions.NextMedia)})");
-        ToolTipService.SetToolTip(SeekBackButton, $"Seek backward {_settings.Playback.SeekIntervalSeconds:0.#}s ({Shortcut(ShortcutActions.SeekBackward)})");
-        ToolTipService.SetToolTip(SeekForwardButton, $"Seek forward {_settings.Playback.SeekIntervalSeconds:0.#}s ({Shortcut(ShortcutActions.SeekForward)})");
-        ToolTipService.SetToolTip(MuteButton, "Mute (M)");
-        ToolTipService.SetToolTip(VolumeSlider, "Volume (↑ / ↓)");
-        ToolTipService.SetToolTip(PositionSlider, $"Seek (Home / End) · Play from beginning ({Shortcut(ShortcutActions.PlayFromBeginning)})");
-        ToolTipService.SetToolTip(SubtitleList, $"Previous: {Shortcut(ShortcutActions.PreviousSubtitle)} · Next: {Shortcut(ShortcutActions.NextSubtitle)}");
+        ToolTipService.SetToolTip(BeginningButton, L("TooltipBeginning"));
+        ToolTipService.SetToolTip(PreviousButton, F("TooltipPreviousMedia", Shortcut(ShortcutActions.PreviousMedia)));
+        ToolTipService.SetToolTip(NextButton, F("TooltipNextMedia", Shortcut(ShortcutActions.NextMedia)));
+        ToolTipService.SetToolTip(SeekBackButton, F("TooltipSeekBackward", _settings.Playback.SeekIntervalSeconds, Shortcut(ShortcutActions.SeekBackward)));
+        ToolTipService.SetToolTip(SeekForwardButton, F("TooltipSeekForward", _settings.Playback.SeekIntervalSeconds, Shortcut(ShortcutActions.SeekForward)));
+        ToolTipService.SetToolTip(StopButton, L("Stop.Text"));
+        ToolTipService.SetToolTip(MuteButton, L("TooltipMute"));
+        ToolTipService.SetToolTip(VolumeSlider, L("TooltipVolume"));
+        ToolTipService.SetToolTip(PositionSlider, F("TooltipPosition", Shortcut(ShortcutActions.PlayFromBeginning)));
+        ToolTipService.SetToolTip(SubtitleList, F("TooltipSubtitleNavigation", Shortcut(ShortcutActions.PreviousSubtitle), Shortcut(ShortcutActions.NextSubtitle)));
+        ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.All => "TooltipRepeatPlaylist", _ => "TooltipRepeatOff" }));
     }
 
     private void OnFullscreenClick(object sender, RoutedEventArgs e) => ToggleFullscreen();
@@ -1296,6 +1320,43 @@ public sealed partial class MainWindow : Window
             _settings.Window.RightPanelWidth = _rightPanelWidth;
             _settings.Window.BottomPanelHeight = _bottomPanelHeight;
         }
+    }
+
+    private void RefreshRightPanelSections()
+    {
+        var selectedIndex = Math.Max(0, RightPanelSectionList.SelectedIndex);
+        RightPanelSectionList.ItemsSource = new[]
+        {
+            new RightPanelSectionEntry("\uE8B7", L("RightPanelExplorer")),
+            new RightPanelSectionEntry("\uE142", L("RightPanelPlaylist")),
+            new RightPanelSectionEntry("\uE774", L("RightPanelWebDav")),
+            new RightPanelSectionEntry("\uE734", L("RightPanelFavorites")),
+            new RightPanelSectionEntry("\uE8C1", L("RightPanelSubtitles"))
+        };
+        RightPanelSectionList.SelectedIndex = Math.Clamp(selectedIndex, 0, 4);
+        ApplyRightPanelSection((RightPanelSection)RightPanelSectionList.SelectedIndex);
+    }
+
+    private void OnRightPanelSectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (RightPanelSectionList.SelectedIndex >= 0) ApplyRightPanelSection((RightPanelSection)RightPanelSectionList.SelectedIndex);
+    }
+
+    private void ShowRightPanelSection(RightPanelSection section)
+    {
+        _rightPanelVisible = true;
+        ApplyPanelVisibility();
+        RightPanelSectionList.SelectedIndex = (int)section;
+        ApplyRightPanelSection(section);
+    }
+
+    private void ApplyRightPanelSection(RightPanelSection section)
+    {
+        ExplorerSection.Visibility = section == RightPanelSection.Explorer ? Visibility.Visible : Visibility.Collapsed;
+        PlaylistSection.Visibility = section == RightPanelSection.Playlist ? Visibility.Visible : Visibility.Collapsed;
+        WebDavSection.Visibility = section == RightPanelSection.WebDav ? Visibility.Visible : Visibility.Collapsed;
+        FavoritesSection.Visibility = section == RightPanelSection.Favorites ? Visibility.Visible : Visibility.Collapsed;
+        SubtitlesSection.Visibility = section == RightPanelSection.Subtitles ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
@@ -1523,7 +1584,7 @@ public sealed partial class MainWindow : Window
         BindDocument(document);
         _rightPanelVisible = true;
         ApplyPanelVisibility();
-        RightPanelTabs.SelectedItem = SubtitlesTab;
+        ShowRightPanelSection(RightPanelSection.Subtitles);
         StatusText.Text = F("StatusGeneratingSubtitles", 0d);
         EnableGeneratedSubtitleOverlay();
         var translationQueue = Channel.CreateUnbounded<SubtitleCue>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
@@ -1836,7 +1897,7 @@ public sealed partial class MainWindow : Window
             await SettingsService.CreateDefault().SaveAsync(_settings);
             _rightPanelVisible = true;
             ApplyPanelVisibility();
-            RightPanelTabs.SelectedItem = WebDavTab;
+            ShowRightPanelSection(RightPanelSection.WebDav);
             RefreshWebDavServerList(server);
             await ConnectWebDavServerAsync(server);
         }
@@ -1903,7 +1964,7 @@ public sealed partial class MainWindow : Window
         WebDavPanelEntryList.IsEnabled = false;
         WebDavParentButton.IsEnabled = false;
         WebDavRefreshButton.IsEnabled = false;
-        WebDavPanelPathText.Text = _webDavPanelDirectory.AbsoluteUri;
+        WebDavPanelPathText.Text = server.Name;
         WebDavConnectionStatusText.Text = F("WebDavConnectingMessage", server.Name);
         try
         {
@@ -1975,6 +2036,7 @@ public sealed partial class MainWindow : Window
                 LocalizationService.Apply(settings.General.Language);
                 ApplyTheme(settings.General.Theme);
                 RefreshFavoritesList();
+                RefreshRightPanelSections();
                 UpdateShortcutHints();
                 if (!_playback.IsAvailable) return;
                 TryPlayback(() =>
@@ -2187,9 +2249,9 @@ public sealed partial class MainWindow : Window
         if (FavoriteList.SelectedItem is FavoriteListEntry entry) await OpenFavoriteAsync(entry.Item);
     }
 
-    private async void OnFavoriteDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private async void OnFavoriteItemClick(object sender, ItemClickEventArgs e)
     {
-        if (FavoriteList.SelectedItem is FavoriteListEntry entry) await OpenFavoriteAsync(entry.Item);
+        if (e.ClickedItem is FavoriteListEntry entry) await OpenFavoriteAsync(entry.Item);
     }
 
     private async void OnRemoveSelectedFavoritesClick(object sender, RoutedEventArgs e)
@@ -2211,14 +2273,14 @@ public sealed partial class MainWindow : Window
                 if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("FavoriteServerMissingMessage")); return; }
                 _rightPanelVisible = true;
                 ApplyPanelVisibility();
-                RightPanelTabs.SelectedItem = WebDavTab;
+                ShowRightPanelSection(RightPanelSection.WebDav);
                 await ConnectWebDavServerAsync(server, new Uri(favorite.Location));
                 return;
             }
             if (!Directory.Exists(favorite.Location)) { await ShowMessageAsync(L("FolderUnavailableTitle"), favorite.Location); return; }
             _rightPanelVisible = true;
             ApplyPanelVisibility();
-            RightPanelTabs.SelectedItem = ExplorerTab;
+            ShowRightPanelSection(RightPanelSection.Explorer);
             await RefreshBrowserAsync(favorite.Location);
             return;
         }
@@ -2228,7 +2290,7 @@ public sealed partial class MainWindow : Window
     private void RebuildRecentMenu()
     {
         RecentMenu.Items.Clear();
-        foreach (var recent in _historyService.Recent)
+        foreach (var recent in _historyService.Recent.Take(20))
         {
             var item = new MenuFlyoutItem { Text = recent.DisplayName, Tag = recent };
             item.Click += async (_, _) => await OpenRecentAsync(recent);
@@ -2449,6 +2511,9 @@ public sealed partial class MainWindow : Window
         public string SourceIconGlyph => Item.SourceType == MediaSourceKind.WebDav ? "\uE774" : string.Empty;
         public string IconGlyph => Item.IsFolder ? "\uE8B7" : "\uE8A5";
     }
+
+    private sealed record RightPanelSectionEntry(string IconGlyph, string Label);
+    private enum RightPanelSection { Explorer, Playlist, WebDav, Favorites, Subtitles }
 
     private sealed record PendingPostOpenWork(string Source, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
     private sealed record OverlayCueSnapshot(Guid Id, long StartMicroseconds, long EndMicroseconds, string Text, string? Style, string? Speaker);

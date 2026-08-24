@@ -26,16 +26,6 @@ public sealed partial class SettingsWindow : Window
     public Array Precisions { get; } = Enum.GetValues<AsrPrecision>();
     public Array ThinkingLevels { get; } = Enum.GetValues<ThinkingLevel>();
     public string[] Providers { get; } = ["Unsloth Desktop", "Google", "OllamaCloud", "OpenCodeGo", "OpenCodeZen"];
-    public IReadOnlyList<string> SettingsSections { get; } =
-    [
-        L("GeneralExpander.Header"),
-        L("PlaybackExpander.Header"),
-        L("SubtitleExpander.Header"),
-        L("AsrExpander.Header"),
-        L("NetworkExpander.Header"),
-        L("CaptureExpander.Header"),
-        L("LlmExpander.Header")
-    ];
     public event EventHandler<AppSettings>? SettingsSaved;
 
     public SettingsWindow(Window owner)
@@ -45,11 +35,12 @@ public sealed partial class SettingsWindow : Window
         WindowOwner.Attach(this, owner);
         var handle = WindowNative.GetWindowHandle(this);
         var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
-        appWindow?.Resize(new SizeInt32(1120, 940));
+        appWindow?.Resize(new SizeInt32(1320, 1000));
         if (appWindow?.Presenter is OverlappedPresenter presenter)
         {
-            presenter.IsResizable = false;
-            presenter.IsMaximizable = false;
+            presenter.SetBorderAndTitleBar(true, false);
+            presenter.IsResizable = true;
+            presenter.IsMaximizable = true;
         }
         SettingsSectionList.SelectionChanged += OnSettingsSectionChanged;
         SettingsSectionList.SelectedIndex = 0;

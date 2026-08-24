@@ -13,6 +13,8 @@ public interface IPlaybackEngine : IAsyncDisposable
     bool AreSubtitlesVisible { get; }
     IReadOnlyList<MediaTrack> Tracks { get; }
     string? DecoderDescription { get; }
+    int? VideoWidth { get; }
+    int? VideoHeight { get; }
     string? LibraryVersion { get; }
 
     event EventHandler? StateChanged;

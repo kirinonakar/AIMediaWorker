@@ -18,6 +18,8 @@ public static class ShortcutActions
     public const string DeleteCue = "DeleteCue";
     public const string Fullscreen = "Fullscreen";
     public const string ToggleSubtitles = "ToggleSubtitles";
+    public const string ToggleTimelinePanel = "ToggleTimelinePanel";
+    public const string ToggleSidePanel = "ToggleSidePanel";
     public const string CloseWindow = "CloseWindow";
 
     public static Dictionary<string, string> CreateDefaults() => new(StringComparer.OrdinalIgnoreCase)
@@ -38,6 +40,8 @@ public static class ShortcutActions
         [DeleteCue] = "Delete",
         [Fullscreen] = "Enter",
         [ToggleSubtitles] = "V",
+        [ToggleTimelinePanel] = "Ctrl+1",
+        [ToggleSidePanel] = "Ctrl+2",
         [CloseWindow] = "Ctrl+W"
     };
 }
