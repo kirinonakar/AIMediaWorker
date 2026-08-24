@@ -4,6 +4,7 @@ public interface IPlaybackEngine : IAsyncDisposable
 {
     PlaybackState State { get; }
     bool IsAvailable { get; }
+    bool IsFirstFrameReady { get; }
     string? CurrentSource { get; }
     TimeSpan Position { get; }
     TimeSpan Duration { get; }
@@ -18,6 +19,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     string? LibraryVersion { get; }
 
     event EventHandler? StateChanged;
+    event EventHandler? FirstFrameReady;
     event EventHandler? PositionChanged;
     event EventHandler? TracksChanged;
     event EventHandler<PlaybackError>? ErrorOccurred;
@@ -32,6 +34,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     void Seek(TimeSpan position, bool exact = false);
     void SeekRelative(TimeSpan offset);
     void SetVolume(double volume);
+    void ShowOsdText(string text, double durationSeconds = 1.2);
     void SetMute(bool muted);
     void SetSubtitleVisibility(bool visible);
     void SetRate(double rate);

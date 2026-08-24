@@ -20,10 +20,12 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private long _nextCommandId;
     private PlaybackState _state = PlaybackState.Uninitialized;
     private string? _editorSubtitlePath;
+    private volatile bool _firstFrameReady;
     private bool _disposed;
 
     public PlaybackState State => _state;
     public bool IsAvailable => _context != 0 && !_disposed;
+    public bool IsFirstFrameReady => _firstFrameReady;
     public string? CurrentSource { get; private set; }
     public TimeSpan Position { get; private set; }
     public TimeSpan Duration { get; private set; }
@@ -38,6 +40,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public string? LibraryVersion { get; private set; }
 
     public event EventHandler? StateChanged;
+    public event EventHandler? FirstFrameReady;
     public event EventHandler? PositionChanged;
     public event EventHandler? TracksChanged;
     public event EventHandler<PlaybackError>? ErrorOccurred;
@@ -126,11 +129,19 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         TrySetOption("audio-stream-silence", "yes");
         TrySetOption("audio-buffer", "0.2");
         TrySetOption("audio-pitch-correction", "yes");
-        TrySetOption("cache", "yes");
+        // Let mpv bypass the stream cache for fast local files while retaining it for
+        // network sources. Forcing the cache on adds another producer/consumer hop to
+        // every local file and is most noticeable on the first item opened.
+        TrySetOption("cache", "auto");
         TrySetOption("cache-secs", "20");
         TrySetOption("demuxer-readahead-secs", "20");
         TrySetOption("cache-pause", "no");
         TrySetOption("stream-lavf-o", "reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=5");
+        // Volume overlay: show transient OSD messages at the top-left of the video.
+        TrySetOption("osd-align-x", "left");
+        TrySetOption("osd-align-y", "top");
+        TrySetOption("osd-margin-x", "20");
+        TrySetOption("osd-margin-y", "16");
         MpvInterop.EnsureSuccess(MpvInterop.mpv_initialize(_context), "initialize libmpv");
         LibraryVersion = GetString("mpv-version");
         _eventLoopCancellation = new CancellationTokenSource();
@@ -149,6 +160,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             var trackRefreshCancellation = Interlocked.Exchange(ref _trackRefreshCancellation, null);
             trackRefreshCancellation?.Cancel();
             trackRefreshCancellation?.Dispose();
+            _firstFrameReady = false;
             SetState(PlaybackState.Loading);
             CurrentSource = source;
             Position = TimeSpan.Zero;
@@ -177,7 +189,22 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
 
     public void Seek(TimeSpan position, bool exact = false) => Command("seek", Math.Max(0, position.TotalSeconds).ToString("0.######", CultureInfo.InvariantCulture), "absolute" + (exact ? "+exact" : "+keyframes"));
     public void SeekRelative(TimeSpan offset) => Command("seek", offset.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture), "relative");
-    public void SetVolume(double volume) { Volume = Math.Clamp(volume, 0, 130); SetProperty("volume", Volume.ToString("0.##", CultureInfo.InvariantCulture)); }
+    public void SetVolume(double volume)
+    {
+        if (!double.IsFinite(volume)) throw new ArgumentOutOfRangeException(nameof(volume));
+        var normalizedVolume = Math.Clamp(volume, 0, 130);
+        SetProperty("volume", normalizedVolume.ToString("0.##", CultureInfo.InvariantCulture));
+        Volume = normalizedVolume;
+    }
+
+    public void ShowOsdText(string text, double durationSeconds = 1.2)
+    {
+        var normalizedDuration = double.IsFinite(durationSeconds)
+            ? Math.Clamp(durationSeconds, 0.1, int.MaxValue / 1000d)
+            : 1.2;
+        var durationMilliseconds = (int)Math.Round(normalizedDuration * 1000, MidpointRounding.AwayFromZero);
+        Command("show-text", text, durationMilliseconds.ToString(CultureInfo.InvariantCulture));
+    }
     public void SetMute(bool muted) { IsMuted = muted; SetProperty("mute", muted ? "yes" : "no"); }
     public void SetSubtitleVisibility(bool visible) { AreSubtitlesVisible = visible; SetProperty("sub-visibility", visible ? "yes" : "no"); }
     public void SetRate(double rate) { Rate = Math.Clamp(rate, 0.25, 4); SetProperty("speed", Rate.ToString("0.###", CultureInfo.InvariantCulture)); }
@@ -291,9 +318,11 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             case MpvInterop.MpvEventId.CommandReply:
                 if (mpvEvent.Error < 0) RaiseError("PLAYBACK_ERROR", MpvInterop.ErrorString(mpvEvent.Error));
                 break;
+            case MpvInterop.MpvEventId.StartFile:
+                _firstFrameReady = false;
+                break;
             case MpvInterop.MpvEventId.FileLoaded:
                 SetState(GetBool("pause") ? PlaybackState.Paused : PlaybackState.Playing);
-                ScheduleTrackRefresh();
                 break;
             case MpvInterop.MpvEventId.EndFile:
                 var endedNaturally = true;
@@ -315,6 +344,12 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 break;
             case MpvInterop.MpvEventId.VideoReconfig:
             case MpvInterop.MpvEventId.AudioReconfig:
+                if (_firstFrameReady) ScheduleTrackRefresh();
+                break;
+            case MpvInterop.MpvEventId.PlaybackRestart:
+                if (_firstFrameReady) break;
+                _firstFrameReady = true;
+                FirstFrameReady?.Invoke(this, EventArgs.Empty);
                 ScheduleTrackRefresh();
                 break;
             case MpvInterop.MpvEventId.Shutdown:

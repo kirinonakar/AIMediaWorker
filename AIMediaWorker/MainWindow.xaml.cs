@@ -156,6 +156,7 @@ public sealed partial class MainWindow : Window
         PositionSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
         PositionSlider.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
         _playback.StateChanged += OnPlaybackStateChanged;
+        _playback.FirstFrameReady += OnFirstFrameReady;
         _playback.PositionChanged += OnPlaybackPositionChanged;
         _playback.TracksChanged += OnTracksChanged;
         _playback.ErrorOccurred += OnPlaybackError;
@@ -415,7 +416,7 @@ public sealed partial class MainWindow : Window
         _postOpenCancellation?.Dispose();
         _postOpenCancellation = new CancellationTokenSource();
         _pendingPostOpenWork = new PendingPostOpenWork(source, populateSiblingPlaylist, _postOpenCancellation.Token);
-        if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) StartPostOpenWorkIfReady();
+        if (_playback.IsFirstFrameReady) StartPostOpenWorkIfReady();
     }
 
     private void StartPostOpenWorkIfReady()
@@ -566,6 +567,7 @@ public sealed partial class MainWindow : Window
     {
         TryPlayback(() => _playback.SetMute(!_playback.IsMuted));
         MuteIcon.Source = PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
+        ShowVolumeOverlay();
     }
     private void OnToggleSubtitleVisibilityClick(object sender, RoutedEventArgs e)
     {
@@ -616,7 +618,15 @@ public sealed partial class MainWindow : Window
 
     private void OnVolumeChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        if (_initialized && _playback.IsAvailable) TryPlayback(() => _playback.SetVolume(e.NewValue));
+        if (_initialized && _playback.IsAvailable) { TryPlayback(() => _playback.SetVolume(e.NewValue)); ShowVolumeOverlay(); }
+    }
+
+    private void ShowVolumeOverlay()
+    {
+        if (!_playback.IsAvailable) return;
+        var percent = double.IsFinite(_playback.Volume) ? Math.Clamp(_playback.Volume, 0, 130) : 0;
+        var roundedPercent = Math.Round(percent, MidpointRounding.AwayFromZero);
+        TryPlayback(() => _playback.ShowOsdText($"Volume:{roundedPercent:0}", 1.5));
     }
 
     private void OnPositionSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -1053,7 +1063,10 @@ public sealed partial class MainWindow : Window
             PlaybackState.Failed => "PlaybackStateFailed",
             _ => "PlaybackStateUninitialized"
         });
-        if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) StartPostOpenWorkIfReady();
+    });
+    private void OnFirstFrameReady(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
+    {
+        StartPostOpenWorkIfReady();
         if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null) StartCheckedAiPipeline();
     });
     private void OnPlaybackPositionChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
@@ -1124,14 +1137,15 @@ public sealed partial class MainWindow : Window
         var shift = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         var alt = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         var key = e.Key.ToString();
+        var playbackHasFocus = VideoFocusTarget.FocusState != FocusState.Unfocused;
         if (e.Key == Windows.System.VirtualKey.Escape && _isFullscreen) { ExitFullscreen(); e.Handled = true; return; }
         var isTextInput = e.OriginalSource is TextBox or PasswordBox;
         if (ctrl && shift && !alt && e.Key == Windows.System.VirtualKey.N) { PlayFromBeginning(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Enter) { ToggleFullscreen(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.F) { ToggleFullscreen(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.M) { OnMuteClick(this, new RoutedEventArgs()); e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Up) { TryPlayback(() => _playback.SetVolume(_playback.Volume + 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Down) { TryPlayback(() => _playback.SetVolume(_playback.Volume - 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
+        if (playbackHasFocus && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Up) { TryPlayback(() => _playback.SetVolume(_playback.Volume + 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
+        if (playbackHasFocus && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Down) { TryPlayback(() => _playback.SetVolume(_playback.Volume - 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Home) { SeekAndRestartAi(TimeSpan.Zero, () => _playback.Seek(TimeSpan.Zero, true)); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.End) { SeekAndRestartAi(_playback.Duration, () => _playback.Seek(_playback.Duration, true)); e.Handled = true; return; }
         bool Is(string action) => _settings.General.Shortcuts.TryGetValue(action, out var gesture) && ShortcutGesture.Matches(gesture, key, ctrl, shift, alt);
@@ -2857,6 +2871,7 @@ public sealed partial class MainWindow : Window
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "ASR_DISPOSE_ERROR", exception.Message, exception); }
         try { await _playback.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "PLAYBACK_DISPOSE_ERROR", exception.Message, exception); }
+        _playback.FirstFrameReady -= OnFirstFrameReady;
         if (_videoHost is not null)
         {
             _videoHost.FilesDropped -= OnNativeVideoFilesDropped;
