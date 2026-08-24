@@ -80,6 +80,8 @@
   <data name="TooltipRepeatCurrent"><value>현재 미디어 반복</value></data>
   <data name="TooltipRepeatPlaylist"><value>재생 목록 반복</value></data>
   <data name="TooltipRepeatOff"><value>반복 끄기</value></data>
+  <data name="TooltipEnterFullscreen"><value>전체 화면으로 전환 (F)</value></data>
+  <data name="TooltipExitFullscreen"><value>전체 화면 종료 (Esc)</value></data>
   <data name="BrowserFilter.PlaceholderText"><value>이름으로 필터</value></data>
   <data name="WebDavFilter.PlaceholderText"><value>이름으로 필터</value></data>
   <data name="BrowserSort.Label"><value>이름순</value></data>

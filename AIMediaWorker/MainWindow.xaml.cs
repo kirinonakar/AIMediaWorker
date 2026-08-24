@@ -221,7 +221,7 @@ public sealed partial class MainWindow : Window
             var historyLoad = _historyLoadTask ??= _historyService.LoadAsync();
             _videoHost = new NativeVideoHost(this, VideoPlaceholder);
             _videoHost.FilesDropped += OnNativeVideoFilesDropped;
-            _videoHost.Clicked += OnNativeVideoClicked;
+            _videoHost.DoubleClicked += OnNativeVideoDoubleClicked;
             var playbackInitialization = _playback.InitializeAsync(_videoHost.Create(), _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
             await playbackInitialization;
             if (_playback.IsAvailable)
@@ -338,7 +338,7 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    private void OnNativeVideoClicked(object? sender, EventArgs e)
+    private void OnNativeVideoDoubleClicked(object? sender, EventArgs e)
     {
         if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) TryPlayback(_playback.TogglePause);
     }
@@ -1203,16 +1203,32 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(PositionSlider, F("TooltipPosition", Shortcut(ShortcutActions.PlayFromBeginning)));
         ToolTipService.SetToolTip(SubtitleList, F("TooltipSubtitleNavigation", Shortcut(ShortcutActions.PreviousSubtitle), Shortcut(ShortcutActions.NextSubtitle)));
         ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.All => "TooltipRepeatPlaylist", _ => "TooltipRepeatOff" }));
+        UpdateFullscreenButton();
     }
 
     private void OnFullscreenClick(object sender, RoutedEventArgs e) => ToggleFullscreen();
-    private void OnVideoDoubleTapped(object sender, DoubleTappedRoutedEventArgs e) { ToggleFullscreen(); e.Handled = true; }
+    private void OnVideoDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) TryPlayback(_playback.TogglePause);
+        e.Handled = true;
+    }
     private void OnToggleRightPanelClick(object sender, RoutedEventArgs e) { _rightPanelVisible = ShowRightPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
     private void OnToggleBottomPanelClick(object sender, RoutedEventArgs e) { _bottomPanelVisible = ShowBottomPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
 
     private void ToggleFullscreen()
     {
-        if (_isFullscreen) ExitFullscreen(); else EnterFullscreen();
+        try
+        {
+            if (_isFullscreen) ExitFullscreen(); else EnterFullscreen();
+        }
+        finally { UpdateFullscreenButton(); }
+    }
+
+    private void UpdateFullscreenButton()
+    {
+        FullscreenButton.IsChecked = _isFullscreen;
+        FullscreenButtonIcon.Glyph = _isFullscreen ? "\uE73F" : "\uE740";
+        ToolTipService.SetToolTip(FullscreenButton, L(_isFullscreen ? "TooltipExitFullscreen" : "TooltipEnterFullscreen"));
     }
 
     private void EnterFullscreen()
@@ -1967,6 +1983,7 @@ public sealed partial class MainWindow : Window
         WebDavServerList.ItemsSource = _settings.Network.WebDavServers;
         WebDavEmptyServersText.Visibility = _settings.Network.WebDavServers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         if (selected is not null) WebDavServerList.SelectedItem = selected;
+        if (_webDavPanelDirectory is null) UpdateWebDavBreadcrumbs();
     }
 
     private async void OnWebDavServerClick(object sender, ItemClickEventArgs e)
@@ -1985,7 +2002,7 @@ public sealed partial class MainWindow : Window
             ApplyWebDavEntryView();
             WebDavParentButton.IsEnabled = false;
             WebDavRefreshButton.IsEnabled = false;
-            WebDavPanelPathText.Text = L("WebDavSelectServerMessage");
+            UpdateWebDavBreadcrumbs();
             WebDavConnectionStatusText.Text = L("WebDavCredentialMissingMessage");
             return;
         }
@@ -2009,7 +2026,7 @@ public sealed partial class MainWindow : Window
         WebDavPanelEntryList.IsEnabled = false;
         WebDavParentButton.IsEnabled = false;
         WebDavRefreshButton.IsEnabled = false;
-        WebDavPanelPathText.Text = server.Name;
+        UpdateWebDavBreadcrumbs(server);
         WebDavConnectionStatusText.Text = F("WebDavConnectingMessage", server.Name);
         try
         {
@@ -2053,6 +2070,47 @@ public sealed partial class MainWindow : Window
     }
 
     private async void OnWebDavRefreshClick(object sender, RoutedEventArgs e) => await RefreshWebDavDirectoryAsync();
+
+    private async void OnWebDavBreadcrumbItemClick(BreadcrumbBar sender, BreadcrumbBarItemClickedEventArgs e)
+    {
+        if (e.Item is not WebDavBreadcrumbEntry entry || entry.Uri is null || entry.Uri == _webDavPanelDirectory) return;
+        _webDavPanelDirectory = entry.Uri;
+        await RefreshWebDavDirectoryAsync();
+    }
+
+    private void UpdateWebDavBreadcrumbs(WebDavServerSettings? server = null)
+    {
+        if (server is null || _webDavPanelDirectory is null || _webDavPanelServerId is not { } serverId)
+        {
+            WebDavBreadcrumbBar.ItemsSource = new[] { new WebDavBreadcrumbEntry(L("WebDavSelectServerMessage"), null) };
+            return;
+        }
+
+        var credential = _webDavCredentials.Read(serverId);
+        if (credential is null)
+        {
+            WebDavBreadcrumbBar.ItemsSource = new[] { new WebDavBreadcrumbEntry(server.Name, null) };
+            return;
+        }
+
+        var root = EnsureWebDavDirectoryUri(credential.RootUri);
+        var current = EnsureWebDavDirectoryUri(_webDavPanelDirectory);
+        var entries = new List<WebDavBreadcrumbEntry> { new(server.Name, root) };
+        if (!current.AbsoluteUri.StartsWith(root.AbsoluteUri, StringComparison.OrdinalIgnoreCase))
+        {
+            WebDavBreadcrumbBar.ItemsSource = entries;
+            return;
+        }
+
+        var relativePath = root.MakeRelativeUri(current).OriginalString;
+        var accumulatedPath = string.Empty;
+        foreach (var segment in relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            accumulatedPath += segment + "/";
+            entries.Add(new WebDavBreadcrumbEntry(Uri.UnescapeDataString(segment), EnsureWebDavDirectoryUri(new Uri(root, accumulatedPath))));
+        }
+        WebDavBreadcrumbBar.ItemsSource = entries;
+    }
 
     private void OnWebDavFilterTextChanged(object sender, TextChangedEventArgs e) => ApplyWebDavEntryView();
 
@@ -2254,7 +2312,7 @@ public sealed partial class MainWindow : Window
                 return result.ToArray();
             });
             _browserDirectory = Path.GetFullPath(directory);
-            BrowserPathBox.Text = _browserDirectory;
+            UpdateBrowserBreadcrumbs();
             _browserEntries = entries;
             ApplyBrowserEntryView();
             if (selectedPath is not null) SelectBrowserEntry(selectedPath);
@@ -2265,13 +2323,44 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void OnFolderEntryDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private async void OnFolderEntryClick(object sender, ItemClickEventArgs e)
     {
-        if (FolderEntryList.SelectedItem is not BrowserEntry entry) return;
+        if (e.ClickedItem is not BrowserEntry entry) return;
         if (entry.IsDirectory) { await RefreshBrowserAsync(entry.Path); return; }
         var files = (FolderEntryList.ItemsSource as IEnumerable<BrowserEntry>)?.Where(item => !item.IsDirectory).Select(item => item.Path).ToArray() ?? [entry.Path];
         _playlist.Clear(); _playlist.AddRange(files); _playlistIndex = Math.Max(0, _playlist.FindIndex(path => path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase)));
         await OpenMediaAsync(entry.Path, preservePlaylist: true);
+    }
+
+    private async void OnBrowserBreadcrumbItemClick(BreadcrumbBar sender, BreadcrumbBarItemClickedEventArgs e)
+    {
+        if (e.Item is not BrowserBreadcrumbEntry entry || AreSameDirectory(entry.Path, _browserDirectory)) return;
+        await RefreshBrowserAsync(entry.Path);
+    }
+
+    private void UpdateBrowserBreadcrumbs()
+    {
+        var fullPath = Path.GetFullPath(_browserDirectory);
+        var root = Path.GetPathRoot(fullPath);
+        if (string.IsNullOrEmpty(root))
+        {
+            BrowserBreadcrumbBar.ItemsSource = new[] { new BrowserBreadcrumbEntry(fullPath, fullPath) };
+            return;
+        }
+
+        var entries = new List<BrowserBreadcrumbEntry> { new(root, root) };
+        var relativePath = Path.GetRelativePath(root, fullPath);
+        if (relativePath != ".")
+        {
+            var accumulatedPath = root;
+            foreach (var segment in relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            {
+                if (string.IsNullOrEmpty(segment)) continue;
+                accumulatedPath = Path.Combine(accumulatedPath, segment);
+                entries.Add(new BrowserBreadcrumbEntry(segment, accumulatedPath));
+            }
+        }
+        BrowserBreadcrumbBar.ItemsSource = entries;
     }
 
     private void OnBrowserFilterTextChanged(object sender, TextChangedEventArgs e) => ApplyBrowserEntryView();
@@ -2346,9 +2435,9 @@ public sealed partial class MainWindow : Window
 
     private void OnClearPlaylistClick(object sender, RoutedEventArgs e) { _playlist.Clear(); _playlistIndex = -1; UpdatePlaylistButtons(); }
 
-    private async void OnWebDavPanelEntryDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private async void OnWebDavPanelEntryClick(object sender, ItemClickEventArgs e)
     {
-        if (WebDavPanelEntryList.SelectedItem is not WebDavEntry entry || _webDavPanelServerId is not { } serverId) return;
+        if (e.ClickedItem is not WebDavEntry entry || _webDavPanelServerId is not { } serverId) return;
         if (entry.IsCollection)
         {
             _webDavPanelDirectory = EnsureWebDavDirectoryUri(entry.Uri);
@@ -2387,7 +2476,7 @@ public sealed partial class MainWindow : Window
     {
         var entries = _historyService.Favorites
             .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-            .Select(item => new FavoriteListEntry(item))
+            .Select(item => new FavoriteListEntry(item, L("RemoveFavoriteButton")))
             .ToArray();
         FavoriteList.ItemsSource = entries;
         FavoritesEmptyText.Visibility = entries.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -2418,6 +2507,14 @@ public sealed partial class MainWindow : Window
         var selected = FavoriteList.SelectedItems.OfType<FavoriteListEntry>().ToArray();
         if (selected.Length == 0) return;
         foreach (var entry in selected) _historyService.RemoveFavorite(entry.Item.Location);
+        await _historyService.SaveAsync();
+        RefreshFavoritesList();
+    }
+
+    private async void OnRemoveFavoriteItemClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: FavoriteListEntry entry }) return;
+        _historyService.RemoveFavorite(entry.Item.Location);
         await _historyService.SaveAsync();
         RefreshFavoritesList();
     }
@@ -2652,7 +2749,7 @@ public sealed partial class MainWindow : Window
         if (_videoHost is not null)
         {
             _videoHost.FilesDropped -= OnNativeVideoFilesDropped;
-            _videoHost.Clicked -= OnNativeVideoClicked;
+            _videoHost.DoubleClicked -= OnNativeVideoDoubleClicked;
             _videoHost.Dispose();
         }
         try { File.Delete(_editorOverlayPath); } catch (IOException) { }
@@ -2663,13 +2760,16 @@ public sealed partial class MainWindow : Window
         public string DisplayName => System.IO.Path.GetFileName(Path);
     }
 
-    private sealed record FavoriteListEntry(FavoriteItem Item)
+    private sealed record FavoriteListEntry(FavoriteItem Item, string RemoveLabel)
     {
         public string DisplayName => Item.DisplayName;
         public string Location => Item.Location;
         public string SourceIconGlyph => Item.SourceType == MediaSourceKind.WebDav ? "\uE774" : string.Empty;
         public string IconGlyph => Item.IsFolder ? "\uE8B7" : "\uE8A5";
     }
+
+    private sealed record BrowserBreadcrumbEntry(string Label, string Path);
+    private sealed record WebDavBreadcrumbEntry(string Label, Uri? Uri);
 
     private sealed record RightPanelSectionEntry(string IconGlyph, string Label);
     private enum RightPanelSection { Explorer, Playlist, WebDav, Favorites, Subtitles }

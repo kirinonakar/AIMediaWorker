@@ -14,7 +14,7 @@ public sealed class NativeVideoHost : IDisposable
     private const uint WmMouseMove = 0x0200;
     private const uint WmLeftButtonDown = 0x0201;
     private const uint WmLeftButtonUp = 0x0202;
-    private const uint WmCaptureChanged = 0x0215;
+    private const uint WmLeftButtonDoubleClick = 0x0203;
     private const int HitTestClient = 1;
     private const int IdcArrow = 32512;
     private const int GwlpWndProc = -4;
@@ -29,7 +29,6 @@ public sealed class NativeVideoHost : IDisposable
     private nint _originalWindowProcedure;
     private WindowProcedure? _windowProcedure;
     private bool _disposed;
-    private bool _pointerPressed;
     private bool _visible = true;
     private (int X, int Y, int Width, int Height)? _lastBounds;
 
@@ -44,7 +43,7 @@ public sealed class NativeVideoHost : IDisposable
     public nint Handle => _handle;
     public bool IsVisible => _visible;
     public event EventHandler<FilesDroppedEventArgs>? FilesDropped;
-    public event EventHandler? Clicked;
+    public event EventHandler? DoubleClicked;
 
     public nint Create()
     {
@@ -106,19 +105,20 @@ public sealed class NativeVideoHost : IDisposable
         if (message == WmMouseMove) SetArrowCursor();
         if (message == WmLeftButtonDown)
         {
-            _pointerPressed = true;
             SetCapture(window);
+            return 0;
+        }
+        if (message == WmLeftButtonDoubleClick)
+        {
+            SetCapture(window);
+            DoubleClicked?.Invoke(this, EventArgs.Empty);
             return 0;
         }
         if (message == WmLeftButtonUp)
         {
-            var clicked = _pointerPressed;
-            _pointerPressed = false;
             if (GetCapture() == window) ReleaseCapture();
-            if (clicked) Clicked?.Invoke(this, EventArgs.Empty);
             return 0;
         }
-        if (message == WmCaptureChanged) _pointerPressed = false;
         if (message == WmDropFiles)
         {
             var paths = ReadDroppedPaths(wParam);

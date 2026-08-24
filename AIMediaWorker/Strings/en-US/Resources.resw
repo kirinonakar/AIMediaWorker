@@ -80,6 +80,8 @@
   <data name="TooltipRepeatCurrent"><value>Repeat current media</value></data>
   <data name="TooltipRepeatPlaylist"><value>Repeat playlist</value></data>
   <data name="TooltipRepeatOff"><value>Repeat off</value></data>
+  <data name="TooltipEnterFullscreen"><value>Enter fullscreen (F)</value></data>
+  <data name="TooltipExitFullscreen"><value>Exit fullscreen (Esc)</value></data>
   <data name="BrowserFilter.PlaceholderText"><value>Filter by name</value></data>
   <data name="WebDavFilter.PlaceholderText"><value>Filter by name</value></data>
   <data name="BrowserSort.Label"><value>Sort by name</value></data>

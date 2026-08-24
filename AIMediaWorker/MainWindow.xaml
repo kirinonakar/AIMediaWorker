@@ -23,6 +23,17 @@
                 <Setter Property="HorizontalContentAlignment" Value="Center" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
             </Style>
+            <Style x:Key="PlaybackControlToggleButtonStyle" TargetType="ToggleButton" BasedOn="{StaticResource DefaultToggleButtonStyle}">
+                <Setter Property="Width" Value="44" />
+                <Setter Property="MinWidth" Value="44" />
+                <Setter Property="Height" Value="38" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="BorderBrush" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+            </Style>
         </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
@@ -92,9 +103,13 @@
                                 <AppBarButton x:Uid="BrowserRefresh" Icon="Refresh" Label="Refresh" Click="OnBrowserRefreshClick" />
                                 <AppBarButton x:Uid="BrowserSort" x:Name="BrowserSortButton" Label="Sort by name" Click="OnBrowserSortClick"><AppBarButton.Icon><FontIcon x:Name="BrowserSortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon></AppBarButton>
                             </CommandBar>
-                            <TextBox x:Name="BrowserPathBox" Grid.Row="1" IsReadOnly="True" />
+                            <BreadcrumbBar x:Name="BrowserBreadcrumbBar" Grid.Row="1" ItemClicked="OnBrowserBreadcrumbItemClick">
+                                <BreadcrumbBar.ItemTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
+                                </BreadcrumbBar.ItemTemplate>
+                            </BreadcrumbBar>
                             <TextBox x:Uid="BrowserFilter" x:Name="BrowserFilterBox" Grid.Row="2" PlaceholderText="Filter by name" TextChanged="OnBrowserFilterTextChanged" />
-                            <ListView x:Name="FolderEntryList" Grid.Row="3" SelectionMode="Single" DoubleTapped="OnFolderEntryDoubleTapped">
+                            <ListView x:Name="FolderEntryList" Grid.Row="3" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnFolderEntryClick">
                                 <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnBrowserEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddBrowserFavorite" Text="Add to favorites" Click="OnAddBrowserFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding Details}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
                         </Grid>
@@ -137,11 +152,15 @@
                                 </AppBarElementContainer>
                             </CommandBar>
                             <StackPanel Grid.Row="3" Margin="4,0" Spacing="2">
-                                <TextBlock x:Uid="WebDavSelectServerText" x:Name="WebDavPanelPathText" Text="Select a server to connect" TextTrimming="CharacterEllipsis" Opacity="0.7" />
+                                <BreadcrumbBar x:Name="WebDavBreadcrumbBar" ItemClicked="OnWebDavBreadcrumbItemClick">
+                                    <BreadcrumbBar.ItemTemplate>
+                                        <DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
+                                    </BreadcrumbBar.ItemTemplate>
+                                </BreadcrumbBar>
                                 <TextBlock x:Name="WebDavConnectionStatusText" Text="" TextTrimming="CharacterEllipsis" Opacity="0.7" FontSize="11" />
                             </StackPanel>
                             <TextBox x:Uid="WebDavFilter" x:Name="WebDavFilterBox" Grid.Row="4" Margin="4,0" PlaceholderText="Filter by name" TextChanged="OnWebDavFilterTextChanged" />
-                            <ListView x:Name="WebDavPanelEntryList" Grid.Row="5" SelectionMode="Single" DoubleTapped="OnWebDavPanelEntryDoubleTapped">
+                            <ListView x:Name="WebDavPanelEntryList" Grid.Row="5" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnWebDavPanelEntryClick">
                                 <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnWebDavEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddWebDavFavorite" Text="Add to favorites" Click="OnAddWebDavFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
                         </Grid>
@@ -158,13 +177,16 @@
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <Grid Padding="6" ColumnSpacing="8">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Glyph="{Binding SourceIconGlyph}" VerticalAlignment="Center" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                                                 <FontIcon Grid.Column="1" Glyph="{Binding IconGlyph}" VerticalAlignment="Center" />
                                                 <StackPanel Grid.Column="2" Spacing="2">
                                                     <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
                                                     <TextBlock Text="{Binding Location}" TextTrimming="CharacterEllipsis" Opacity="0.55" FontSize="11" />
                                                 </StackPanel>
+                                                <Button Grid.Column="3" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0" Click="OnRemoveFavoriteItemClick" ToolTipService.ToolTip="{Binding RemoveLabel}" AutomationProperties.Name="{Binding RemoveLabel}">
+                                                    <SymbolIcon Symbol="Delete" />
+                                                </Button>
                                             </Grid>
                                         </DataTemplate>
                                     </ListView.ItemTemplate>
@@ -227,7 +249,7 @@
                     </ResourceDictionary.ThemeDictionaries>
                 </ResourceDictionary>
             </Grid.Resources>
-            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="120" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="95" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="120" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="95" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <Button x:Name="BeginningButton" Grid.Column="0" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnGoToBeginningClick" ToolTipService.ToolTip="Go to beginning (Home)"><Image x:Name="BeginningIcon" Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/beginning.svg" /></Image.Source></Image></Button>
             <Button x:Name="PreviousButton" Grid.Column="1" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnPreviousMediaClick" ToolTipService.ToolTip="Previous media (Ctrl+B)"><Image x:Name="PreviousIcon" Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/previous.svg" /></Image.Source></Image></Button>
             <Button x:Name="SeekBackButton" Grid.Column="2" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSeekBackClick" ToolTipService.ToolTip="Seek backward"><Image x:Name="SeekBackIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/seek-back.svg" /></Image.Source></Image></Button>
@@ -242,6 +264,9 @@
             <Button x:Name="MuteButton" Grid.Column="11" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnMuteClick"><Image x:Name="MuteIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/volume.svg" /></Image.Source></Image></Button>
             <TextBlock x:Uid="SpeedLabel" Grid.Column="12" Text="Speed" VerticalAlignment="Center" /><ComboBox x:Name="RateCombo" Grid.Column="13" SelectionChanged="OnRateChanged" />
             <Button x:Name="RepeatButton" Grid.Column="14" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnRepeatClick" ToolTipService.ToolTip="Repeat off"><Image x:Name="RepeatIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/repeat.svg" /></Image.Source></Image></Button>
+            <ToggleButton x:Name="FullscreenButton" Grid.Column="15" Style="{StaticResource PlaybackControlToggleButtonStyle}" Click="OnFullscreenClick" ToolTipService.ToolTip="Fullscreen">
+                <FontIcon x:Name="FullscreenButtonIcon" Glyph="&#xE740;" FontSize="19" />
+            </ToggleButton>
         </Grid>
         <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="3" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
         <Grid x:Name="VisualizationPanel" Grid.Row="4" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
