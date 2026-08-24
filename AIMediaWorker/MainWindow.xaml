@@ -36,10 +36,18 @@
             </Style>
         </Grid.Resources>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
             <RowDefinition x:Name="BottomPanelSplitterRow" Height="6" /><RowDefinition x:Name="BottomPanelRow" Height="160" /><RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <MenuBar x:Name="MainMenuBar" Grid.Row="0">
+        <TitleBar x:Name="AppTitleBar" Grid.Row="0">
+            <TitleBar.IconSource>
+                <BitmapIconSource UriSource="ms-appx:///Assets/app.png" ShowAsMonochrome="False" />
+            </TitleBar.IconSource>
+            <TitleBar.Content>
+                <TextBlock Text="AIMediaWorker" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Left" TextAlignment="Left" VerticalAlignment="Center" />
+            </TitleBar.Content>
+        </TitleBar>
+        <MenuBar x:Name="MainMenuBar" Grid.Row="1">
             <MenuBarItem x:Uid="FileMenu" Title="File">
                 <MenuFlyoutItem x:Uid="OpenMedia" Text="Open media…" Click="OnOpenMediaClick" /><MenuFlyoutItem x:Uid="OpenUrl" Text="Open URL…" Click="OnOpenUrlClick" />
                 <MenuFlyoutSubItem x:Uid="RecentMedia" x:Name="RecentMenu" Text="Recent media" />
@@ -80,8 +88,9 @@
                 <MenuFlyoutItem x:Uid="Diagnostics" Text="Diagnostics…" Click="OnDiagnosticsClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SettingsMenu" Title="Settings"><MenuFlyoutItem x:Uid="Preferences" Text="Preferences…" Click="OnSettingsClick" /></MenuBarItem>
+            <MenuBarItem x:Uid="HelpMenu" Title="Help"><MenuFlyoutItem x:Uid="About" Text="About" Click="OnAboutClick" /></MenuBarItem>
         </MenuBar>
-        <Grid x:Name="MainContentGrid" Grid.Row="1" MinHeight="260">
+        <Grid x:Name="MainContentGrid" Grid.Row="2" MinHeight="260">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="320" /><ColumnDefinition x:Name="RightPanelSplitterColumn" Width="6" /><ColumnDefinition x:Name="RightPanelColumn" Width="360" MinWidth="0" /></Grid.ColumnDefinitions>
             <Border x:Name="VideoPlaceholder" Grid.Column="0" Background="Black" Margin="8,4,4,4" DoubleTapped="OnVideoDoubleTapped">
                 <Grid>
@@ -99,6 +108,7 @@
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                             <CommandBar DefaultLabelPosition="Collapsed">
                                 <AppBarButton x:Uid="BrowserChooseFolder" Icon="OpenFile" Label="Choose folder" Click="OnChooseBrowserFolderClick" />
+                                <AppBarButton x:Uid="BrowserHome" Icon="Home" Label="Home folder" Click="OnBrowserHomeClick" />
                                 <AppBarButton x:Uid="BrowserParentFolder" Icon="Back" Label="Parent folder" Click="OnBrowserParentClick" />
                                 <AppBarButton x:Uid="BrowserRefresh" Icon="Refresh" Label="Refresh" Click="OnBrowserRefreshClick" />
                                 <AppBarButton x:Uid="BrowserSort" x:Name="BrowserSortButton" Label="Sort by name" Click="OnBrowserSortClick"><AppBarButton.Icon><FontIcon x:Name="BrowserSortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon></AppBarButton>
@@ -234,7 +244,7 @@
                 </Grid>
             </Grid>
         </Grid>
-        <Grid x:Name="PlaybackControls" Grid.Row="5" Padding="8,4" ColumnSpacing="6">
+        <Grid x:Name="PlaybackControls" Grid.Row="6" Padding="8,4" ColumnSpacing="6">
             <Grid.Resources>
                 <ResourceDictionary>
                     <ResourceDictionary.ThemeDictionaries>
@@ -260,7 +270,7 @@
             <Button x:Uid="ScreenshotButton" x:Name="ScreenshotButton" Grid.Column="7" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSaveScreenshotClick" ToolTipService.ToolTip="Save current frame"><FontIcon Glyph="&#xE722;" FontSize="19" /></Button>
             <Slider x:Name="PositionSlider" Grid.Column="8" Minimum="0" Maximum="1" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
             <TextBlock x:Name="PositionText" Grid.Column="9" Text="00:00 / 00:00" VerticalAlignment="Center" FontFamily="Consolas" />
-            <Slider x:Name="VolumeSlider" Grid.Column="10" Minimum="0" Maximum="130" Value="100" ValueChanged="OnVolumeChanged" />
+            <Slider x:Name="VolumeSlider" Grid.Column="10" Minimum="0" Maximum="130" SmallChange="5" Value="100" ValueChanged="OnVolumeChanged" />
             <Button x:Name="MuteButton" Grid.Column="11" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnMuteClick"><Image x:Name="MuteIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/volume.svg" /></Image.Source></Image></Button>
             <TextBlock x:Uid="SpeedLabel" Grid.Column="12" Text="Speed" VerticalAlignment="Center" /><ComboBox x:Name="RateCombo" Grid.Column="13" SelectionChanged="OnRateChanged" />
             <Button x:Name="RepeatButton" Grid.Column="14" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnRepeatClick" ToolTipService.ToolTip="Repeat off"><Image x:Name="RepeatIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/repeat.svg" /></Image.Source></Image></Button>
@@ -268,13 +278,13 @@
                 <FontIcon x:Name="FullscreenButtonIcon" Glyph="&#xE740;" FontSize="19" />
             </ToggleButton>
         </Grid>
-        <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="3" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
-        <Grid x:Name="VisualizationPanel" Grid.Row="4" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+        <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="4" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+        <Grid x:Name="VisualizationPanel" Grid.Row="5" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
             <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="48" /></Grid.RowDefinitions>
             <Canvas x:Name="WaveformCanvas" Grid.Row="0" SizeChanged="OnVisualizationSizeChanged" />
             <Canvas x:Name="TimelineCanvas" Grid.Row="1" Background="Transparent" SizeChanged="OnVisualizationSizeChanged" PointerPressed="OnTimelinePointerPressed" PointerMoved="OnTimelinePointerMoved" PointerReleased="OnTimelinePointerReleased" PointerCanceled="OnTimelinePointerReleased" PointerWheelChanged="OnTimelinePointerWheelChanged" />
         </Grid>
-        <Grid x:Name="StatusPanel" Grid.Row="2" Padding="8,4" ColumnSpacing="8">
+        <Grid x:Name="StatusPanel" Grid.Row="3" Padding="8,4" ColumnSpacing="8">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <Grid>
                 <TextBlock x:Uid="ReadyStatus" x:Name="StatusText" Text="Ready" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />

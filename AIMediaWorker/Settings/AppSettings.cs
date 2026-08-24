@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace AIMediaWorker.Settings;
 
 public enum AppTheme { System, Light, Dark }
-public enum AppLanguage { English, Korean, Japanese }
+public enum AppLanguage { Default, English, Korean, Japanese }
 public enum AsrDevice { Auto, Cpu, Cuda }
 public enum AsrPrecision { Auto, Float32, Float16, BFloat16, Int8 }
 public enum ThinkingLevel { Default, Off, Low, Medium, High, XHigh, Max }
@@ -126,10 +126,11 @@ public sealed class LlmSettings
 
 public sealed class GeneralSettings
 {
-    public AppLanguage Language { get; set; } = AppLanguage.English;
+    public AppLanguage Language { get; set; } = AppLanguage.Default;
     public AppTheme Theme { get; set; } = AppTheme.System;
     public int RecentMediaCount { get; set; } = 20;
     public bool ResumePlayback { get; set; } = true;
+    public string? DefaultFolder { get; set; }
     public Dictionary<string, string> Shortcuts { get; set; } = ShortcutActions.CreateDefaults();
 }
 

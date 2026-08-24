@@ -4,7 +4,9 @@ using AIMediaWorker.Settings;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.Windows.AppLifecycle;
 using Windows.Graphics;
+using Windows.Storage.Pickers;
 using WinRT.Interop;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Llm;
@@ -54,6 +56,7 @@ public sealed partial class SettingsWindow : Window
         }
         SettingsSectionList.SelectionChanged += OnSettingsSectionChanged;
         SettingsSectionList.SelectedIndex = 0;
+        ThemeCombo.SelectionChanged += OnThemeComboChanged;
     }
 
     private void OnSettingsSectionChanged(object sender, SelectionChangedEventArgs e)
@@ -63,10 +66,21 @@ public sealed partial class SettingsWindow : Window
         for (var index = 0; index < sections.Length; index++) sections[index].Visibility = index == selectedIndex ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private void OnThemeComboChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ThemeCombo.SelectedItem is AppTheme theme) ApplyTheme(theme);
+    }
+
+    private void ApplyTheme(AppTheme theme)
+    {
+        Root.RequestedTheme = theme switch { AppTheme.Light => ElementTheme.Light, AppTheme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         _settings = await _service.LoadAsync();
-        LanguageCombo.SelectedItem = _settings.General.Language; ThemeCombo.SelectedItem = _settings.General.Theme; RecentCountBox.Value = _settings.General.RecentMediaCount; ResumeCheck.IsChecked = _settings.General.ResumePlayback;
+        ApplyTheme(_settings.General.Theme);
+        LanguageCombo.SelectedItem = _settings.General.Language; ThemeCombo.SelectedItem = _settings.General.Theme; RecentCountBox.Value = _settings.General.RecentMediaCount; ResumeCheck.IsChecked = _settings.General.ResumePlayback; DefaultFolderBox.Text = _settings.General.DefaultFolder ?? string.Empty;
         HardwareCombo.SelectedItem = _settings.Playback.HardwareDecoder; RtxCombo.SelectedItem = _settings.Playback.RtxVideoSuperResolution; RtxQualityBox.Value = _settings.Playback.RtxQuality ?? 0; VolumeBox.Value = _settings.Playback.DefaultVolume; SeekBox.Value = _settings.Playback.SeekIntervalSeconds;
         RendererBox.Text = _settings.Playback.Renderer; AudioLanguageBox.Text = _settings.Playback.DefaultAudioLanguage ?? string.Empty; SubtitleLanguageBox.Text = _settings.Playback.DefaultSubtitleLanguage ?? string.Empty;
         SubtitleFontBox.Text = _settings.Subtitle.FontFamily; SubtitleSizeBox.Value = _settings.Subtitle.FontSize; CueDurationBox.Value = _settings.Subtitle.Segmentation.MaximumCueSeconds; SubtitleColorBox.Text = _settings.Subtitle.Color; SubtitleBackgroundBox.Text = _settings.Subtitle.Background; OutlineBox.Value = _settings.Subtitle.Outline; BottomMarginBox.Value = _settings.Subtitle.BottomMargin; EncodingBox.Text = _settings.Subtitle.Encoding; MinCueDurationBox.Value = _settings.Subtitle.Segmentation.MinimumCueSeconds; MaxLinesBox.Value = _settings.Subtitle.Segmentation.MaximumLines; TargetCharsBox.Value = _settings.Subtitle.Segmentation.TargetCharactersPerLine; SilenceSplitBox.Value = _settings.Subtitle.Segmentation.SilenceSplitSeconds; MaximumCpsBox.Value = _settings.Subtitle.Segmentation.MaximumCharactersPerSecond;
@@ -98,7 +112,7 @@ public sealed partial class SettingsWindow : Window
             if (models.Count == 0) throw new InvalidOperationException(L("ProviderNoModelsMessage"));
             _settings.Llm.CachedModels[providerId] = models.Select(model => model.Id).ToList();
             var list = new ListView { ItemsSource = models, DisplayMemberPath = "Id", SelectionMode = ListViewSelectionMode.Single, MinWidth = 420, MinHeight = 320 };
-            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = F("ProviderModelsTitle", provider.DisplayName), Content = list, PrimaryButtonText = L("UseSelectedButton"), CloseButtonText = L("CloseButton") };
+            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Title = F("ProviderModelsTitle", provider.DisplayName), Content = list, PrimaryButtonText = L("UseSelectedButton"), CloseButtonText = L("CloseButton") };
             if (await dialog.ShowAsync() == ContentDialogResult.Primary && list.SelectedItem is LlmModel selected) ModelBox.Text = selected.Id;
             await _service.SaveAsync(_settings);
             LocalizationService.Apply(_settings.General.Language);
@@ -108,7 +122,7 @@ public sealed partial class SettingsWindow : Window
             if (_settings.Llm.CachedModels.TryGetValue(providerId, out var cached) && cached.Count > 0)
             {
                 var list = new ListView { ItemsSource = cached, SelectionMode = ListViewSelectionMode.Single, MinWidth = 420, MinHeight = 280 };
-                var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = L("CachedModelsTitle"), Content = new StackPanel { Spacing = 8, Children = { new TextBlock { Text = F("ModelSyncCachedMessage", exception.Message), TextWrapping = TextWrapping.Wrap }, list } }, PrimaryButtonText = L("UseSelectedButton"), CloseButtonText = L("CloseButton") };
+                var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Title = L("CachedModelsTitle"), Content = new StackPanel { Spacing = 8, Children = { new TextBlock { Text = F("ModelSyncCachedMessage", exception.Message), TextWrapping = TextWrapping.Wrap }, list } }, PrimaryButtonText = L("UseSelectedButton"), CloseButtonText = L("CloseButton") };
                 if (await dialog.ShowAsync() == ContentDialogResult.Primary && list.SelectedItem is string selected) ModelBox.Text = selected;
             }
             else { StatusBar.Title = L("ModelSyncFailedTitle"); StatusBar.Message = F("ModelSyncManualMessage", exception.Message); StatusBar.Severity = InfoBarSeverity.Warning; StatusBar.IsOpen = true; }
@@ -122,7 +136,8 @@ public sealed partial class SettingsWindow : Window
             if (MinCueDurationBox.Value > CueDurationBox.Value) throw new InvalidOperationException(L("CueDurationValidationMessage"));
             if (string.IsNullOrWhiteSpace(PythonBox.Text)) throw new InvalidOperationException(L("PythonRequiredMessage"));
             _ = EncodingBox.Text.Trim().Equals("utf-8", StringComparison.OrdinalIgnoreCase) ? new System.Text.UTF8Encoding(false, true) : System.Text.Encoding.GetEncoding(EncodingBox.Text.Trim());
-            _settings.General.Language = (AppLanguage)(LanguageCombo.SelectedItem ?? AppLanguage.English); _settings.General.Theme = (AppTheme)(ThemeCombo.SelectedItem ?? AppTheme.System); _settings.General.RecentMediaCount = (int)RecentCountBox.Value; _settings.General.ResumePlayback = ResumeCheck.IsChecked == true;
+            var previousLanguage = _settings.General.Language;
+            _settings.General.Language = (AppLanguage)(LanguageCombo.SelectedItem ?? AppLanguage.Default); _settings.General.Theme = (AppTheme)(ThemeCombo.SelectedItem ?? AppTheme.System); _settings.General.RecentMediaCount = (int)RecentCountBox.Value; _settings.General.ResumePlayback = ResumeCheck.IsChecked == true; _settings.General.DefaultFolder = EmptyToNull(DefaultFolderBox.Text);
             _settings.Playback.HardwareDecoder = (HardwareDecoder)(HardwareCombo.SelectedItem ?? HardwareDecoder.Auto); _settings.Playback.RtxVideoSuperResolution = (RtxVideoSuperResolutionMode)(RtxCombo.SelectedItem ?? RtxVideoSuperResolutionMode.Auto); _settings.Playback.RtxQuality = RtxQualityBox.Value <= 0 ? null : (int)RtxQualityBox.Value; _settings.Playback.DefaultVolume = VolumeBox.Value; _settings.Playback.SeekIntervalSeconds = SeekBox.Value; _settings.Playback.Renderer = RendererBox.Text.Trim(); _settings.Playback.DefaultAudioLanguage = EmptyToNull(AudioLanguageBox.Text); _settings.Playback.DefaultSubtitleLanguage = EmptyToNull(SubtitleLanguageBox.Text);
             _settings.Subtitle.FontFamily = string.IsNullOrWhiteSpace(SubtitleFontBox.Text) ? SubtitleSettings.DefaultFontFamily : SubtitleFontBox.Text.Trim(); _settings.Subtitle.FontSize = SubtitleSizeBox.Value; _settings.Subtitle.Segmentation.MaximumCueSeconds = CueDurationBox.Value; _settings.Subtitle.Color = SubtitleColorBox.Text; _settings.Subtitle.Background = SubtitleBackgroundBox.Text; _settings.Subtitle.Outline = OutlineBox.Value; _settings.Subtitle.BottomMargin = (int)BottomMarginBox.Value; _settings.Subtitle.Encoding = EncodingBox.Text; _settings.Subtitle.Segmentation.MinimumCueSeconds = MinCueDurationBox.Value; _settings.Subtitle.Segmentation.MaximumLines = (int)MaxLinesBox.Value; _settings.Subtitle.Segmentation.TargetCharactersPerLine = (int)TargetCharsBox.Value; _settings.Subtitle.Segmentation.SilenceSplitSeconds = SilenceSplitBox.Value; _settings.Subtitle.Segmentation.MaximumCharactersPerSecond = MaximumCpsBox.Value;
             _settings.Asr.ModelPath = EmptyToNull(AsrModelBox.Text) ?? AsrSettings.DefaultModelId; _settings.Asr.AlignerPath = EmptyToNull(AlignerBox.Text) ?? AsrSettings.DefaultAlignerId; _settings.Asr.PythonExecutable = PythonBox.Text.Trim(); _settings.Asr.Device = (AsrDevice)(AsrDeviceCombo.SelectedItem ?? AsrDevice.Auto); _settings.Asr.Precision = (AsrPrecision)(PrecisionCombo.SelectedItem ?? AsrPrecision.Auto); _settings.Asr.UseVad = VadCheck.IsChecked == true; _settings.Asr.Language = AsrLanguageBox.Text.Trim(); _settings.Asr.ChunkDurationSeconds = ChunkDurationBox.Value;
@@ -131,10 +146,43 @@ public sealed partial class SettingsWindow : Window
             if (!string.IsNullOrEmpty(ApiKeyBox.Password)) _credentials.Save(CredentialIdentifier.ForLlm(_settings.Llm.Provider), _settings.Llm.Provider, ApiKeyBox.Password);
             await _service.SaveAsync(_settings);
             SettingsSaved?.Invoke(this, _settings);
+            if (_settings.General.Language != previousLanguage)
+            {
+                var dialog = new ContentDialog
+                {
+                    XamlRoot = Root.XamlRoot,
+                    RequestedTheme = Root.ActualTheme,
+                    Title = L("LanguageRestartTitle"),
+                    Content = L("LanguageRestartMessage"),
+                    PrimaryButtonText = L("RestartNowButton"),
+                    CloseButtonText = L("LaterButton")
+                };
+                if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                {
+                    Close();
+                    RestartApplication();
+                    return;
+                }
+            }
             Close();
         }
         catch (Exception exception) { StatusBar.Title = L("SettingsErrorTitle"); StatusBar.Message = exception.Message; StatusBar.Severity = InfoBarSeverity.Error; StatusBar.IsOpen = true; }
     }
+
+    private async void OnBrowseDefaultFolderClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
+            picker.FileTypeFilter.Add("*");
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is not null) DefaultFolderBox.Text = folder.Path;
+        }
+        catch (Exception exception) { StatusBar.Title = L("SettingsErrorTitle"); StatusBar.Message = exception.Message; StatusBar.Severity = InfoBarSeverity.Error; StatusBar.IsOpen = true; }
+    }
+
+    private void OnClearDefaultFolderClick(object sender, RoutedEventArgs e) => DefaultFolderBox.Text = string.Empty;
 
     private void OnClearApiKeyClick(object sender, RoutedEventArgs e)
     {
@@ -146,6 +194,16 @@ public sealed partial class SettingsWindow : Window
     }
 
     private void OnCancelClick(object sender, RoutedEventArgs e) => Close();
+    private static void RestartApplication()
+    {
+        try
+        {
+            AppInstance.Restart(string.Empty);
+        }
+        catch { }
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath ?? "AIMediaWorker.exe") { UseShellExecute = true });
+        Application.Current.Exit();
+    }
     private static string? EmptyToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);

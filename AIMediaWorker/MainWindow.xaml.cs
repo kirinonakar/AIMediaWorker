@@ -34,6 +34,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Text;
 
 namespace AIMediaWorker;
 
@@ -127,9 +128,11 @@ public sealed partial class MainWindow : Window
     public MainWindow(string? initialSource, AppSettings settings)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        _browserDirectory = ResolveDefaultBrowserDirectory(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
         _webDavCredentials = new WebDavCredentialStore(_windowsCredentials);
         _webDavClient = new WebDavClient(_windowsCredentials, timeout: TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds));
         InitializeComponent();
+        ExtendsContentIntoTitleBar = true;
         RightPanelSectionList.SelectionChanged += OnRightPanelSectionChanged;
         RefreshRightPanelSections();
         GenerateSubtitlesMenuItem.IsChecked = _settings.Asr.GenerateSubtitles;
@@ -1244,6 +1247,7 @@ public sealed partial class MainWindow : Window
             _workAreaBeforeFullscreen = display.WorkArea;
             _isFullscreen = true;
             MainMenuBar.Visibility = Visibility.Collapsed;
+            AppTitleBar.Visibility = Visibility.Collapsed;
             PlaybackControls.Visibility = Visibility.Collapsed;
             VisualizationPanel.Visibility = Visibility.Collapsed;
             StatusPanel.Visibility = Visibility.Collapsed;
@@ -1288,6 +1292,7 @@ public sealed partial class MainWindow : Window
         {
             _fullscreenHoverTimer?.Stop();
             MainMenuBar.Visibility = Visibility.Visible;
+            AppTitleBar.Visibility = Visibility.Visible;
             PlaybackControls.Visibility = Visibility.Visible;
             VideoPlaceholder.Margin = new Thickness(8, 4, 4, 4);
             ApplyPanelVisibility();
@@ -1488,7 +1493,7 @@ public sealed partial class MainWindow : Window
         StatusText.Text = L("StatusCollectingDiagnostics");
         var snapshot = await new DiagnosticsService().CollectAsync(_playback, _asrEngine.State, _settings.Asr.PythonExecutable, _settings.Asr.ModelPath, _settings.Asr.AlignerPath);
         var output = new TextBox { Text = snapshot.ToString(), IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinWidth = 650, MinHeight = 420, FontFamily = new FontFamily("Consolas") };
-        await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("DiagnosticsTitle"), Content = output, CloseButtonText = L("CloseButton") });
+        await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("DiagnosticsTitle"), Content = output, CloseButtonText = L("CloseButton") });
         StatusText.Text = L("ReadyText");
     }
     private void OnGenerateSubtitleClick(object sender, RoutedEventArgs e)
@@ -1897,7 +1902,7 @@ public sealed partial class MainWindow : Window
             var progress = new Progress<double>(value => StatusText.Text = F("StatusSummarizing", value));
             var summary = await service.SummarizeAsync(track.Cues, (SummaryKind)(choices.SelectedItem ?? SummaryKind.Short), progress, cancellationToken: _aiOperationCancellation.Token);
             var output = new TextBox { Text = summary, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinWidth = 600, MinHeight = 380 };
-            await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("TranscriptSummaryTitle"), Content = output, CloseButtonText = L("CloseButton") });
+            await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("TranscriptSummaryTitle"), Content = output, CloseButtonText = L("CloseButton") });
             StatusText.Text = L("StatusSummaryComplete");
         }
         catch (OperationCanceledException) { StatusText.Text = L("StatusSummaryCancelled"); }
@@ -2208,6 +2213,77 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void OnAboutClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14 };
+            header.Children.Add(new Image
+            {
+                Source = new BitmapImage(new Uri("ms-appx:///Assets/app.png")),
+                Width = 64,
+                Height = 64,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            var nameVersion = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
+            nameVersion.Children.Add(new TextBlock { Text = "AIMediaWorker", FontSize = 20, FontWeight = FontWeights.SemiBold });
+            nameVersion.Children.Add(new TextBlock { Text = F("AboutVersion", GetAppVersion()), Opacity = 0.7 });
+            header.Children.Add(nameVersion);
+
+            var github = new HyperlinkButton { Content = "https://github.com/kirinonakar/AIMediaWorker", HorizontalAlignment = HorizontalAlignment.Left };
+            github.Click += async (_, _) =>
+            {
+                try { await Windows.System.Launcher.LaunchUriAsync(new Uri("https://github.com/kirinonakar/AIMediaWorker")); }
+                catch (Exception exception) { await AppLog.WriteAsync("error", "about", "OPEN_GITHUB_ERROR", exception.Message, exception); }
+            };
+
+            var licenses = new Expander
+            {
+                Header = L("AboutThirdPartyLicenses"),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Content = new ScrollViewer
+                {
+                    MaxHeight = 220,
+                    Content = new TextBlock { Text = ThirdPartyLicensesText, TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Consolas"), FontSize = 12, Opacity = 0.85 }
+                }
+            };
+
+            var content = new StackPanel { Spacing = 12, Width = 440 };
+            content.Children.Add(header);
+            content.Children.Add(github);
+            content.Children.Add(licenses);
+
+            await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("AboutTitle"), Content = content, CloseButtonText = L("CloseButton") });
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "about", "ABOUT_DIALOG_ERROR", exception.Message, exception);
+        }
+    }
+
+    private static string GetAppVersion()
+    {
+        try
+        {
+            var version = Windows.ApplicationModel.Package.Current.Id.Version;
+            return $"{version.Major}.{version.Minor}.{version.Build}.{version.Revision}";
+        }
+        catch
+        {
+            return System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0.0";
+        }
+    }
+
+    private const string ThirdPartyLicensesText =
+        "NAudio 2.2.1 — MIT License\nhttps://github.com/naudio/NAudio\n\n" +
+        "Windows App SDK 2.4.0 — MIT License\nhttps://github.com/microsoft/WindowsAppSDK\n\n" +
+        "System.Security.Cryptography.ProtectedData 10.0.0 — MIT License\nhttps://www.nuget.org/packages/System.Security.Cryptography.ProtectedData\n\n" +
+        "libmpv / mpv — GPLv2+ (build-dependent)\nhttps://github.com/mpv-player/mpv\n\n" +
+        "FFmpeg — LGPLv2.1+ (build-dependent)\nhttps://ffmpeg.org\n\n" +
+        "Silero VAD — MIT License\nhttps://github.com/snakers4/silero-vad\n\n" +
+        "Qwen3-ASR — Apache License 2.0\nhttps://github.com/QwenLM/Qwen3-ASR";
+
     private void ApplyTheme(AppTheme theme)
     {
         RootGrid.RequestedTheme = theme switch { AppTheme.Light => ElementTheme.Light, AppTheme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
@@ -2248,6 +2324,7 @@ public sealed partial class MainWindow : Window
         var inactiveForeground = dark ? Windows.UI.Color.FromArgb(255, 160, 160, 160) : Windows.UI.Color.FromArgb(255, 110, 110, 110);
         var hover = dark ? Windows.UI.Color.FromArgb(255, 58, 58, 58) : Windows.UI.Color.FromArgb(255, 224, 224, 224);
         var pressed = dark ? Windows.UI.Color.FromArgb(255, 72, 72, 72) : Windows.UI.Color.FromArgb(255, 208, 208, 208);
+        AppTitleBar.Background = new SolidColorBrush(background);
         titleBar.BackgroundColor = background;
         titleBar.ForegroundColor = foreground;
         titleBar.InactiveBackgroundColor = background;
@@ -2275,6 +2352,8 @@ public sealed partial class MainWindow : Window
         catch (Exception exception) { await ShowMessageAsync(L("FolderUnavailableTitle"), exception.Message); }
     }
 
+    private async void OnBrowserHomeClick(object sender, RoutedEventArgs e) => await RefreshBrowserAsync(ResolveDefaultBrowserDirectory(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)));
+
     private async void OnBrowserParentClick(object sender, RoutedEventArgs e)
     {
         var parent = Directory.GetParent(_browserDirectory);
@@ -2282,6 +2361,12 @@ public sealed partial class MainWindow : Window
     }
 
     private async void OnBrowserRefreshClick(object sender, RoutedEventArgs e) => await RefreshBrowserAsync(_browserDirectory);
+
+    private string ResolveDefaultBrowserDirectory(string fallback)
+    {
+        var configured = _settings.General.DefaultFolder;
+        return !string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured) ? configured : fallback;
+    }
 
     private async Task RefreshBrowserAsync(string directory, string? selectedPath = null)
     {
@@ -2663,7 +2748,7 @@ public sealed partial class MainWindow : Window
         if (!_isFullscreen && sender.Presenter is OverlappedPresenter presenter && presenter.State != OverlappedPresenterState.Minimized) CaptureWindowPlacement(sender, presenter);
         if (_allowClose || !_document.IsDirty) return;
         args.Cancel = true;
-        var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("UnsavedChangesTitle"), Content = L("UnsavedChangesCloseMessage"), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
+        var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("UnsavedChangesTitle"), Content = L("UnsavedChangesCloseMessage"), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
         var result = await ShowDialogAsync(dialog);
         if (result == ContentDialogResult.None) return;
         if (result == ContentDialogResult.Primary)
@@ -2678,7 +2763,7 @@ public sealed partial class MainWindow : Window
     private async Task<bool> ConfirmDiscardChangesAsync(string action)
     {
         if (!_document.IsDirty) return true;
-        var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = L("UnsavedChangesTitle"), Content = F("UnsavedChangesActionMessage", action), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
+        var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("UnsavedChangesTitle"), Content = F("UnsavedChangesActionMessage", action), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
         var result = await ShowDialogAsync(dialog);
         if (result == ContentDialogResult.None) return false;
         if (result == ContentDialogResult.Primary)
@@ -2695,7 +2780,7 @@ public sealed partial class MainWindow : Window
         TryPlayback(seek);
         ScheduleAiRestartAfterSeek(requestedPosition);
     }
-    private ContentDialog CreateDialog(string title, object content, string primaryText) => new() { XamlRoot = RootGrid.XamlRoot, Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
+    private ContentDialog CreateDialog(string title, object content, string primaryText) => new() { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
     private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
     {
         await _dialogLock.WaitAsync();
@@ -2711,7 +2796,7 @@ public sealed partial class MainWindow : Window
             _dialogLock.Release();
         }
     }
-    private async Task ShowMessageAsync(string title, string message) => await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap }, CloseButtonText = L("OkButton") });
+    private async Task ShowMessageAsync(string title, string message) => await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap }, CloseButtonText = L("OkButton") });
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
     private static Brush ThemeBrush(string resourceKey, Windows.UI.Color fallback) => Application.Current.Resources.TryGetValue(resourceKey, out var value) && value is Brush brush ? brush : new SolidColorBrush(fallback);

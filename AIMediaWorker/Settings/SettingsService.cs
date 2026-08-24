@@ -81,6 +81,7 @@ public sealed class SettingsService
         if (string.Equals(settings.Llm.Provider, "Unsloth", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(settings.Llm.Provider)) settings.Llm.Provider = "Unsloth Desktop";
         settings.Llm.CachedModels ??= [];
         settings.General ??= new GeneralSettings();
+        settings.General.DefaultFolder = string.IsNullOrWhiteSpace(settings.General.DefaultFolder) ? null : settings.General.DefaultFolder.Trim();
         settings.Window ??= new WindowLayoutSettings();
         settings.General.Shortcuts ??= [];
         if (settings.General.Shortcuts.TryGetValue(ShortcutActions.PreviousMedia, out var previousMedia) &&
