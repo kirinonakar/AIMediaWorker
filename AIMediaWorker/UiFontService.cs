@@ -24,6 +24,12 @@ public static class UiFontService
 
     private static void ApplyToVisualTree(DependencyObject element, FontFamily family)
     {
+        // IconElement implementations render private text nodes with a symbol font.
+        // Applying the UI font to those nodes turns glyph code points into missing
+        // characters, and only affects icons that happened to be realized at the
+        // time of the update.
+        if (element is IconElement) return;
+
         if (element is Control control && CanSetFont(element, Control.FontFamilyProperty))
         {
             control.FontFamily = family;

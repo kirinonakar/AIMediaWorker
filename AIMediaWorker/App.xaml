@@ -11,6 +11,13 @@
                 <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
             <FontFamily x:Key="ContentControlThemeFontFamily">Noto Sans CJK JP</FontFamily>
+            <!--
+                FontFamily is inherited. Keep icon glyphs on the platform symbol font
+                when the application-wide UI font is changed.
+            -->
+            <Style TargetType="FontIcon">
+                <Setter Property="FontFamily" Value="{ThemeResource SymbolThemeFontFamily}" />
+            </Style>
             <!-- Other app resources here -->
         </ResourceDictionary>
     </Application.Resources>
