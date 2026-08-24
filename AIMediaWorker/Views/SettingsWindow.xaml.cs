@@ -20,6 +20,7 @@ public sealed partial class SettingsWindow : Window
     private readonly SettingsService _service = SettingsService.CreateDefault();
     private readonly WindowsCredentialService _credentials = new();
     private AppSettings _settings = new();
+    private AppWindow? _appWindow;
     public Array Languages { get; } = Enum.GetValues<AppLanguage>();
     public Array Themes { get; } = Enum.GetValues<AppTheme>();
     public Array HardwareDecoders { get; } = Enum.GetValues<HardwareDecoder>();
@@ -46,9 +47,9 @@ public sealed partial class SettingsWindow : Window
         Title = L("SettingsWindow.Title");
         WindowOwner.Attach(this, owner);
         var handle = WindowNative.GetWindowHandle(this);
-        var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
-        appWindow?.Resize(new SizeInt32(1320, 1000));
-        if (appWindow?.Presenter is OverlappedPresenter presenter)
+        _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
+        _appWindow?.Resize(new SizeInt32(1320, 1000));
+        if (_appWindow?.Presenter is OverlappedPresenter presenter)
         {
             presenter.SetBorderAndTitleBar(true, false);
             presenter.IsResizable = true;
@@ -57,6 +58,7 @@ public sealed partial class SettingsWindow : Window
         SettingsSectionList.SelectionChanged += OnSettingsSectionChanged;
         SettingsSectionList.SelectedIndex = 0;
         ThemeCombo.SelectionChanged += OnThemeComboChanged;
+        Root.ActualThemeChanged += OnRootActualThemeChanged;
     }
 
     private void OnSettingsSectionChanged(object sender, SelectionChangedEventArgs e)
@@ -74,6 +76,35 @@ public sealed partial class SettingsWindow : Window
     private void ApplyTheme(AppTheme theme)
     {
         Root.RequestedTheme = theme switch { AppTheme.Light => ElementTheme.Light, AppTheme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
+        ApplyTitleBarTheme(Root.ActualTheme);
+    }
+
+    private void OnRootActualThemeChanged(FrameworkElement sender, object args)
+    {
+        ApplyTitleBarTheme(sender.ActualTheme);
+    }
+
+    private void ApplyTitleBarTheme(ElementTheme theme)
+    {
+        if (_appWindow?.TitleBar is not { } titleBar) return;
+        var dark = theme == ElementTheme.Dark;
+        var background = dark ? Windows.UI.Color.FromArgb(255, 32, 32, 32) : Windows.UI.Color.FromArgb(255, 243, 243, 243);
+        var foreground = dark ? Windows.UI.Color.FromArgb(255, 255, 255, 255) : Windows.UI.Color.FromArgb(255, 24, 24, 24);
+        var inactiveForeground = dark ? Windows.UI.Color.FromArgb(255, 160, 160, 160) : Windows.UI.Color.FromArgb(255, 110, 110, 110);
+        var hover = dark ? Windows.UI.Color.FromArgb(255, 58, 58, 58) : Windows.UI.Color.FromArgb(255, 224, 224, 224);
+        var pressed = dark ? Windows.UI.Color.FromArgb(255, 72, 72, 72) : Windows.UI.Color.FromArgb(255, 208, 208, 208);
+        titleBar.BackgroundColor = background;
+        titleBar.ForegroundColor = foreground;
+        titleBar.InactiveBackgroundColor = background;
+        titleBar.InactiveForegroundColor = inactiveForeground;
+        titleBar.ButtonBackgroundColor = background;
+        titleBar.ButtonForegroundColor = foreground;
+        titleBar.ButtonHoverBackgroundColor = hover;
+        titleBar.ButtonHoverForegroundColor = foreground;
+        titleBar.ButtonPressedBackgroundColor = pressed;
+        titleBar.ButtonPressedForegroundColor = foreground;
+        titleBar.ButtonInactiveBackgroundColor = background;
+        titleBar.ButtonInactiveForegroundColor = inactiveForeground;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)

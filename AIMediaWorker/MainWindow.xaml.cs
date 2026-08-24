@@ -196,6 +196,7 @@ public sealed partial class MainWindow : Window
         }
         if (sender.Presenter is not OverlappedPresenter presenter || presenter.State == OverlappedPresenterState.Minimized) return;
         CaptureWindowPlacement(sender, presenter);
+        UpdateTitleBarDragRegion();
     }
 
     private void CaptureWindowPlacement(AppWindow window, OverlappedPresenter presenter)
@@ -213,6 +214,7 @@ public sealed partial class MainWindow : Window
     {
         if (_initialized) return;
         _initialized = true;
+        UpdateTitleBarDragRegion();
         try
         {
             _rightPanelVisible = _settings.Window.IsRightPanelVisible;
@@ -1247,7 +1249,7 @@ public sealed partial class MainWindow : Window
             _workAreaBeforeFullscreen = display.WorkArea;
             _isFullscreen = true;
             MainMenuBar.Visibility = Visibility.Collapsed;
-            AppTitleBar.Visibility = Visibility.Collapsed;
+            AppTitleBarArea.Visibility = Visibility.Collapsed;
             PlaybackControls.Visibility = Visibility.Collapsed;
             VisualizationPanel.Visibility = Visibility.Collapsed;
             StatusPanel.Visibility = Visibility.Collapsed;
@@ -1292,7 +1294,7 @@ public sealed partial class MainWindow : Window
         {
             _fullscreenHoverTimer?.Stop();
             MainMenuBar.Visibility = Visibility.Visible;
-            AppTitleBar.Visibility = Visibility.Visible;
+            AppTitleBarArea.Visibility = Visibility.Visible;
             PlaybackControls.Visibility = Visibility.Visible;
             VideoPlaceholder.Margin = new Thickness(8, 4, 4, 4);
             ApplyPanelVisibility();
@@ -1427,6 +1429,7 @@ public sealed partial class MainWindow : Window
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (_isFullscreen) return;
+        UpdateTitleBarDragRegion();
         var previousRightWidth = _rightPanelWidth;
         var previousBottomHeight = _bottomPanelHeight;
         ClampPanelSizesToAvailable();
@@ -2324,7 +2327,7 @@ public sealed partial class MainWindow : Window
         var inactiveForeground = dark ? Windows.UI.Color.FromArgb(255, 160, 160, 160) : Windows.UI.Color.FromArgb(255, 110, 110, 110);
         var hover = dark ? Windows.UI.Color.FromArgb(255, 58, 58, 58) : Windows.UI.Color.FromArgb(255, 224, 224, 224);
         var pressed = dark ? Windows.UI.Color.FromArgb(255, 72, 72, 72) : Windows.UI.Color.FromArgb(255, 208, 208, 208);
-        AppTitleBar.Background = new SolidColorBrush(background);
+        AppTitleBarArea.Background = new SolidColorBrush(background);
         titleBar.BackgroundColor = background;
         titleBar.ForegroundColor = foreground;
         titleBar.InactiveBackgroundColor = background;
@@ -2337,6 +2340,29 @@ public sealed partial class MainWindow : Window
         titleBar.ButtonPressedForegroundColor = foreground;
         titleBar.ButtonInactiveBackgroundColor = background;
         titleBar.ButtonInactiveForegroundColor = inactiveForeground;
+    }
+
+    private void UpdateTitleBarDragRegion()
+    {
+        if (_appWindow?.TitleBar is not { } titleBar) return;
+        var scale = RootGrid.XamlRoot?.RasterizationScale ?? 1.0;
+        var left = 0.0;
+        var top = 0.0;
+        var right = 0.0;
+        var bottom = 0.0;
+        if (_appWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized })
+        {
+            // When maximized, the client area is inset by the invisible resize border.
+            var border = 8 * scale;
+            left = border;
+            top = border;
+            right = border;
+        }
+        var width = AppTitleBarArea.ActualWidth * scale;
+        var height = AppTitleBarArea.ActualHeight * scale;
+        var dragWidth = Math.Max(0, width - left - right - titleBar.RightInset);
+        var dragHeight = Math.Max(0, height - top - bottom);
+        titleBar.SetDragRectangles([new RectInt32((int)left, (int)top, (int)dragWidth, (int)dragHeight)]);
     }
 
     private async void OnChooseBrowserFolderClick(object sender, RoutedEventArgs e)
