@@ -30,6 +30,7 @@ public sealed class NativeVideoHost : IDisposable
     private WindowProcedure? _windowProcedure;
     private bool _disposed;
     private bool _visible = true;
+    private bool _cursorHidden;
     private (int X, int Y, int Width, int Height)? _lastBounds;
 
     public NativeVideoHost(Window window, FrameworkElement placeholder)
@@ -76,6 +77,13 @@ public sealed class NativeVideoHost : IDisposable
         if (visible) UpdateBounds();
     }
 
+    public void SetCursorHidden(bool hidden)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _cursorHidden = hidden;
+        ApplyCursor();
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -100,10 +108,10 @@ public sealed class NativeVideoHost : IDisposable
         if (message == WmNonClientHitTest) return HitTestClient;
         if (message == WmSetCursor)
         {
-            SetArrowCursor();
+            ApplyCursor();
             return 1;
         }
-        if (message == WmMouseMove) SetArrowCursor();
+        if (message == WmMouseMove) ApplyCursor();
         if (message == WmLeftButtonDown)
         {
             SetCapture(window);
@@ -130,8 +138,13 @@ public sealed class NativeVideoHost : IDisposable
         return _originalWindowProcedure == 0 ? DefWindowProc(window, message, wParam, lParam) : CallWindowProc(_originalWindowProcedure, window, message, wParam, lParam);
     }
 
-    private static void SetArrowCursor()
+    private void ApplyCursor()
     {
+        if (_cursorHidden)
+        {
+            SetCursor(0);
+            return;
+        }
         var cursor = LoadCursor(0, (nint)IdcArrow);
         if (cursor != 0) SetCursor(cursor);
     }

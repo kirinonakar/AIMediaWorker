@@ -115,6 +115,9 @@ public sealed partial class MainWindow : Window
     private DateTimeOffset _showFullscreenMenuUntil;
     private DateTimeOffset _showFullscreenControlsUntil;
     private DateTimeOffset _showFullscreenRightPanelUntil;
+    private DateTimeOffset _fullscreenCursorLastMovedAt;
+    private NativePoint? _lastFullscreenCursorPosition;
+    private bool _fullscreenCursorHidden;
     private string? _pendingLaunchSource;
     private string[]? _pendingDroppedFiles;
     private bool _openingLaunchSource;
@@ -145,7 +148,7 @@ public sealed partial class MainWindow : Window
         _videoHost.FilesDropped += OnNativeVideoFilesDropped;
         _videoHost.Clicked += OnNativeVideoClicked;
         _videoHost.DoubleClicked += OnNativeVideoDoubleClicked;
-        _playbackInitializationTask = _playback.InitializeAsync(_videoHost.Create(), _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
+        _playbackInitializationTask = InitializePlaybackAsync(_videoHost.Create());
         ExtendsContentIntoTitleBar = true;
         RightPanelSectionList.SelectionChanged += OnRightPanelSectionChanged;
         RefreshRightPanelSections();
@@ -173,6 +176,18 @@ public sealed partial class MainWindow : Window
         _fullscreenHoverTimer.Interval = TimeSpan.FromMilliseconds(100);
         _fullscreenHoverTimer.Tick += OnFullscreenHoverTick;
         BindDocument(new SubtitleDocument());
+    }
+
+    private async Task InitializePlaybackAsync(nint videoWindowHandle)
+    {
+        await _playback.InitializeAsync(videoWindowHandle, _settings.Playback.HardwareDecoder, _settings.Playback.Renderer);
+        if (!_playback.IsAvailable) return;
+        _playback.SetVolume(_settings.Playback.DefaultVolume);
+        _playback.SetRate(_settings.Playback.PlaybackRate);
+        _playback.ConfigureNetwork(TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds), _settings.Network.Proxy);
+        _playback.ConfigurePreferredLanguages(_settings.Playback.DefaultAudioLanguage, _settings.Playback.DefaultSubtitleLanguage);
+        _playback.ConfigureSubtitleStyle(_settings.Subtitle.FontFamily, _settings.Subtitle.FontSize, _settings.Subtitle.Color, _settings.Subtitle.Background, _settings.Subtitle.Outline, _settings.Subtitle.BottomMargin);
+        _playback.SetSubtitleVisibility(_settings.Playback.ShowSubtitles);
     }
 
     public void ApplySavedWindowPlacement(WindowLayoutSettings layout)
@@ -233,20 +248,13 @@ public sealed partial class MainWindow : Window
             ClampPanelSizesToAvailable();
             ApplyPanelVisibility();
             var historyLoad = _historyLoadTask ??= _historyService.LoadAsync();
-            await _playbackInitializationTask;
-            if (_playback.IsAvailable)
-            {
-                _playback.SetVolume(_settings.Playback.DefaultVolume); _playback.SetRate(_settings.Playback.PlaybackRate);
-                _playback.ConfigureNetwork(TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds), _settings.Network.Proxy);
-                _playback.ConfigurePreferredLanguages(_settings.Playback.DefaultAudioLanguage, _settings.Playback.DefaultSubtitleLanguage);
-                _playback.ConfigureSubtitleStyle(_settings.Subtitle.FontFamily, _settings.Subtitle.FontSize, _settings.Subtitle.Color, _settings.Subtitle.Background, _settings.Subtitle.Outline, _settings.Subtitle.BottomMargin);
-                _playback.SetSubtitleVisibility(_settings.Playback.ShowSubtitles);
-            }
+            _ = RefreshBrowserAsync(_browserDirectory);
             SubtitleVisibilityMenuItem.IsChecked = _settings.Playback.ShowSubtitles;
             RateCombo.ItemsSource = new[] { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0 };
             RateCombo.SelectedItem = RateCombo.Items.Cast<double>().OrderBy(value => Math.Abs(value - _settings.Playback.PlaybackRate)).First();
             UpdateShortcutHints();
             UpdatePlaylistButtons();
+            await _playbackInitializationTask;
             StatusText.Text = _playback.IsAvailable ? L("StatusLibmpvReady") : L("StatusPlaybackUnavailable");
             if (_playback.IsAvailable && _pendingDroppedFiles is { Length: > 0 } droppedFiles)
             {
@@ -261,7 +269,6 @@ public sealed partial class MainWindow : Window
                 try { await OpenMediaAsync(launchSource); }
                 finally { _openingLaunchSource = false; }
             }
-            else _ = RefreshBrowserAsync(_browserDirectory);
             await historyLoad;
             RebuildRecentMenu();
             RefreshFavoritesList();
@@ -383,6 +390,8 @@ public sealed partial class MainWindow : Window
         }
         try
         {
+            await _playbackInitializationTask;
+            if (!_playback.IsAvailable) throw new InvalidOperationException(L("StatusPlaybackUnavailable"));
             if (!preservePlaylist)
             {
                 _playlist.Clear();
@@ -1319,12 +1328,14 @@ public sealed partial class MainWindow : Window
             _appWindow.MoveAndResize(display.OuterBounds);
             _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
             ApplyFullscreenWindowStyle();
+            ResetFullscreenCursorIdle();
             _fullscreenHoverTimer?.Start();
             FocusPlaybackSurface();
         }
         catch (Exception exception)
         {
             _isFullscreen = false;
+            SetFullscreenCursorHidden(false);
             RestoreWindowStyle();
             RestoreWindowBounds(DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest));
             ApplyPanelVisibility();
@@ -1348,6 +1359,8 @@ public sealed partial class MainWindow : Window
         finally
         {
             _fullscreenHoverTimer?.Stop();
+            SetFullscreenCursorHidden(false);
+            _lastFullscreenCursorPosition = null;
             MainMenuBar.Visibility = Visibility.Visible;
             AppTitleBarArea.Visibility = Visibility.Visible;
             PlaybackControls.Visibility = Visibility.Visible;
@@ -1521,13 +1534,28 @@ public sealed partial class MainWindow : Window
     private void OnFullscreenHoverTick(DispatcherQueueTimer sender, object args)
     {
         if (!_isFullscreen || _appWindow is null) return;
-        if (!GetCursorPos(out var cursor)) return;
+        if (!GetCursorPos(out var cursor))
+        {
+            SetFullscreenCursorHidden(false);
+            return;
+        }
         var left = _appWindow.Position.X;
         var top = _appWindow.Position.Y;
         var right = left + _appWindow.Size.Width;
         var bottom = top + _appWindow.Size.Height;
         var now = DateTimeOffset.UtcNow;
         var inside = cursor.X >= left && cursor.X < right && cursor.Y >= top && cursor.Y < bottom;
+        var moved = _lastFullscreenCursorPosition is not { } previous || previous.X != cursor.X || previous.Y != cursor.Y;
+        _lastFullscreenCursorPosition = cursor;
+        if (moved || !inside)
+        {
+            _fullscreenCursorLastMovedAt = now;
+            SetFullscreenCursorHidden(false);
+        }
+        else if (now - _fullscreenCursorLastMovedAt >= FullscreenCursorHideDelay)
+        {
+            SetFullscreenCursorHidden(true);
+        }
         if (inside)
         {
             if (cursor.Y <= top + 16 || MainMenuBar.Visibility == Visibility.Visible && cursor.Y <= top + 70) _showFullscreenMenuUntil = now.AddSeconds(1.5);
@@ -1545,6 +1573,24 @@ public sealed partial class MainWindow : Window
         RightPanelSplitter.Visibility = showRight ? Visibility.Visible : Visibility.Collapsed;
         RightPanelSplitterColumn.Width = showRight ? new GridLength(6) : new GridLength(0);
         RightPanelColumn.Width = showRight ? new GridLength(_rightPanelWidth) : new GridLength(0);
+    }
+
+    private void ResetFullscreenCursorIdle()
+    {
+        _fullscreenCursorLastMovedAt = DateTimeOffset.UtcNow;
+        _lastFullscreenCursorPosition = GetCursorPos(out var cursor) ? cursor : null;
+        SetFullscreenCursorHidden(false);
+    }
+
+    private void SetFullscreenCursorHidden(bool hidden)
+    {
+        if (_fullscreenCursorHidden == hidden)
+        {
+            if (hidden) _videoHost?.SetCursorHidden(true);
+            return;
+        }
+        _fullscreenCursorHidden = hidden;
+        _videoHost?.SetCursorHidden(hidden);
     }
     private async void OnDiagnosticsClick(object sender, RoutedEventArgs e)
     {
@@ -2898,6 +2944,7 @@ public sealed partial class MainWindow : Window
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
         _fullscreenHoverTimer?.Stop();
+        SetFullscreenCursorHidden(false);
         if (_appWindow is not null)
         {
             _appWindow.Changed -= OnAppWindowChanged;
@@ -3004,6 +3051,7 @@ public sealed partial class MainWindow : Window
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
+    private static readonly TimeSpan FullscreenCursorHideDelay = TimeSpan.FromSeconds(2);
     [StructLayout(LayoutKind.Sequential)] private struct NativePoint { public int X; public int Y; }
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out NativePoint point);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)] private static extern int GetWindowLong(nint window, int index);

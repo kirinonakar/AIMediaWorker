@@ -24,7 +24,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private bool _disposed;
 
     public PlaybackState State => _state;
-    public bool IsAvailable => _context != 0 && !_disposed;
+    public bool IsAvailable => _context != 0 && !_disposed && _state is not PlaybackState.Uninitialized and not PlaybackState.Failed;
     public bool IsFirstFrameReady => _firstFrameReady;
     public string? CurrentSource { get; private set; }
     public TimeSpan Position { get; private set; }
