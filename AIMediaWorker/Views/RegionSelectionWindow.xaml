@@ -6,7 +6,6 @@
     Title="Select a region">
     <Grid x:Name="SelectionSurface" Background="Transparent" PointerPressed="OnPointerPressed" PointerMoved="OnPointerMoved" PointerReleased="OnPointerReleased" KeyDown="OnKeyDown">
         <Image x:Name="ScreenPreview" Stretch="Fill" IsHitTestVisible="False" />
-        <Border Background="#48000000" IsHitTestVisible="False" />
         <Border x:Name="SelectionBorder" Visibility="Collapsed" BorderBrush="#FFFFFFFF" BorderThickness="3" Background="#55308CEB" HorizontalAlignment="Left" VerticalAlignment="Top">
             <Border Margin="8" Padding="6,3" Background="#CC000000" HorizontalAlignment="Left" VerticalAlignment="Top">
                 <TextBlock x:Name="SelectionSizeText" Foreground="White" FontFamily="Consolas" FontWeight="SemiBold" />

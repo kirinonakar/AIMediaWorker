@@ -1,14 +1,14 @@
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.IO;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.WindowsRuntime;
+using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Localization;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
-using Windows.Storage.Streams;
 using Windows.Graphics;
 using Windows.System;
 using WinRT.Interop;
@@ -28,6 +28,7 @@ internal sealed partial class RegionSelectionWindow : Window
         InstructionText.Text = L("RegionSelectionInstruction");
         WindowOwner.Attach(this, owner);
         _virtualBounds = GetVirtualScreenBounds();
+        LoadScreenPreview();
         var handle = WindowNative.GetWindowHandle(this);
         var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
         if (appWindow.Presenter is OverlappedPresenter presenter)
@@ -44,13 +45,12 @@ internal sealed partial class RegionSelectionWindow : Window
 
     public async Task<Rectangle?> SelectAsync()
     {
-        await LoadScreenPreviewAsync();
         Activate();
         FocusTarget.Focus(FocusState.Programmatic);
         return await _completion.Task;
     }
 
-    private async Task LoadScreenPreviewAsync()
+    private void LoadScreenPreview()
     {
         try
         {
@@ -58,22 +58,24 @@ internal sealed partial class RegionSelectionWindow : Window
             using (var graphics = Graphics.FromImage(bitmap))
                 graphics.CopyFromScreen(_virtualBounds.X, _virtualBounds.Y, 0, 0, bitmap.Size, CopyPixelOperation.SourceCopy);
 
-            using var encoded = new MemoryStream();
-            bitmap.Save(encoded, ImageFormat.Png);
-            using var randomAccess = new InMemoryRandomAccessStream();
-            using (var writer = new DataWriter(randomAccess))
+            var rowBytes = checked(_virtualBounds.Width * 4);
+            var pixels = new byte[checked(rowBytes * _virtualBounds.Height)];
+            var data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
+            try
             {
-                writer.WriteBytes(encoded.ToArray());
-                await writer.StoreAsync();
+                for (var row = 0; row < bitmap.Height; row++)
+                    Marshal.Copy(data.Scan0 + row * data.Stride, pixels, row * rowBytes, rowBytes);
             }
-            randomAccess.Seek(0);
-            var source = new BitmapImage();
-            await source.SetSourceAsync(randomAccess);
+            finally { bitmap.UnlockBits(data); }
+
+            var source = new WriteableBitmap(bitmap.Width, bitmap.Height);
+            using (var stream = source.PixelBuffer.AsStream()) stream.Write(pixels, 0, pixels.Length);
+            source.Invalidate();
             ScreenPreview.Source = source;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            // Keep the translucent overlay usable if a remote or protected desktop cannot be captured.
+            _ = AppLog.WriteAsync("error", "screen-recording", "REGION_PREVIEW_CAPTURE_ERROR", exception.Message, exception);
         }
     }
 
