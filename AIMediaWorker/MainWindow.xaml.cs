@@ -161,6 +161,10 @@ public sealed partial class MainWindow : Window
         StartupProfiler.Mark("xaml-start");
         InitializeComponent();
         StartupProfiler.Mark("xaml-ready");
+        // Apply the saved font to already-created elements as well as the app resource.
+        // The custom title bar is part of this visual tree and must follow the setting
+        // on the first launch, not only after the Preferences window is saved.
+        UiFontService.Apply(_settings.General.UiFontFamily, RootGrid);
         PositionSlider.ThumbToolTipValueConverter = new PositionSliderThumbToolTipValueConverter();
         _playback.StateChanged += OnPlaybackStateChanged;
         _playback.FirstFrameReady += OnFirstFrameReady;

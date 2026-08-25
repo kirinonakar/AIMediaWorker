@@ -53,6 +53,7 @@ public sealed partial class CameraWindow : Window
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         _settings = await SettingsService.CreateDefault().LoadAsync();
+        UiFontService.Apply(_settings.General.UiFontFamily, Root);
         ApplyTheme(_settings.General.Theme);
         ApplyCaptionAppearance();
         UpdateTitleBarDragRegion();
