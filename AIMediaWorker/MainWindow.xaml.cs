@@ -83,6 +83,8 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _seekAiRestartCancellation;
     private bool _subtitleGenerationCompletedForCurrentMedia;
     private bool _translationCompletedForCurrentMedia;
+    private readonly object _combinedAiProgressLock = new();
+    private CombinedAiProgressState? _combinedAiProgress;
     private readonly SemaphoreSlim _dialogLock = new(1, 1);
     private readonly MediaHistoryService _historyService = MediaHistoryService.CreateDefault();
     private readonly ObservableCollection<FavoriteListEntry> _favoriteEntries = [];
@@ -2031,6 +2033,8 @@ public sealed partial class MainWindow : Window
         }
 
         _aiOperationCancellation = new CancellationTokenSource();
+        var combineAiProgress = generate && translate;
+        if (combineAiProgress) BeginCombinedAiProgress();
         string? temporaryInput = null;
         var translating = false;
         try
@@ -2083,6 +2087,7 @@ public sealed partial class MainWindow : Window
             AsrDownloadProgressBar.Visibility = Visibility.Collapsed;
             AsrDownloadProgressBar.IsIndeterminate = false;
             if (temporaryInput is not null) try { File.Delete(temporaryInput); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+            if (combineAiProgress) EndCombinedAiProgress();
             _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null;
         }
     }
@@ -2121,7 +2126,7 @@ public sealed partial class MainWindow : Window
         _rightPanelVisible = true;
         ApplyPanelVisibility();
         ShowRightPanelSection(RightPanelSection.Subtitles);
-        StatusText.Text = F("StatusGeneratingSubtitles", 0d);
+        SetSubtitleGenerationStatus(0d);
         EnableGeneratedSubtitleOverlay();
 
         var durationMicroseconds = Math.Max(0, _playback.Duration.Ticks / 10);
@@ -2130,9 +2135,16 @@ public sealed partial class MainWindow : Window
             await DispatchSubtitleUiAsync(() =>
             {
                 DrawTimeline();
-                StatusText.Text = translateGeneratedCues
-                    ? F("StatusTranslated", track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
-                    : F("StatusGeneratedSubtitles", track.Cues.Count);
+                if (translateGeneratedCues)
+                {
+                    MarkCombinedSubtitleGenerationComplete();
+                    var translatedCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
+                    if (track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
+                        MarkCombinedTranslationComplete(translatedCount, track.Cues.Count);
+                    else if (!UpdateCombinedTranslationProgress(translatedCount, track.Cues.Count))
+                        StatusText.Text = F("StatusTranslated", translatedCount);
+                }
+                else StatusText.Text = F("StatusGeneratedSubtitles", track.Cues.Count);
             }, document, token).ConfigureAwait(false);
             return !translateGeneratedCues || track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
         }
@@ -2142,13 +2154,14 @@ public sealed partial class MainWindow : Window
         var translatedCount = 0;
         var segmentation = _settings.Subtitle.Segmentation;
         var asrSegmentation = new AsrSegmentationOptions(segmentation.MinimumCueSeconds, segmentation.MaximumCueSeconds, segmentation.MaximumLines, segmentation.TargetCharactersPerLine, segmentation.SilenceSplitSeconds, segmentation.MaximumCharactersPerSecond);
+        var subtitleGenerationCompleted = false;
         try
         {
             await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, generationStartMicroseconds, token).ConfigureAwait(false))
             {
                 if (!ReferenceEquals(_document, document)) throw new OperationCanceledException(token);
                 if (result.Event == "progress" && result.Progress is { } progress)
-                    await DispatchSubtitleUiAsync(() => StatusText.Text = F("StatusGeneratingSubtitles", progress), document, token).ConfigureAwait(false);
+                    await DispatchSubtitleUiAsync(() => SetSubtitleGenerationStatus(progress), document, token).ConfigureAwait(false);
                 if (result.Event == "segment" && result.Segment is { } segment)
                 {
                     var cue = new SubtitleCue { StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds, Text = segment.Text, Confidence = segment.Confidence, Source = SubtitleCueSource.AutomaticSpeechRecognition };
@@ -2161,10 +2174,12 @@ public sealed partial class MainWindow : Window
                     }, document, token).ConfigureAwait(false);
                 }
             }
+            subtitleGenerationCompleted = true;
         }
         finally
         {
             translationQueue.Writer.TryComplete();
+            if (subtitleGenerationCompleted && translateGeneratedCues) MarkCombinedSubtitleGenerationComplete();
             if (token.IsCancellationRequested)
             {
                 try { await translationTask.ConfigureAwait(false); }
@@ -2185,7 +2200,15 @@ public sealed partial class MainWindow : Window
             // mpv's audio/video clock even though the ASR work itself is asynchronous.
             ScheduleSubtitleOverlaySync(force: true);
             finalCueCount = track.Cues.Count;
-            StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
+            var completedTranslationCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
+            if (translateGeneratedCues)
+            {
+                if (track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
+                    MarkCombinedTranslationComplete(completedTranslationCount, track.Cues.Count);
+                else if (!UpdateCombinedTranslationProgress(completedTranslationCount, track.Cues.Count))
+                    StatusText.Text = F("StatusTranslated", translatedCount);
+            }
+            else StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
         }, document, token).ConfigureAwait(false);
         return !translateGeneratedCues || track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
     }
@@ -2288,7 +2311,7 @@ public sealed partial class MainWindow : Window
                 firstPendingAt = pending.Count > 0 ? DateTimeOffset.UtcNow : null;
                 var cuesById = batch.ToDictionary(cue => cue.Id);
                 var translatedBeforeBatch = translatedCount;
-                StatusText.Text = F("StatusTranslating", translatedCount, Math.Max(translatedCount + batch.Length, track.Cues.Count));
+                SetTranslationProgressStatus(translatedCount, Math.Max(translatedCount + batch.Length, track.Cues.Count));
                 var translated = await service.TranslateAsync(batch, _settings.Llm.TranslationLanguage, batchCompleted: (result, token) =>
                 {
                     var completed = translatedBeforeBatch + result.Completed;
@@ -2327,6 +2350,100 @@ public sealed partial class MainWindow : Window
         AsrDownloadProgressBar.Visibility = Visibility.Collapsed;
         AsrDownloadProgressBar.IsIndeterminate = false;
         StatusText.Text = L("StatusLoadingAsr");
+    }
+
+    private void SetSubtitleGenerationStatus(double progress)
+    {
+        if (UpdateCombinedSubtitleProgress(progress)) return;
+        StatusText.Text = F("StatusGeneratingSubtitles", progress);
+    }
+
+    private void SetTranslationProgressStatus(int completed, int total)
+    {
+        if (UpdateCombinedTranslationProgress(completed, total)) return;
+        StatusText.Text = F("StatusTranslating", completed, total);
+    }
+
+    private void BeginCombinedAiProgress()
+    {
+        lock (_combinedAiProgressLock) _combinedAiProgress = new CombinedAiProgressState();
+    }
+
+    private void EndCombinedAiProgress()
+    {
+        lock (_combinedAiProgressLock) _combinedAiProgress = null;
+    }
+
+    private bool UpdateCombinedSubtitleProgress(double progress)
+    {
+        lock (_combinedAiProgressLock)
+        {
+            if (_combinedAiProgress is null) return false;
+            _combinedAiProgress.SubtitleProgress = Math.Clamp(progress, 0d, 1d);
+        }
+        RefreshCombinedAiProgressStatus();
+        return true;
+    }
+
+    private bool MarkCombinedSubtitleGenerationComplete()
+    {
+        lock (_combinedAiProgressLock)
+        {
+            if (_combinedAiProgress is null) return false;
+            _combinedAiProgress.SubtitleGenerationComplete = true;
+        }
+        RefreshCombinedAiProgressStatus();
+        return true;
+    }
+
+    private bool UpdateCombinedTranslationProgress(int completed, int total)
+    {
+        lock (_combinedAiProgressLock)
+        {
+            if (_combinedAiProgress is null) return false;
+            _combinedAiProgress.TranslatedCount = Math.Max(0, completed);
+            _combinedAiProgress.TranslationTotal = Math.Max(Math.Max(0, total), _combinedAiProgress.TranslatedCount);
+        }
+        RefreshCombinedAiProgressStatus();
+        return true;
+    }
+
+    private bool MarkCombinedTranslationComplete(int completed, int total)
+    {
+        lock (_combinedAiProgressLock)
+        {
+            if (_combinedAiProgress is null) return false;
+            _combinedAiProgress.TranslatedCount = Math.Max(0, completed);
+            _combinedAiProgress.TranslationTotal = Math.Max(Math.Max(0, total), _combinedAiProgress.TranslatedCount);
+            _combinedAiProgress.TranslationComplete = true;
+        }
+        RefreshCombinedAiProgressStatus();
+        return true;
+    }
+
+    private void RefreshCombinedAiProgressStatus()
+    {
+        if (DispatcherQueue.HasThreadAccess)
+        {
+            ApplyCombinedAiProgressStatus();
+            return;
+        }
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, ApplyCombinedAiProgressStatus);
+    }
+
+    private void ApplyCombinedAiProgressStatus()
+    {
+        string? status;
+        lock (_combinedAiProgressLock)
+        {
+            if (_combinedAiProgress is null) return;
+            status = _combinedAiProgress.SubtitleGenerationComplete
+                ? _combinedAiProgress.TranslationComplete
+                    ? L("StatusSubtitlesAndTranslationComplete")
+                    : F("StatusSubtitlesGeneratedAndTranslating", _combinedAiProgress.TranslatedCount, _combinedAiProgress.TranslationTotal)
+                : F("StatusGeneratingSubtitlesAndTranslating", _combinedAiProgress.SubtitleProgress, _combinedAiProgress.TranslatedCount, _combinedAiProgress.TranslationTotal);
+        }
+        StatusText.Text = status;
     }
 
     private static string FormatDownloadSize(long bytes) => bytes >= 1_073_741_824
@@ -2391,20 +2508,30 @@ public sealed partial class MainWindow : Window
         if (cues.Length == 0)
         {
             ScheduleSubtitleOverlaySync(force: true);
-            StatusText.Text = F("StatusTranslated", 0);
+            var existingTranslatedCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
+            if (track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
+                MarkCombinedTranslationComplete(existingTranslatedCount, track.Cues.Count);
+            else if (!UpdateCombinedTranslationProgress(existingTranslatedCount, track.Cues.Count))
+                StatusText.Text = F("StatusTranslated", 0);
             return track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
         }
 
         EnableGeneratedSubtitleOverlay();
-        StatusText.Text = F("StatusTranslating", 0, cues.Length);
+        var translatedBefore = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
+        SetTranslationProgressStatus(translatedBefore, track.Cues.Count);
         var provider = CreateLlmProvider();
         using var disposable = provider as IDisposable;
         var service = new LlmService(provider, _settings.Llm.Model, _settings.Llm.ThinkingLevel);
         var cuesById = cues.ToDictionary(cue => cue.Id);
-        var translated = await service.TranslateAsync(cues, _settings.Llm.TranslationLanguage, batchCompleted: (batch, token) => ApplyTranslationBatchAsync(targetDocument, batch, cuesById, token), cancellationToken: cancellationToken);
+        var translated = await service.TranslateAsync(cues, _settings.Llm.TranslationLanguage, batchCompleted: (batch, token) =>
+            ApplyTranslationBatchAsync(targetDocument, new TranslationBatch(batch.Items, translatedBefore + batch.Completed, track.Cues.Count), cuesById, token), cancellationToken: cancellationToken);
         if (!ReferenceEquals(_document, targetDocument)) return false;
         ScheduleSubtitleOverlaySync(force: true);
-        StatusText.Text = F("StatusTranslated", translated.Count);
+        var translatedCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
+        if (cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
+            MarkCombinedTranslationComplete(translatedCount, track.Cues.Count);
+        else if (!UpdateCombinedTranslationProgress(translatedCount, track.Cues.Count))
+            StatusText.Text = F("StatusTranslated", translated.Count);
         await AppLog.WriteAsync("info", "translation", "TRANSLATION_COMPLETED", $"Translated {translated.Count} cues from {startMicroseconds} microseconds using {_settings.Llm.Provider}.");
         return cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
     }
@@ -2440,7 +2567,7 @@ public sealed partial class MainWindow : Window
             // user does not need to select Translation a second time.
             ScheduleSubtitleOverlaySync();
             ScheduleGeneratedSubtitleUiRefresh();
-            StatusText.Text = F("StatusTranslating", batch.Completed, batch.Total);
+            SetTranslationProgressStatus(batch.Completed, batch.Total);
         }
     }
 
@@ -3843,6 +3970,15 @@ public sealed partial class MainWindow : Window
 
     private sealed record RightPanelSectionEntry(string IconGlyph, string Label);
     private enum RightPanelSection { Explorer, Playlist, WebDav, Favorites, Subtitles }
+
+    private sealed class CombinedAiProgressState
+    {
+        public double SubtitleProgress { get; set; }
+        public int TranslatedCount { get; set; }
+        public int TranslationTotal { get; set; }
+        public bool SubtitleGenerationComplete { get; set; }
+        public bool TranslationComplete { get; set; }
+    }
 
     private sealed record PendingPostOpenWork(string Source, string? LocalPath, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
 
