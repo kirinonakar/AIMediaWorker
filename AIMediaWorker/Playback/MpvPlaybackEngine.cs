@@ -177,12 +177,12 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         TrySetOption("audio-stream-silence", "yes");
         TrySetOption("audio-buffer", "0.2");
         TrySetOption("audio-pitch-correction", "yes");
-        // Let mpv bypass the stream cache for fast local files while retaining it for
-        // network sources. Forcing the cache on adds another producer/consumer hop to
-        // every local file and is most noticeable on the first item opened.
+        // Keep the initial local-file read-ahead small. The source-specific settings in
+        // OpenCore expand this for network media, but a 20-second local read-ahead can
+        // make a large file wait on disk I/O before the first frame is presented.
         TrySetOption("cache", "auto");
-        TrySetOption("cache-secs", "20");
-        TrySetOption("demuxer-readahead-secs", "20");
+        TrySetOption("cache-secs", "2");
+        TrySetOption("demuxer-readahead-secs", "2");
         TrySetOption("cache-pause", "no");
         TrySetOption("stream-lavf-o", "reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=5");
         // Volume overlay: show transient OSD messages at the top-left of the video.
@@ -250,6 +250,11 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 if (header.Key.Any(c => c is '\r' or '\n' or ':' or ',') || header.Value.Any(c => c is '\r' or '\n' or ',')) throw new ArgumentException("Invalid HTTP header.", nameof(httpHeaders));
             SetProperty("http-header-fields", string.Join(',', httpHeaders.Select(header => $"{header.Key}: {header.Value}")));
         }
+        ConfigureSourceBuffering(source);
+        // When subtitles are hidden, avoid selecting an embedded ASS track during the
+        // initial demux. This is particularly useful for Matroska files carrying fonts
+        // as attachments; enabling subtitles later restores normal track selection.
+        if (!AreSubtitlesVisible) TrySetProperty("sid", "no");
         _loadfileIssued = true;
         StartupProfiler.Mark("loadfile-command");
         MpvInterop.CommandAsync(_context, NextCommandId(), "loadfile", source, "replace");
@@ -318,6 +323,10 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public void SetMute(bool muted) { IsMuted = muted; SetProperty("mute", muted ? "yes" : "no"); }
     public void SetSubtitleVisibility(bool visible)
     {
+        // Keep embedded-font parsing aligned with the visibility preference. When the
+        // user turns subtitles back on, MainWindow restores the selected track after
+        // this property is enabled.
+        TrySetProperty("embeddedfonts", visible ? "yes" : "no");
         SetProperty("sub-visibility", visible ? "yes" : "no");
         AreSubtitlesVisible = visible;
     }
@@ -476,6 +485,18 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     {
         TrySetProperty("network-timeout", Math.Clamp(timeout.TotalSeconds, 1, 600).ToString("0", CultureInfo.InvariantCulture));
         TrySetProperty("http-proxy", string.IsNullOrWhiteSpace(proxy) ? string.Empty : proxy);
+    }
+
+    private void ConfigureSourceBuffering(string source)
+    {
+        var isNetworkSource = Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+        var readAheadSeconds = isNetworkSource ? "20" : "2";
+
+        // These are writable mpv properties. Applying them immediately before loadfile
+        // keeps network buffering intact while preventing a local file on a slow disk
+        // from being read ahead for 20 seconds before playback can start.
+        TrySetProperty("cache-secs", readAheadSeconds);
+        TrySetProperty("demuxer-readahead-secs", readAheadSeconds);
     }
 
     public void ConfigurePreferredLanguages(string? audioLanguage, string? subtitleLanguage)
