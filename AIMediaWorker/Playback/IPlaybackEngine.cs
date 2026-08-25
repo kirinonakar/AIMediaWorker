@@ -40,6 +40,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     void SetMute(bool muted);
     void SetSubtitleVisibility(bool visible);
     void SetRate(double rate);
+    void SetLoopFile(bool enabled);
     void FrameStep(bool backwards = false);
     void SaveScreenshot(string path, bool includeSubtitles = true);
     void SetAbLoop(TimeSpan? start, TimeSpan? end);

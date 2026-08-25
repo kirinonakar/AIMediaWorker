@@ -320,6 +320,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         AreSubtitlesVisible = visible;
     }
     public void SetRate(double rate) { Rate = Math.Clamp(rate, 0.25, 4); SetProperty("speed", Rate.ToString("0.###", CultureInfo.InvariantCulture)); }
+    public void SetLoopFile(bool enabled) => SetProperty("loop-file", enabled ? "inf" : "no");
     public void FrameStep(bool backwards = false) => Command(backwards ? "frame-back-step" : "frame-step");
     public void SaveScreenshot(string path, bool includeSubtitles = true)
     {

@@ -112,7 +112,7 @@
                         <Grid RowSpacing="6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                             <CommandBar DefaultLabelPosition="Collapsed">
-                                <AppBarButton x:Uid="BrowserChooseFolder" Icon="OpenFile" Label="Choose folder" Click="OnChooseBrowserFolderClick" />
+                                <AppBarButton x:Uid="BrowserChooseFolder" Icon="Folder" Label="Choose folder" Click="OnChooseBrowserFolderClick" />
                                 <AppBarButton x:Uid="BrowserHome" Icon="Home" Label="Home folder" Click="OnBrowserHomeClick" />
                                 <AppBarButton x:Uid="BrowserParentFolder" Icon="Back" Label="Parent folder" Click="OnBrowserParentClick" />
                                 <AppBarButton x:Uid="BrowserRefresh" Icon="Refresh" Label="Refresh" Click="OnBrowserRefreshClick" />

@@ -82,7 +82,7 @@
   <data name="TooltipPosition"><value>탐색 (Home / End) · 처음부터 재생 ({0})</value></data>
   <data name="TooltipSubtitleNavigation"><value>이전: {0} · 다음: {1}</value></data>
   <data name="TooltipRepeatCurrent"><value>현재 미디어 반복</value></data>
-  <data name="TooltipRepeatPlaylist"><value>재생 목록 반복</value></data>
+  <data name="TooltipAutoAdvance"><value>자동 진행</value></data>
   <data name="TooltipRepeatOff"><value>반복 끄기</value></data>
   <data name="TooltipEnterFullscreen"><value>전체 화면으로 전환 (Enter / F / F11)</value></data>
   <data name="TooltipExitFullscreen"><value>전체 화면 종료 (Esc / Enter / F / F11)</value></data>

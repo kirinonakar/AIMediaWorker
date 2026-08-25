@@ -82,7 +82,7 @@
   <data name="TooltipPosition"><value>シーク (Home / End) · 先頭から再生 ({0})</value></data>
   <data name="TooltipSubtitleNavigation"><value>前: {0} · 次: {1}</value></data>
   <data name="TooltipRepeatCurrent"><value>現在のメディアをリピート</value></data>
-  <data name="TooltipRepeatPlaylist"><value>プレイリストをリピート</value></data>
+  <data name="TooltipAutoAdvance"><value>次のメディアを自動再生</value></data>
   <data name="TooltipRepeatOff"><value>リピート解除</value></data>
   <data name="TooltipEnterFullscreen"><value>全画面に切り替え (Enter / F / F11)</value></data>
   <data name="TooltipExitFullscreen"><value>全画面を終了 (Esc / Enter / F / F11)</value></data>

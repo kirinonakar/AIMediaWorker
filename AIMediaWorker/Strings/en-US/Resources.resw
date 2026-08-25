@@ -82,7 +82,7 @@
   <data name="TooltipPosition"><value>Seek (Home / End) · Play from beginning ({0})</value></data>
   <data name="TooltipSubtitleNavigation"><value>Previous: {0} · Next: {1}</value></data>
   <data name="TooltipRepeatCurrent"><value>Repeat current media</value></data>
-  <data name="TooltipRepeatPlaylist"><value>Repeat playlist</value></data>
+  <data name="TooltipAutoAdvance"><value>Auto-advance</value></data>
   <data name="TooltipRepeatOff"><value>Repeat off</value></data>
   <data name="TooltipEnterFullscreen"><value>Enter fullscreen (Enter / F / F11)</value></data>
   <data name="TooltipExitFullscreen"><value>Exit fullscreen (Esc / Enter / F / F11)</value></data>

@@ -237,6 +237,7 @@ public sealed partial class MainWindow : Window
     {
         await _playback.InitializeAsync(videoWindowHandle, _settings.Playback.HardwareDecoder, _settings.Playback.Renderer, _settings.Playback.RtxVideoSuperResolution).ConfigureAwait(false);
         if (!_playback.IsAvailable) return;
+        _playback.SetLoopFile(_repeatMode == RepeatMode.One);
         _playback.SetVolume(_settings.Playback.DefaultVolume);
         _playback.SetRate(_settings.Playback.PlaybackRate);
         _playback.ConfigureNetwork(TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds), _settings.Network.Proxy);
@@ -565,6 +566,7 @@ public sealed partial class MainWindow : Window
             else _playlistIndex = -1;
         }
         _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
+        ApplyRepeatModeToPlayback();
         UpdateWindowTitle(_currentMediaSource.DisplayName);
         if (_currentMediaSource is WebDavMediaSource webDavSource) SelectWebDavEntry(webDavSource.ServerId, webDavSource.Uri);
         _ = SaveHistoryAfterOpenAsync(_currentMediaSource);
@@ -801,17 +803,22 @@ public sealed partial class MainWindow : Window
     private void OnRateChanged(object sender, SelectionChangedEventArgs e) { if (RateCombo.SelectedItem is double rate && _playback.IsAvailable) TryPlayback(() => _playback.SetRate(rate)); }
     private void OnRepeatClick(object sender, RoutedEventArgs e)
     {
-        _repeatMode = _repeatMode switch { RepeatMode.Off => RepeatMode.One, RepeatMode.One => RepeatMode.All, _ => RepeatMode.Off };
-        RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.All => "repeat-all", _ => "repeat" });
-        ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.All => "TooltipRepeatPlaylist", _ => "TooltipRepeatOff" }));
+        _repeatMode = _repeatMode switch { RepeatMode.Off => RepeatMode.One, RepeatMode.One => RepeatMode.AutoAdvance, _ => RepeatMode.Off };
+        ApplyRepeatModeToPlayback();
+        RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.AutoAdvance => "repeat-auto", _ => "repeat" });
+        ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.AutoAdvance => "TooltipAutoAdvance", _ => "TooltipRepeatOff" }));
         UpdatePlaylistButtons();
+    }
+
+    private void ApplyRepeatModeToPlayback()
+    {
+        if (_playback.IsAvailable) TryPlayback(() => _playback.SetLoopFile(_repeatMode == RepeatMode.One));
     }
 
     private async Task OpenAdjacentMediaAsync(int direction)
     {
         if (_playlist.Count == 0) return;
         var next = _playlistIndex + Math.Sign(direction);
-        if (_repeatMode == RepeatMode.All) next = (next + _playlist.Count) % _playlist.Count;
         if (next < 0 || next >= _playlist.Count) return;
         _playlistIndex = next;
         await OpenPlaylistEntryAsync(_playlist[_playlistIndex]);
@@ -830,8 +837,8 @@ public sealed partial class MainWindow : Window
 
     private void UpdatePlaylistButtons()
     {
-        PreviousButton.IsEnabled = _playlist.Count > 1 && (_playlistIndex > 0 || _repeatMode == RepeatMode.All);
-        NextButton.IsEnabled = _playlist.Count > 1 && (_playlistIndex < _playlist.Count - 1 || _repeatMode == RepeatMode.All);
+        PreviousButton.IsEnabled = _playlist.Count > 1 && _playlistIndex > 0;
+        NextButton.IsEnabled = _playlist.Count > 1 && _playlistIndex >= 0 && _playlistIndex < _playlist.Count - 1;
         PlaylistList.ItemsSource = _playlist.ToArray();
         PlaylistList.SelectedIndex = _playlistIndex;
     }
@@ -1427,12 +1434,8 @@ public sealed partial class MainWindow : Window
     }
     private void OnMediaEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(async () =>
     {
-        if (_repeatMode == RepeatMode.One)
-        {
-            TryPlayback(() => { _playback.Seek(TimeSpan.Zero, true); _playback.Play(); });
-            return;
-        }
-        if (_playlistIndex >= 0 && (_playlistIndex < _playlist.Count - 1 || _repeatMode == RepeatMode.All)) await OpenAdjacentMediaAsync(1);
+        if (_repeatMode == RepeatMode.AutoAdvance && _playlistIndex >= 0 && _playlistIndex < _playlist.Count - 1)
+            await OpenAdjacentMediaAsync(1);
     });
     private void OnTracksChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
@@ -1614,7 +1617,7 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(VolumeSlider, L("TooltipVolume"));
         ToolTipService.SetToolTip(PositionSlider, F("TooltipPosition", Shortcut(ShortcutActions.PlayFromBeginning)));
         ToolTipService.SetToolTip(SubtitleList, F("TooltipSubtitleNavigation", Shortcut(ShortcutActions.PreviousSubtitle), Shortcut(ShortcutActions.NextSubtitle)));
-        ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.All => "TooltipRepeatPlaylist", _ => "TooltipRepeatOff" }));
+        ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.AutoAdvance => "TooltipAutoAdvance", _ => "TooltipRepeatOff" }));
         ToolTipService.SetToolTip(CloseButton, F("TooltipClose", Shortcut(ShortcutActions.CloseWindow)));
         UpdateFullscreenButton();
     }
@@ -3197,7 +3200,7 @@ public sealed partial class MainWindow : Window
         SeekForwardIcon.Source = PlaybackIconSource("seek-forward");
         NextIcon.Source = PlaybackIconSource("next");
         MuteIcon.Source = PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
-        RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.All => "repeat-all", _ => "repeat" });
+        RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.AutoAdvance => "repeat-auto", _ => "repeat" });
     }
 
     private void OnRootActualThemeChanged(FrameworkElement sender, object args)
@@ -4159,5 +4162,5 @@ public sealed partial class MainWindow : Window
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
 
     private enum TimelineDragMode { None, Move, ResizeStart, ResizeEnd }
-    private enum RepeatMode { Off, One, All }
+    private enum RepeatMode { Off, One, AutoAdvance }
 }
