@@ -30,6 +30,8 @@ public sealed partial class CameraWindow : Window
     {
         InitializeComponent();
         Title = L("CameraWindow.Title");
+        AppTitleText.Text = Title;
+        ExtendsContentIntoTitleBar = true;
         WindowOwner.Attach(this, owner);
         _liveAsr = new LiveAsrController(_audio, _asr);
         _liveAsr.CaptionReceived += OnCaptionReceived;
@@ -38,14 +40,75 @@ public sealed partial class CameraWindow : Window
         var handle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
         _appWindow?.Resize(new SizeInt32(1100, 720));
-        if (_appWindow is not null) _appWindow.Closing += OnAppWindowClosing;
+        if (_appWindow is not null)
+        {
+            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
+            if (File.Exists(iconPath)) _appWindow.SetIcon(iconPath);
+            _appWindow.Closing += OnAppWindowClosing;
+            _appWindow.Changed += OnAppWindowChanged;
+        }
+        Root.ActualThemeChanged += OnRootActualThemeChanged;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         _settings = await SettingsService.CreateDefault().LoadAsync();
+        ApplyTheme(_settings.General.Theme);
         ApplyCaptionAppearance();
+        UpdateTitleBarDragRegion();
         await RefreshDevicesAsync();
+    }
+
+    private void ApplyTheme(AppTheme theme)
+    {
+        Root.RequestedTheme = theme switch
+        {
+            AppTheme.Light => ElementTheme.Light,
+            AppTheme.Dark => ElementTheme.Dark,
+            _ => ElementTheme.Default
+        };
+        ApplyTitleBarTheme(Root.ActualTheme);
+    }
+
+    private void OnRootActualThemeChanged(FrameworkElement sender, object args) => ApplyTitleBarTheme(sender.ActualTheme);
+
+    private void ApplyTitleBarTheme(ElementTheme theme)
+    {
+        if (_appWindow?.TitleBar is not { } titleBar) return;
+        var dark = theme == ElementTheme.Dark;
+        var background = dark ? Color.FromArgb(255, 32, 32, 32) : Color.FromArgb(255, 243, 243, 243);
+        var foreground = dark ? Color.FromArgb(255, 255, 255, 255) : Color.FromArgb(255, 24, 24, 24);
+        var inactiveForeground = dark ? Color.FromArgb(255, 160, 160, 160) : Color.FromArgb(255, 110, 110, 110);
+        var hover = dark ? Color.FromArgb(255, 58, 58, 58) : Color.FromArgb(255, 224, 224, 224);
+        var pressed = dark ? Color.FromArgb(255, 72, 72, 72) : Color.FromArgb(255, 208, 208, 208);
+        AppTitleBarArea.Background = new SolidColorBrush(background);
+        titleBar.BackgroundColor = background;
+        titleBar.ForegroundColor = foreground;
+        titleBar.InactiveBackgroundColor = background;
+        titleBar.InactiveForegroundColor = inactiveForeground;
+        titleBar.ButtonBackgroundColor = background;
+        titleBar.ButtonForegroundColor = foreground;
+        titleBar.ButtonHoverBackgroundColor = hover;
+        titleBar.ButtonHoverForegroundColor = foreground;
+        titleBar.ButtonPressedBackgroundColor = pressed;
+        titleBar.ButtonPressedForegroundColor = foreground;
+        titleBar.ButtonInactiveBackgroundColor = background;
+        titleBar.ButtonInactiveForegroundColor = inactiveForeground;
+    }
+
+    private void OnTitleBarSizeChanged(object sender, SizeChangedEventArgs e) => UpdateTitleBarDragRegion();
+
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args) => UpdateTitleBarDragRegion();
+
+    private void UpdateTitleBarDragRegion()
+    {
+        if (_appWindow?.TitleBar is not { } titleBar) return;
+        var scale = Root.XamlRoot?.RasterizationScale ?? 1.0;
+        var width = AppTitleBarArea.ActualWidth * scale;
+        var height = AppTitleBarArea.ActualHeight * scale;
+        var dragWidth = Math.Max(0, width - titleBar.RightInset);
+        var dragHeight = Math.Max(0, height);
+        titleBar.SetDragRectangles([new RectInt32(0, 0, (int)dragWidth, (int)dragHeight)]);
     }
 
     private async Task RefreshDevicesAsync()
@@ -240,7 +303,12 @@ public sealed partial class CameraWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
-        if (_appWindow is not null) _appWindow.Closing -= OnAppWindowClosing;
+        if (_appWindow is not null)
+        {
+            _appWindow.Closing -= OnAppWindowClosing;
+            _appWindow.Changed -= OnAppWindowChanged;
+        }
+        Root.ActualThemeChanged -= OnRootActualThemeChanged;
         Closed -= OnClosed;
     }
 }

@@ -147,6 +147,21 @@ public sealed class LlmTests
     }
 
     [Fact]
+    public async Task DetailedSummaryRemovesGenericIntroAndRetriesWhenItIsTheOnlyOutput()
+    {
+        var calls = 0;
+        var provider = new FakeProvider(_ => ++calls == 3
+            ? "핵심 내용은 일정과 승인된 결정입니다."
+            : "제공된 내용을 바탕으로 작성한 상세 요약입니다.");
+        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "The decision was approved." } };
+
+        var result = await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Detailed, "Korean");
+
+        Assert.Equal("핵심 내용은 일정과 승인된 결정입니다.", result);
+        Assert.Equal(3, calls);
+    }
+
+    [Fact]
     public async Task GoogleMapsThinkingLevelOnlyForSupportedModelFamilies()
     {
         string? body = null;

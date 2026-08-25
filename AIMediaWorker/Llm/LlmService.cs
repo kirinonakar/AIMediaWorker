@@ -87,11 +87,37 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
             SummaryKind.Detailed => "Produce a comprehensive detailed summary, not a brief overview. Use clear headings and sections for the overview, key points, evidence or examples, decisions, and conclusions when applicable. Preserve names, dates, numbers, and important relationships from the transcript. Do not omit relevant details or replace them with vague generalizations.",
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
-        var finalPrompt = $"{instruction} Write the final summary in {targetLanguage}. Synthesize the chunk summaries below without repetition and without adding unsupported claims.\n\n{string.Join("\n\n---\n\n", partials)}";
+        var intermediateSummaries = string.Join("\n\n---\n\n", partials);
+        var finalMaterial = kind == SummaryKind.Detailed && chunks.Count == 1 ? chunks[0] : intermediateSummaries;
+        var finalPrompt = $"{instruction} Write the final summary in {targetLanguage}. Return only the substantive summary; do not write an introduction such as 'Here is a detailed summary based on the provided content.' Synthesize the material below without repetition and without adding unsupported claims.\n\n{finalMaterial}";
         var finalOptions = new LlmGenerationOptions(thinkingLevel, 0.2, MaximumOutputTokens: kind == SummaryKind.Detailed ? 4_000 : 1_600);
-        var final = await provider.GenerateAsync(model, $"You create faithful final summaries from intermediate transcript summaries. Always write the final summary in {targetLanguage}.", finalPrompt, finalOptions, cancellationToken).ConfigureAwait(false);
+        var final = await provider.GenerateAsync(model, $"You create faithful final summaries from the supplied transcript material. Always write the final summary in {targetLanguage}. Never return a generic acknowledgement or an introduction; return the actual summary content.", finalPrompt, finalOptions, cancellationToken).ConfigureAwait(false);
+        var cleanedFinal = RemoveSummaryPreamble(final);
+        if (kind == SummaryKind.Detailed && string.IsNullOrWhiteSpace(cleanedFinal))
+        {
+            var recoveryPrompt = $"{instruction} The previous response contained only a generic introductory sentence. Ignore it and write the actual summary from the transcript below. Return only the substantive summary in {targetLanguage}; do not describe what you are doing and do not say that this is a summary.\n\n{string.Join("\n\n---\n\n", chunks)}";
+            var recovery = await provider.GenerateAsync(model, $"Write only the detailed factual summary in {targetLanguage}. Use the transcript as the source of truth and never answer with an acknowledgement.", recoveryPrompt, finalOptions, cancellationToken).ConfigureAwait(false);
+            cleanedFinal = RemoveSummaryPreamble(recovery);
+        }
         progress?.Report(1);
-        return final;
+        return cleanedFinal;
+    }
+
+    private static string RemoveSummaryPreamble(string text)
+    {
+        var cleaned = text.Trim();
+        foreach (var preamble in new[]
+        {
+            "제공된 내용을 바탕으로 작성한 상세 요약입니다.",
+            "다음은 제공된 내용을 바탕으로 작성한 상세 요약입니다.",
+            "제공된 내용을 바탕으로 한 상세 요약입니다.",
+            "Here is a detailed summary based on the provided content.",
+            "This is a detailed summary based on the provided content.",
+            "Here is the detailed summary based on the provided content."
+        })
+            cleaned = cleaned.Replace(preamble, string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        return cleaned.Trim().TrimStart(':', '：', '-', '—', ' ', '\r', '\n').Trim();
     }
 
     private static ParsedTranslations ParseTranslations(string response)
