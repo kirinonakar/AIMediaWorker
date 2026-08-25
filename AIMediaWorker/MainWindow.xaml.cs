@@ -4140,6 +4140,8 @@ public sealed partial class MainWindow : Window
 
     private sealed record PlaylistEntry(string Path, string DisplayName, IReadOnlyDictionary<string, string>? HttpHeaders = null, IMediaSource? MediaSource = null)
     {
+        public string SourceIconGlyph => MediaSource?.Kind == MediaSourceKind.WebDav ? "\uE774" : string.Empty;
+
         public static PlaylistEntry FromLocal(string path)
         {
             var fullPath = System.IO.Path.GetFullPath(path);
