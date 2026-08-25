@@ -75,6 +75,10 @@
   <data name="TooltipSeekForward"><value>{0:0.#}秒進む ({1})</value></data>
   <data name="TooltipMute"><value>ミュート (M)</value></data>
   <data name="TooltipVolume"><value>音量 (↑ / ↓)</value></data>
+  <data name="OsdMuteOn"><value>ミュート: オン</value></data>
+  <data name="OsdMuteOff"><value>ミュート: オフ</value></data>
+  <data name="OsdSubtitlesOn"><value>字幕: オン</value></data>
+  <data name="OsdSubtitlesOff"><value>字幕: オフ</value></data>
   <data name="TooltipPosition"><value>シーク (Home / End) · 先頭から再生 ({0})</value></data>
   <data name="TooltipSubtitleNavigation"><value>前: {0} · 次: {1}</value></data>
   <data name="TooltipRepeatCurrent"><value>現在のメディアをリピート</value></data>

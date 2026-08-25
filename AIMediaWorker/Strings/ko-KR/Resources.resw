@@ -75,6 +75,10 @@
   <data name="TooltipSeekForward"><value>{0:0.#}초 앞으로 탐색 ({1})</value></data>
   <data name="TooltipMute"><value>음소거 (M)</value></data>
   <data name="TooltipVolume"><value>음량 (↑ / ↓)</value></data>
+  <data name="OsdMuteOn"><value>음소거: 켜짐</value></data>
+  <data name="OsdMuteOff"><value>음소거: 꺼짐</value></data>
+  <data name="OsdSubtitlesOn"><value>자막: 켜짐</value></data>
+  <data name="OsdSubtitlesOff"><value>자막: 꺼짐</value></data>
   <data name="TooltipPosition"><value>탐색 (Home / End) · 처음부터 재생 ({0})</value></data>
   <data name="TooltipSubtitleNavigation"><value>이전: {0} · 다음: {1}</value></data>
   <data name="TooltipRepeatCurrent"><value>현재 미디어 반복</value></data>

@@ -785,13 +785,14 @@ public sealed partial class MainWindow : Window
     {
         TryPlayback(() => _playback.SetMute(!_playback.IsMuted));
         MuteIcon.Source = PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
-        ShowVolumeOverlay();
+        ShowMuteOverlay();
     }
     private void OnToggleSubtitleVisibilityClick(object sender, RoutedEventArgs e)
     {
         var visible = SubtitleVisibilityMenuItem.IsChecked;
         _settings.Playback.ShowSubtitles = visible;
         ApplySubtitleVisibilityPreference();
+        ShowSubtitleVisibilityOverlay();
     }
     private void OnRateChanged(object sender, SelectionChangedEventArgs e) { if (RateCombo.SelectedItem is double rate && _playback.IsAvailable) TryPlayback(() => _playback.SetRate(rate)); }
     private void OnRepeatClick(object sender, RoutedEventArgs e)
@@ -855,6 +856,18 @@ public sealed partial class MainWindow : Window
         var percent = double.IsFinite(_playback.Volume) ? Math.Clamp(_playback.Volume, 0, 130) : 0;
         var roundedPercent = Math.Round(percent, MidpointRounding.AwayFromZero);
         TryPlayback(() => _playback.ShowOsdText($"Volume:{roundedPercent:0}", 1.5));
+    }
+
+    private void ShowMuteOverlay()
+    {
+        if (!_playback.IsAvailable) return;
+        TryPlayback(() => _playback.ShowOsdText(L(_playback.IsMuted ? "OsdMuteOn" : "OsdMuteOff"), 1.5));
+    }
+
+    private void ShowSubtitleVisibilityOverlay()
+    {
+        if (!_playback.IsAvailable) return;
+        TryPlayback(() => _playback.ShowOsdText(L(_playback.AreSubtitlesVisible ? "OsdSubtitlesOn" : "OsdSubtitlesOff"), 1.5));
     }
 
     private void OnPositionSliderChanged(object sender, RangeBaseValueChangedEventArgs e)

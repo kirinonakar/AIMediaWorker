@@ -75,6 +75,10 @@
   <data name="TooltipSeekForward"><value>Seek forward {0:0.#}s ({1})</value></data>
   <data name="TooltipMute"><value>Mute (M)</value></data>
   <data name="TooltipVolume"><value>Volume (↑ / ↓)</value></data>
+  <data name="OsdMuteOn"><value>Mute: On</value></data>
+  <data name="OsdMuteOff"><value>Mute: Off</value></data>
+  <data name="OsdSubtitlesOn"><value>Subtitles: On</value></data>
+  <data name="OsdSubtitlesOff"><value>Subtitles: Off</value></data>
   <data name="TooltipPosition"><value>Seek (Home / End) · Play from beginning ({0})</value></data>
   <data name="TooltipSubtitleNavigation"><value>Previous: {0} · Next: {1}</value></data>
   <data name="TooltipRepeatCurrent"><value>Repeat current media</value></data>
