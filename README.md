@@ -219,6 +219,29 @@ Corrupt settings are preserved as `settings.json.corrupt-*` and replaced with sa
 
 **Tools → Diagnostics** reports app, Windows, .NET, Windows App SDK, libmpv, FFmpeg, CrispASR runtime, the in-process ASR engine/model, GPU/driver, RTX VSR capability, and log location.
 
+## License
+
+Unless stated otherwise, AIMediaWorker source code is licensed under the [GNU General Public License v2.0 or later](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html) (`GPL-2.0-or-later`). See [LICENSE](LICENSE). This project license does not replace the separate licenses for the third-party components listed below.
+
+## Third-party licenses
+
+AIMediaWorker uses, links to, or can download third-party software, native runtimes, and model weights. Those components remain under their own licenses. When redistributing a build, preserve the license and notice files supplied with each corresponding component. The ASR installer also copies matching `LICENSE*`, `THIRD_PARTY*`, and `README*` files from downloaded FFmpeg and CrispASR archives.
+
+| Component | Use | License / notice |
+|---|---|---|
+| [Microsoft Windows App SDK](https://github.com/microsoft/WindowsAppSDK) 2.4.0 and related Microsoft SDK packages | WinUI runtime and Windows integration | Microsoft Software License Terms plus the package `license.txt` and `NOTICE.txt` files. |
+| [Microsoft Windows SDK Build Tools](https://aka.ms/WinSDKProjectURL) 10.0.28000.2526 | Build and packaging | Microsoft Windows SDK license terms. |
+| [System.Security.Cryptography.ProtectedData](https://github.com/dotnet/dotnet) 10.0.0 | Windows Credential Manager protection | MIT. |
+| [NAudio](https://github.com/naudio/NAudio) 2.2.1 | WASAPI microphone capture | MIT; see the package `license.txt`. |
+| [mpv/libmpv](https://github.com/mpv-player/mpv) | Media playback | GPLv2 or later by default. The exact binary distribution and its bundled libraries may carry additional notices. |
+| [FFmpeg](https://ffmpeg.org/legal.html) / FFprobe | ASR audio extraction | LGPLv2.1 or later by default; optional GPL components can change the terms. Follow the license files included with the downloaded build. |
+| [CrispASR](https://github.com/CrispStrobe/CrispASR) native runtime | Qwen3 ASR and forced alignment | CrispASR itself is MIT; its bundled dependencies and notices remain separately licensed. |
+| [Qwen3-ASR-1.7B GGUF](https://huggingface.co/cstr/qwen3-asr-1.7b-GGUF) and [Qwen3-ForcedAligner-0.6B GGUF](https://huggingface.co/cstr/qwen3-forced-aligner-0.6b-GGUF) | Downloaded ASR model weights | Apache-2.0 according to the respective model cards. Model-specific terms still apply. |
+| [Microsoft.NET.Test.Sdk](https://github.com/microsoft/vstest) 18.0.1 | Test-only dependency | MIT. |
+| [xUnit](https://github.com/xunit/xunit) 2.9.3 and [xunit.runner.visualstudio](https://github.com/xunit/visualstudio.xunit) 3.1.5 | Test-only dependencies | Apache-2.0. |
+
+Transitive NuGet dependencies are governed by their own package license and notice files as well. In particular, review the `NOTICE.txt` and `license.txt` files shipped in the Microsoft Windows App SDK package when redistributing its runtime.
+
 ## Troubleshooting
 
 - **Playback unavailable**: confirm x64 `mpv-2.dll` and its dependencies are next to the executable. Check Diagnostics for an architecture mismatch.
