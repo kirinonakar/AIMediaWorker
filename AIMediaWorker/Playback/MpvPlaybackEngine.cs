@@ -152,6 +152,10 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             HardwareDecoder.Off => "no",
             _ => "auto-safe"
         });
+        // mpv defaults deinterlacing to "no". Use automatic detection so interlaced
+        // MPEG-2 sources such as DVD/VOB are passed through bwdif while progressive
+        // sources remain untouched.
+        SetOption("deinterlace", "auto");
         SetOption("sub-auto", "fuzzy");
         SetOption("sub-fonts-dir", ".");
         SetOption("audio-client-name", "AIMediaWorker");
@@ -300,6 +304,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         lock (_subtitleCommandSync)
         {
             EnsureAvailable();
+            var wasPlaying = _state == PlaybackState.Playing;
             var trackIds = FindExternalSubtitleTrackIds(fullPath);
             if (trackIds.Count == 0)
             {
@@ -319,9 +324,15 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
 
                 var editorTrackId = trackIds[0];
                 SetProperty("sid", editorTrackId.ToString(CultureInfo.InvariantCulture));
-                Command("sub-reload", editorTrackId.ToString(CultureInfo.InvariantCulture));
+                // Queue the reload instead of synchronously waiting for libass to
+                // rebuild the track. This method is called while ASR/translation
+                // results are being applied and must not block playback.
+                MpvInterop.CommandAsync(_context, NextCommandId(), "sub-reload", editorTrackId.ToString(CultureInfo.InvariantCulture));
             }
 
+            // Subtitle track changes can briefly inherit mpv's paused state while
+            // the external file is parsed. Preserve the user's active playback.
+            if (wasPlaying) MpvInterop.CommandAsync(_context, NextCommandId(), "set", "pause", "no");
             _editorSubtitlePath = fullPath;
         }
     }

@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 using Windows.Storage.Pickers;
+using Windows.UI;
 using WinRT.Interop;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Asr;
@@ -148,6 +149,54 @@ public sealed partial class SettingsWindow : Window
         titleBar.ButtonInactiveForegroundColor = inactiveForeground;
     }
 
+    private void OnColorPickerChanged(ColorPicker sender, ColorChangedEventArgs args)
+    {
+        if (ReferenceEquals(sender, SubtitleColorPicker))
+        {
+            UpdateColorPreview(SubtitleColorPreview, SubtitleColorValue, args.NewColor);
+        }
+        else if (ReferenceEquals(sender, SubtitleBackgroundPicker))
+        {
+            UpdateColorPreview(SubtitleBackgroundPreview, SubtitleBackgroundValue, args.NewColor);
+        }
+        else if (ReferenceEquals(sender, CaptionTextColorPicker))
+        {
+            UpdateColorPreview(CaptionTextColorPreview, CaptionTextColorValue, args.NewColor);
+        }
+        else if (ReferenceEquals(sender, CaptionBackgroundPicker))
+        {
+            UpdateColorPreview(CaptionBackgroundPreview, CaptionBackgroundValue, args.NewColor);
+        }
+    }
+
+    private static void SetColorPicker(ColorPicker picker, Border preview, TextBlock value, string? storedValue, Color fallback)
+    {
+        var color = ParseColor(storedValue, fallback);
+        picker.Color = color;
+        UpdateColorPreview(preview, value, color);
+    }
+
+    private static void UpdateColorPreview(Border preview, TextBlock value, Color color)
+    {
+        preview.Background = new SolidColorBrush(color);
+        value.Text = FormatColor(color);
+    }
+
+    private static Color ParseColor(string? value, Color fallback)
+    {
+        var hex = value?.Trim();
+        if (hex?.StartsWith('#') == true) hex = hex[1..];
+        if (hex is not { Length: 6 or 8 } ||
+            !uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var packed))
+            return fallback;
+
+        return hex.Length == 6
+            ? Color.FromArgb(255, (byte)(packed >> 16), (byte)(packed >> 8), (byte)packed)
+            : Color.FromArgb((byte)(packed >> 24), (byte)(packed >> 16), (byte)(packed >> 8), (byte)packed);
+    }
+
+    private static string FormatColor(Color color) => $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         _settings = await _service.LoadAsync();
@@ -155,9 +204,9 @@ public sealed partial class SettingsWindow : Window
         LanguageCombo.SelectedItem = _settings.General.Language; ThemeCombo.SelectedItem = _settings.General.Theme; UiFontButton.Content = _settings.General.UiFontFamily; RecentCountBox.Value = _settings.General.RecentMediaCount; ResumeCheck.IsChecked = _settings.General.ResumePlayback; DefaultFolderBox.Text = _settings.General.DefaultFolder ?? string.Empty;
         HardwareCombo.SelectedItem = _settings.Playback.HardwareDecoder; RtxCombo.SelectedItem = _settings.Playback.RtxVideoSuperResolution; RtxQualityBox.Value = _settings.Playback.RtxQuality ?? 0; VolumeBox.Value = _settings.Playback.DefaultVolume; SeekBox.Value = _settings.Playback.SeekIntervalSeconds;
         RendererBox.Text = _settings.Playback.Renderer; AudioLanguageBox.Text = _settings.Playback.DefaultAudioLanguage ?? string.Empty; SubtitleLanguageBox.Text = _settings.Playback.DefaultSubtitleLanguage ?? string.Empty;
-        SubtitleFontButton.Content = _settings.Subtitle.FontFamily; SubtitleSizeBox.Value = _settings.Subtitle.FontSize; CueDurationBox.Value = _settings.Subtitle.Segmentation.MaximumCueSeconds; SubtitleColorBox.Text = _settings.Subtitle.Color; SubtitleBackgroundBox.Text = _settings.Subtitle.Background; OutlineBox.Value = _settings.Subtitle.Outline; BottomMarginBox.Value = _settings.Subtitle.BottomMargin; EncodingBox.Text = _settings.Subtitle.Encoding; MinCueDurationBox.Value = _settings.Subtitle.Segmentation.MinimumCueSeconds; MaxLinesBox.Value = _settings.Subtitle.Segmentation.MaximumLines; TargetCharsBox.Value = _settings.Subtitle.Segmentation.TargetCharactersPerLine; SilenceSplitBox.Value = _settings.Subtitle.Segmentation.SilenceSplitSeconds; MaximumCpsBox.Value = _settings.Subtitle.Segmentation.MaximumCharactersPerSecond;
+        SubtitleFontButton.Content = _settings.Subtitle.FontFamily; SubtitleSizeBox.Value = _settings.Subtitle.FontSize; CueDurationBox.Value = _settings.Subtitle.Segmentation.MaximumCueSeconds; SetColorPicker(SubtitleColorPicker, SubtitleColorPreview, SubtitleColorValue, _settings.Subtitle.Color, Color.FromArgb(255, 255, 255, 255)); SetColorPicker(SubtitleBackgroundPicker, SubtitleBackgroundPreview, SubtitleBackgroundValue, _settings.Subtitle.Background, Color.FromArgb(128, 0, 0, 0)); OutlineBox.Value = _settings.Subtitle.Outline; BottomMarginBox.Value = _settings.Subtitle.BottomMargin; EncodingBox.Text = _settings.Subtitle.Encoding; MinCueDurationBox.Value = _settings.Subtitle.Segmentation.MinimumCueSeconds; MaxLinesBox.Value = _settings.Subtitle.Segmentation.MaximumLines; TargetCharsBox.Value = _settings.Subtitle.Segmentation.TargetCharactersPerLine; SilenceSplitBox.Value = _settings.Subtitle.Segmentation.SilenceSplitSeconds; MaximumCpsBox.Value = _settings.Subtitle.Segmentation.MaximumCharactersPerSecond;
         AsrModelBox.Text = AsrSettings.DefaultModelId; AlignerBox.Text = AsrSettings.DefaultAlignerId; CrispAsrRuntimeBox.Text = _settings.Asr.CrispAsrRuntimeDirectory; AsrModelFolderBox.Text = AsrRuntimePaths.ModelsDirectory; AsrDeviceCombo.SelectedItem = _settings.Asr.Device; PrecisionCombo.SelectedItem = _settings.Asr.Precision; VadCheck.IsChecked = _settings.Asr.UseVad; AsrLanguageBox.Text = _settings.Asr.Language; ChunkDurationBox.Value = _settings.Asr.ChunkDurationSeconds;
-        NetworkTimeoutBox.Value = _settings.Network.TimeoutSeconds; ProxyBox.Text = _settings.Network.Proxy ?? string.Empty; CameraIdBox.Text = _settings.Capture.CameraDeviceId ?? string.Empty; MicrophoneIdBox.Text = _settings.Capture.MicrophoneDeviceId ?? string.Empty; CaptureWidthBox.Value = _settings.Capture.Width; CaptureHeightBox.Value = _settings.Capture.Height; CaptureFpsBox.Value = _settings.Capture.FrameRate; CaptionSizeBox.Value = _settings.Capture.CaptionFontSize; CaptionTextColorBox.Text = _settings.Capture.CaptionTextColor; CaptionBackgroundBox.Text = _settings.Capture.CaptionBackgroundColor; CaptionPositionCombo.SelectedItem = _settings.Capture.CaptionPosition; CaptionLinesBox.Value = _settings.Capture.CaptionMaximumLines;
+        NetworkTimeoutBox.Value = _settings.Network.TimeoutSeconds; ProxyBox.Text = _settings.Network.Proxy ?? string.Empty; CameraIdBox.Text = _settings.Capture.CameraDeviceId ?? string.Empty; MicrophoneIdBox.Text = _settings.Capture.MicrophoneDeviceId ?? string.Empty; CaptureWidthBox.Value = _settings.Capture.Width; CaptureHeightBox.Value = _settings.Capture.Height; CaptureFpsBox.Value = _settings.Capture.FrameRate; SetColorPicker(CaptionTextColorPicker, CaptionTextColorPreview, CaptionTextColorValue, _settings.Capture.CaptionTextColor, Color.FromArgb(255, 255, 255, 255)); SetColorPicker(CaptionBackgroundPicker, CaptionBackgroundPreview, CaptionBackgroundValue, _settings.Capture.CaptionBackgroundColor, Color.FromArgb(160, 0, 0, 0)); CaptionSizeBox.Value = _settings.Capture.CaptionFontSize; CaptionPositionCombo.SelectedItem = _settings.Capture.CaptionPosition; CaptionLinesBox.Value = _settings.Capture.CaptionMaximumLines;
         ProviderCombo.SelectedItem = _settings.Llm.Provider.Equals("Unsloth", StringComparison.OrdinalIgnoreCase) ? "Unsloth Desktop" : _settings.Llm.Provider; ModelBox.Text = _settings.Llm.Model ?? string.Empty; ThinkingCombo.SelectedItem = _settings.Llm.ThinkingLevel; TranslationLanguageBox.Text = _settings.Llm.TranslationLanguage;
         var rtx = new GraphicsCapabilityService().DetectRtxVideoSuperResolution();
         RtxStatusText.Text = rtx.Status;
@@ -445,9 +494,9 @@ public sealed partial class SettingsWindow : Window
             var previousLanguage = _settings.General.Language;
             _settings.General.Language = (AppLanguage)(LanguageCombo.SelectedItem ?? AppLanguage.Default); _settings.General.Theme = (AppTheme)(ThemeCombo.SelectedItem ?? AppTheme.System); _settings.General.UiFontFamily = UiFontButton.Content?.ToString() ?? GeneralSettings.DefaultUiFontFamily; _settings.General.RecentMediaCount = (int)RecentCountBox.Value; _settings.General.ResumePlayback = ResumeCheck.IsChecked == true; _settings.General.DefaultFolder = EmptyToNull(DefaultFolderBox.Text);
             _settings.Playback.HardwareDecoder = (HardwareDecoder)(HardwareCombo.SelectedItem ?? HardwareDecoder.Auto); _settings.Playback.RtxVideoSuperResolution = (RtxVideoSuperResolutionMode)(RtxCombo.SelectedItem ?? RtxVideoSuperResolutionMode.Auto); _settings.Playback.RtxQuality = RtxQualityBox.Value <= 0 ? null : (int)RtxQualityBox.Value; _settings.Playback.DefaultVolume = VolumeBox.Value; _settings.Playback.SeekIntervalSeconds = SeekBox.Value; _settings.Playback.Renderer = RendererBox.Text.Trim(); _settings.Playback.DefaultAudioLanguage = EmptyToNull(AudioLanguageBox.Text); _settings.Playback.DefaultSubtitleLanguage = EmptyToNull(SubtitleLanguageBox.Text);
-            _settings.Subtitle.FontFamily = SubtitleFontButton.Content?.ToString() ?? SubtitleSettings.DefaultFontFamily; _settings.Subtitle.FontSize = SubtitleSizeBox.Value; _settings.Subtitle.Segmentation.MaximumCueSeconds = CueDurationBox.Value; _settings.Subtitle.Color = SubtitleColorBox.Text; _settings.Subtitle.Background = SubtitleBackgroundBox.Text; _settings.Subtitle.Outline = OutlineBox.Value; _settings.Subtitle.BottomMargin = (int)BottomMarginBox.Value; _settings.Subtitle.Encoding = EncodingBox.Text; _settings.Subtitle.Segmentation.MinimumCueSeconds = MinCueDurationBox.Value; _settings.Subtitle.Segmentation.MaximumLines = (int)MaxLinesBox.Value; _settings.Subtitle.Segmentation.TargetCharactersPerLine = (int)TargetCharsBox.Value; _settings.Subtitle.Segmentation.SilenceSplitSeconds = SilenceSplitBox.Value; _settings.Subtitle.Segmentation.MaximumCharactersPerSecond = MaximumCpsBox.Value;
+            _settings.Subtitle.FontFamily = SubtitleFontButton.Content?.ToString() ?? SubtitleSettings.DefaultFontFamily; _settings.Subtitle.FontSize = SubtitleSizeBox.Value; _settings.Subtitle.Segmentation.MaximumCueSeconds = CueDurationBox.Value; _settings.Subtitle.Color = FormatColor(SubtitleColorPicker.Color); _settings.Subtitle.Background = FormatColor(SubtitleBackgroundPicker.Color); _settings.Subtitle.Outline = OutlineBox.Value; _settings.Subtitle.BottomMargin = (int)BottomMarginBox.Value; _settings.Subtitle.Encoding = EncodingBox.Text; _settings.Subtitle.Segmentation.MinimumCueSeconds = MinCueDurationBox.Value; _settings.Subtitle.Segmentation.MaximumLines = (int)MaxLinesBox.Value; _settings.Subtitle.Segmentation.TargetCharactersPerLine = (int)TargetCharsBox.Value; _settings.Subtitle.Segmentation.SilenceSplitSeconds = SilenceSplitBox.Value; _settings.Subtitle.Segmentation.MaximumCharactersPerSecond = MaximumCpsBox.Value;
             _settings.Asr.ModelPath = AsrSettings.DefaultModelId; _settings.Asr.AlignerPath = AsrSettings.DefaultAlignerId; _settings.Asr.CrispAsrRuntimeDirectory = AsrRuntimePaths.CrispAsrRuntimeDirectory; _settings.Asr.Device = (AsrDevice)(AsrDeviceCombo.SelectedItem ?? AsrDevice.Auto); _settings.Asr.Precision = (AsrPrecision)(PrecisionCombo.SelectedItem ?? AsrPrecision.Auto); _settings.Asr.UseVad = VadCheck.IsChecked == true; _settings.Asr.Language = AsrLanguageBox.Text.Trim(); _settings.Asr.ChunkDurationSeconds = ChunkDurationBox.Value;
-            _settings.Network.TimeoutSeconds = (int)NetworkTimeoutBox.Value; _settings.Network.Proxy = EmptyToNull(ProxyBox.Text); _settings.Capture.CameraDeviceId = EmptyToNull(CameraIdBox.Text); _settings.Capture.MicrophoneDeviceId = EmptyToNull(MicrophoneIdBox.Text); _settings.Capture.Width = (int)CaptureWidthBox.Value; _settings.Capture.Height = (int)CaptureHeightBox.Value; _settings.Capture.FrameRate = (int)CaptureFpsBox.Value; _settings.Capture.CaptionFontSize = CaptionSizeBox.Value; _settings.Capture.CaptionTextColor = CaptionTextColorBox.Text.Trim(); _settings.Capture.CaptionBackgroundColor = CaptionBackgroundBox.Text.Trim(); _settings.Capture.CaptionPosition = CaptionPositionCombo.SelectedItem?.ToString() ?? "Bottom"; _settings.Capture.CaptionMaximumLines = (int)CaptionLinesBox.Value;
+            _settings.Network.TimeoutSeconds = (int)NetworkTimeoutBox.Value; _settings.Network.Proxy = EmptyToNull(ProxyBox.Text); _settings.Capture.CameraDeviceId = EmptyToNull(CameraIdBox.Text); _settings.Capture.MicrophoneDeviceId = EmptyToNull(MicrophoneIdBox.Text); _settings.Capture.Width = (int)CaptureWidthBox.Value; _settings.Capture.Height = (int)CaptureHeightBox.Value; _settings.Capture.FrameRate = (int)CaptureFpsBox.Value; _settings.Capture.CaptionFontSize = CaptionSizeBox.Value; _settings.Capture.CaptionTextColor = FormatColor(CaptionTextColorPicker.Color); _settings.Capture.CaptionBackgroundColor = FormatColor(CaptionBackgroundPicker.Color); _settings.Capture.CaptionPosition = CaptionPositionCombo.SelectedItem?.ToString() ?? "Bottom"; _settings.Capture.CaptionMaximumLines = (int)CaptionLinesBox.Value;
             _settings.Llm.Provider = ProviderCombo.SelectedItem?.ToString() ?? "Unsloth Desktop"; _settings.Llm.Model = EmptyToNull(ModelBox.Text); _settings.Llm.ThinkingLevel = (ThinkingLevel)(ThinkingCombo.SelectedItem ?? ThinkingLevel.Default); _settings.Llm.TranslationLanguage = TranslationLanguageBox.Text.Trim();
             if (!string.IsNullOrEmpty(ApiKeyBox.Password)) _credentials.Save(CredentialIdentifier.ForLlm(_settings.Llm.Provider), _settings.Llm.Provider, ApiKeyBox.Password);
             await _service.SaveAsync(_settings);

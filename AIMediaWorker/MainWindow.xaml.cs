@@ -1896,7 +1896,10 @@ public sealed partial class MainWindow : Window
         {
             document.MarkDirty();
             DrawTimeline();
-            ScheduleSubtitleOverlaySync();
+            // Reload the native subtitle track once after the complete ASR result is
+            // available. Reloading libass for every incoming segment can interrupt
+            // mpv's audio/video clock even though the ASR work itself is asynchronous.
+            ScheduleSubtitleOverlaySync(force: true);
             finalCueCount = track.Cues.Count;
             StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
         }, document, token).ConfigureAwait(false);
@@ -2078,6 +2081,7 @@ public sealed partial class MainWindow : Window
         var cuesById = cues.ToDictionary(cue => cue.Id);
         var translated = await service.TranslateAsync(cues, _settings.Llm.TranslationLanguage, batchCompleted: (batch, token) => ApplyTranslationBatchAsync(targetDocument, batch, cuesById, token), cancellationToken: cancellationToken);
         if (!ReferenceEquals(_document, targetDocument)) return false;
+        ScheduleSubtitleOverlaySync(force: true);
         StatusText.Text = F("StatusTranslated", translated.Count);
         await AppLog.WriteAsync("info", "translation", "TRANSLATION_COMPLETED", $"Translated {translated.Count} cues from {startMicroseconds} microseconds using {_settings.Llm.Provider}.");
         return true;
@@ -3127,7 +3131,9 @@ public sealed partial class MainWindow : Window
         {
             Interlocked.Exchange(ref _generatedSubtitleUiRefreshQueued, 0);
             DrawTimeline();
-            ScheduleSubtitleOverlaySync();
+            // The native ASS track is refreshed once when generation/translation
+            // completes. Keeping this UI refresh local prevents every incoming cue
+            // from asking mpv to rebuild its subtitle renderer.
         })) Interlocked.Exchange(ref _generatedSubtitleUiRefreshQueued, 0);
     }
 
@@ -3260,7 +3266,11 @@ public sealed partial class MainWindow : Window
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
     private static Brush ThemeBrush(string resourceKey, Windows.UI.Color fallback) => Application.Current.Resources.TryGetValue(resourceKey, out var value) && value is Brush brush ? brush : new SolidColorBrush(fallback);
-    private static string FormatTime(TimeSpan value) => value.TotalHours >= 1 ? value.ToString(@"hh\:mm\:ss") : value.ToString(@"mm\:ss");
+    private static string FormatTime(TimeSpan value)
+    {
+        var totalSeconds = Math.Max(0, (long)value.TotalSeconds);
+        return $"{totalSeconds / 60:00}:{totalSeconds % 60:00}";
+    }
     private System.Text.Encoding ResolveSubtitleEncoding()
     {
         var name = string.IsNullOrWhiteSpace(_settings.Subtitle.Encoding) ? "utf-8" : _settings.Subtitle.Encoding.Trim();

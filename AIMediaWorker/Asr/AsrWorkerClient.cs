@@ -225,7 +225,8 @@ public sealed class AsrWorkerClient : IAsrEngine
                 if (!useVad || HasSpeech(chunk))
                 {
                     var segments = await TranscribeChunkAsync(chunk, processedSamples, startMicroseconds, language, token).ConfigureAwait(false);
-                    foreach (var segment in segments)
+                    var subtitleSegments = AsrSubtitleSegmenter.Segment(segments, segmentation);
+                    foreach (var segment in subtitleSegments)
                     {
                         token.ThrowIfCancellationRequested();
                         yield return new AsrEvent { Id = requestId, Event = "segment", Segment = segment };
