@@ -45,6 +45,7 @@
   <data name="FavoritesEmptyText.Text"><value>お気に入りはありません</value></data>
   <data name="AddWebDavServerMenu.Text"><value>WebDAVサーバーを追加…</value></data>
   <data name="WebDavAddServerCommand.Label"><value>WebDAVサーバーを追加</value></data>
+  <data name="WebDavDeleteServerButton.Content"><value>削除</value></data>
   <data name="SettingsGeneralSection.Text"><value>一般</value></data>
   <data name="SettingsPlaybackSection.Text"><value>再生</value></data>
   <data name="SettingsSubtitleSection.Text"><value>字幕</value></data>

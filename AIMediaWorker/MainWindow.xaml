@@ -152,9 +152,10 @@
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <Grid Padding="6" ColumnSpacing="8">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Glyph="&#xE968;" />
                                                 <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                <Button x:Uid="WebDavDeleteServerButton" Grid.Column="2" Content="Delete" Padding="8,0" Click="OnDeleteWebDavServerClick" />
                                             </Grid>
                                         </DataTemplate>
                                     </ListView.ItemTemplate>

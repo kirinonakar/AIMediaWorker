@@ -45,6 +45,7 @@
   <data name="FavoritesEmptyText.Text"><value>즐겨찾기가 없습니다</value></data>
   <data name="AddWebDavServerMenu.Text"><value>WebDAV 서버 추가…</value></data>
   <data name="WebDavAddServerCommand.Label"><value>WebDAV 서버 추가</value></data>
+  <data name="WebDavDeleteServerButton.Content"><value>삭제</value></data>
   <data name="SettingsGeneralSection.Text"><value>일반</value></data>
   <data name="SettingsPlaybackSection.Text"><value>재생</value></data>
   <data name="SettingsSubtitleSection.Text"><value>자막</value></data>

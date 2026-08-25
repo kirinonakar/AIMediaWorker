@@ -2823,6 +2823,57 @@ public sealed partial class MainWindow : Window
         if (e.ClickedItem is WebDavServerSettings server) await ConnectWebDavServerAsync(server);
     }
 
+    private async void OnDeleteWebDavServerClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: WebDavServerSettings server }) return;
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            RequestedTheme = RootGrid.ActualTheme,
+            Title = L("DeleteWebDavServerTitle"),
+            Content = new TextBlock { Text = F("DeleteWebDavServerMessage", server.Name), TextWrapping = TextWrapping.Wrap },
+            PrimaryButtonText = L("DeleteButtonText"),
+            CloseButtonText = L("CancelButtonText"),
+            DefaultButton = ContentDialogButton.Close
+        };
+        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
+
+        try
+        {
+            var wasActive = _webDavPanelServerId == server.Id;
+            if (wasActive)
+            {
+                var listingCancellation = _webDavListingCancellation;
+                _webDavListingCancellation = null;
+                listingCancellation?.Cancel();
+                listingCancellation?.Dispose();
+                _webDavPanelServerId = null;
+                _webDavPanelDirectory = null;
+                _webDavEntries = [];
+                WebDavServerList.SelectedItem = null;
+                WebDavPanelEntryList.SelectedItem = null;
+                WebDavPanelEntryList.IsEnabled = true;
+                WebDavParentButton.IsEnabled = false;
+                WebDavRefreshButton.IsEnabled = false;
+                WebDavProgressRing.IsActive = false;
+                WebDavConnectionStatusText.Text = string.Empty;
+                ApplyWebDavEntryView();
+                UpdateWebDavBreadcrumbs();
+            }
+
+            _settings.Network.WebDavServers.RemoveAll(candidate => candidate.Id == server.Id);
+            _webDavCredentials.Delete(server.Id);
+            await SettingsService.CreateDefault().SaveAsync(_settings);
+            RefreshWebDavServerList();
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "webdav", "WEBDAV_DELETE_ERROR", exception.Message, exception);
+            WebDavConnectionStatusText.Text = exception.Message;
+        }
+    }
+
     private async Task ConnectWebDavServerAsync(WebDavServerSettings server, Uri? directory = null)
     {
         var credential = _webDavCredentials.Read(server.Id);
