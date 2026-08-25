@@ -68,7 +68,7 @@
   <data name="PlaybackStateIdle"><value>대기</value></data>
   <data name="PlaybackStateFailed"><value>재생 오류</value></data>
   <data name="PlaybackStateUninitialized"><value>초기화되지 않음</value></data>
-  <data name="TooltipBeginning"><value>처음으로 이동 (Home)</value></data>
+  <data name="TooltipBeginning"><value>처음으로 이동 (Home / Backspace / Ctrl+Shift+N)</value></data>
   <data name="TooltipPreviousMedia"><value>이전 미디어 ({0})</value></data>
   <data name="TooltipNextMedia"><value>다음 미디어 ({0})</value></data>
   <data name="TooltipSeekBackward"><value>{0:0.#}초 뒤로 탐색 ({1})</value></data>
@@ -80,8 +80,8 @@
   <data name="TooltipRepeatCurrent"><value>현재 미디어 반복</value></data>
   <data name="TooltipRepeatPlaylist"><value>재생 목록 반복</value></data>
   <data name="TooltipRepeatOff"><value>반복 끄기</value></data>
-  <data name="TooltipEnterFullscreen"><value>전체 화면으로 전환 (F)</value></data>
-  <data name="TooltipExitFullscreen"><value>전체 화면 종료 (Esc)</value></data>
+  <data name="TooltipEnterFullscreen"><value>전체 화면으로 전환 (Enter / F / F11)</value></data>
+  <data name="TooltipExitFullscreen"><value>전체 화면 종료 (Esc / Enter / F / F11)</value></data>
   <data name="TooltipClose"><value>앱 닫기</value></data>
   <data name="BrowserFilter.PlaceholderText"><value>이름으로 필터</value></data>
   <data name="WebDavFilter.PlaceholderText"><value>이름으로 필터</value></data>

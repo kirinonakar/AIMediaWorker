@@ -14,6 +14,11 @@ public sealed class AsrWorkerClient : IAsrEngine
 {
     private const int SampleRate = 16_000;
     private const long CentisecondMicroseconds = 10_000;
+    private static readonly TimeSpan[] EmptyDecodeRetryDelays =
+    [
+        TimeSpan.FromMilliseconds(100),
+        TimeSpan.FromMilliseconds(300)
+    ];
     private readonly object _lifecycleLock = new();
     private readonly SemaphoreSlim _inferenceLock = new(1, 1);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
@@ -505,6 +510,33 @@ public sealed class AsrWorkerClient : IAsrEngine
 
     private static async Task<float[]> DecodeMediaAsync(string input, long startMicroseconds, CancellationToken cancellationToken)
     {
+        for (var attempt = 0; ; attempt++)
+        {
+            var samples = await DecodeMediaOnceAsync(input, startMicroseconds, probeMore: attempt > 0, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (samples.Length > 0) return samples;
+            if (attempt >= EmptyDecodeRetryDelays.Length) break;
+            await Task.Delay(EmptyDecodeRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
+        }
+
+        if (startMicroseconds > 0)
+        {
+            // WebM/Opus can occasionally produce no packets when an output seek is
+            // requested immediately after the player opens the file. Decode from the
+            // beginning as a last resort, then trim in memory so cue timestamps still
+            // refer to the requested media position.
+            var completeSamples = await DecodeMediaOnceAsync(input, 0, probeMore: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+            return TrimSamplesFromStart(completeSamples, startMicroseconds);
+        }
+
+        return [];
+    }
+
+    private static async Task<float[]> DecodeMediaOnceAsync(
+        string input,
+        long startMicroseconds,
+        bool probeMore,
+        CancellationToken cancellationToken)
+    {
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo
@@ -516,7 +548,7 @@ public sealed class AsrWorkerClient : IAsrEngine
                 RedirectStandardError = true
             }
         };
-        foreach (var argument in BuildDecodeArguments(input, startMicroseconds)) process.StartInfo.ArgumentList.Add(argument);
+        foreach (var argument in BuildDecodeArguments(input, startMicroseconds, probeMore)) process.StartInfo.ArgumentList.Add(argument);
 
         try
         {
@@ -549,9 +581,16 @@ public sealed class AsrWorkerClient : IAsrEngine
         return MemoryMarshal.Cast<byte, float>(bytes).ToArray();
     }
 
-    private static IReadOnlyList<string> BuildDecodeArguments(string input, long startMicroseconds)
+    private static IReadOnlyList<string> BuildDecodeArguments(string input, long startMicroseconds, bool probeMore = false)
     {
-        var arguments = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-i", input };
+        var arguments = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
+        if (probeMore)
+        {
+            // Some WebM files put the first audio packets far enough after the video
+            // header that FFmpeg's default probe can finish without exposing audio.
+            arguments.AddRange(["-probesize", "100000000", "-analyzeduration", "10000000"]);
+        }
+        arguments.AddRange(["-i", input]);
         if (startMicroseconds > 0)
         {
             // Seek after opening the input so the timestamps are accurate. The decoded
@@ -562,6 +601,15 @@ public sealed class AsrWorkerClient : IAsrEngine
         }
         arguments.AddRange(["-map", "0:a:0?", "-vn", "-ac", "1", "-ar", SampleRate.ToString(), "-f", "f32le", "pipe:1"]);
         return arguments;
+    }
+
+    private static float[] TrimSamplesFromStart(float[] samples, long startMicroseconds)
+    {
+        if (samples.Length == 0 || startMicroseconds <= 0) return samples;
+        var offset = (long)Math.Floor(startMicroseconds * (double)SampleRate / 1_000_000d);
+        if (offset <= 0) return samples;
+        if (offset >= samples.LongLength) return [];
+        return samples[(int)offset..];
     }
 
     private static string ResolveInput(string path)

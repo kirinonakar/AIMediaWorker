@@ -220,6 +220,11 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         var trackRefreshCancellation = Interlocked.Exchange(ref _trackRefreshCancellation, null);
         trackRefreshCancellation?.Cancel();
         trackRefreshCancellation?.Dispose();
+        // A video filter that is kept across loadfile can make the next hardware
+        // decoder negotiate its surface format while the first frame is already
+        // being requested. Re-attach RTX VSR after the new decoder has produced a
+        // frame instead of making the decoder and d3d11vpp initialize together.
+        RemoveRtxVideoSuperResolutionFilter();
         _firstFrameReady = false;
         SetState(PlaybackState.Loading);
         CurrentSource = source;
@@ -448,44 +453,19 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public void ConfigureRtxVideoSuperResolution(RtxVideoSuperResolutionMode mode)
     {
         EnsureAvailable();
-        var wasEnabled = _rtxVideoSuperResolutionFilterApplied;
-        var shouldEnable = mode != RtxVideoSuperResolutionMode.Off;
-        if (wasEnabled == shouldEnable)
+        _rtxVideoSuperResolutionMode = mode;
+        if (mode == RtxVideoSuperResolutionMode.Off)
         {
-            _rtxVideoSuperResolutionMode = mode;
-            RtxVideoSuperResolutionStatus = shouldEnable
-                ? "NVIDIA RTX Video Super Resolution filter configured; per-frame activation is driver controlled."
-                : "Disabled";
+            RemoveRtxVideoSuperResolutionFilter();
+            RtxVideoSuperResolutionStatus = "Disabled";
             return;
         }
 
-        try
-        {
-            if (wasEnabled)
-            {
-                MpvInterop.Command(_context, "vf", "remove", $"@{RtxVideoSuperResolutionFilter.Label}");
-                _rtxVideoSuperResolutionFilterApplied = false;
-            }
-
-            if (shouldEnable)
-            {
-                var filter = RtxVideoSuperResolutionFilter.Build(mode) ?? throw new InvalidOperationException("Could not build the RTX VSR filter.");
-                MpvInterop.Command(_context, "vf", "add", filter);
-                _rtxVideoSuperResolutionFilterApplied = true;
-            }
-
-            _rtxVideoSuperResolutionMode = mode;
-            RtxVideoSuperResolutionStatus = shouldEnable
-                ? "NVIDIA RTX Video Super Resolution filter configured; per-frame activation is driver controlled."
-                : "Disabled";
-        }
-        catch (MpvException exception)
-        {
-            _rtxVideoSuperResolutionFilterApplied = false;
-            _rtxVideoSuperResolutionMode = mode;
-            RtxVideoSuperResolutionStatus = $"Unavailable: {exception.Message}";
-            throw;
-        }
+        // Do not change the filter chain while the file is still negotiating its
+        // decoder. The first PlaybackRestart event is the earliest point at which
+        // AV1 and other hardware-decoded streams have a stable D3D11 surface.
+        if (_firstFrameReady) ApplyRtxVideoSuperResolutionFilter();
+        else RtxVideoSuperResolutionStatus = "NVIDIA RTX Video Super Resolution will be applied after the decoder is ready.";
     }
 
     public async ValueTask DisposeAsync()
@@ -592,14 +572,19 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 if (_firstFrameReady) ScheduleTrackRefresh();
                 break;
             case MpvInterop.MpvEventId.PlaybackRestart:
-                if (_firstFrameReady) break;
-                _firstFrameReady = true;
-                var codec = GetString("video-codec");
-                var decoder = GetString("hwdec-current") ?? "software";
-                DecoderDescription = codec is null ? decoder : $"{codec} / {decoder}";
-                StartupProfiler.CompleteAtFirstFrame(DecoderDescription);
-                FirstFrameReady?.Invoke(this, EventArgs.Empty);
-                ScheduleTrackRefresh();
+                if (!_firstFrameReady)
+                {
+                    _firstFrameReady = true;
+                    var codec = GetString("video-codec");
+                    var decoder = GetString("hwdec-current") ?? "software";
+                    DecoderDescription = codec is null ? decoder : $"{codec} / {decoder}";
+                    StartupProfiler.CompleteAtFirstFrame(DecoderDescription);
+                    FirstFrameReady?.Invoke(this, EventArgs.Empty);
+                    ScheduleTrackRefresh();
+                }
+                // Apply after FirstFrameReady has been raised so AV1 can use its
+                // D3D11 hardware surface without delaying the first visible frame.
+                ApplyRtxVideoSuperResolutionFilter();
                 break;
             case MpvInterop.MpvEventId.Shutdown:
                 return;
@@ -781,16 +766,37 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             return;
         }
 
-        var filter = RtxVideoSuperResolutionFilter.Build(mode) ?? throw new InvalidOperationException("Could not build the RTX VSR filter.");
+        // The filter is intentionally attached at the first PlaybackRestart event.
+        // Pre-initializing d3d11vpp here races AV1/D3D11VA surface negotiation and can
+        // leave libmpv on the first frame with a stalled video clock.
+        RtxVideoSuperResolutionStatus = "NVIDIA RTX Video Super Resolution will be applied after the decoder is ready.";
+    }
+
+    private void ApplyRtxVideoSuperResolutionFilter()
+    {
+        if (_context == 0 || _rtxVideoSuperResolutionMode == RtxVideoSuperResolutionMode.Off || _rtxVideoSuperResolutionFilterApplied) return;
+        var filter = RtxVideoSuperResolutionFilter.Build(_rtxVideoSuperResolutionMode);
+        if (filter is null) return;
         try
         {
-            SetOption("vf", filter);
+            MpvInterop.Command(_context, "vf", "add", filter);
             _rtxVideoSuperResolutionFilterApplied = true;
-            RtxVideoSuperResolutionStatus = "NVIDIA RTX Video Super Resolution filter configured; per-frame activation is driver controlled.";
+            var codec = GetString("video-codec") ?? "video";
+            var decoder = GetString("hwdec-current") ?? "software";
+            RtxVideoSuperResolutionStatus = $"NVIDIA RTX Video Super Resolution configured for {codec} / {decoder}; per-frame activation remains driver controlled.";
         }
         catch (MpvException exception)
         {
+            _rtxVideoSuperResolutionFilterApplied = false;
             RtxVideoSuperResolutionStatus = $"Unavailable: {exception.Message}";
         }
+    }
+
+    private void RemoveRtxVideoSuperResolutionFilter()
+    {
+        if (!_rtxVideoSuperResolutionFilterApplied || _context == 0) return;
+        try { MpvInterop.Command(_context, "vf", "remove", $"@{RtxVideoSuperResolutionFilter.Label}"); }
+        catch (MpvException) { }
+        finally { _rtxVideoSuperResolutionFilterApplied = false; }
     }
 }

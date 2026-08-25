@@ -68,7 +68,7 @@
   <data name="PlaybackStateIdle"><value>Idle</value></data>
   <data name="PlaybackStateFailed"><value>Playback failed</value></data>
   <data name="PlaybackStateUninitialized"><value>Not initialized</value></data>
-  <data name="TooltipBeginning"><value>Go to beginning (Home)</value></data>
+  <data name="TooltipBeginning"><value>Go to beginning (Home / Backspace / Ctrl+Shift+N)</value></data>
   <data name="TooltipPreviousMedia"><value>Previous media ({0})</value></data>
   <data name="TooltipNextMedia"><value>Next media ({0})</value></data>
   <data name="TooltipSeekBackward"><value>Seek backward {0:0.#}s ({1})</value></data>
@@ -80,8 +80,8 @@
   <data name="TooltipRepeatCurrent"><value>Repeat current media</value></data>
   <data name="TooltipRepeatPlaylist"><value>Repeat playlist</value></data>
   <data name="TooltipRepeatOff"><value>Repeat off</value></data>
-  <data name="TooltipEnterFullscreen"><value>Enter fullscreen (F)</value></data>
-  <data name="TooltipExitFullscreen"><value>Exit fullscreen (Esc)</value></data>
+  <data name="TooltipEnterFullscreen"><value>Enter fullscreen (Enter / F / F11)</value></data>
+  <data name="TooltipExitFullscreen"><value>Exit fullscreen (Esc / Enter / F / F11)</value></data>
   <data name="TooltipClose"><value>Close app</value></data>
   <data name="BrowserFilter.PlaceholderText"><value>Filter by name</value></data>
   <data name="WebDavFilter.PlaceholderText"><value>Filter by name</value></data>

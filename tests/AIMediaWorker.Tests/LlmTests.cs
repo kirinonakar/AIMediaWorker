@@ -162,6 +162,53 @@ public sealed class LlmTests
     }
 
     [Fact]
+    public async Task DetailedSummaryRetriesWhenFinalOutputIsOnlyAHeading()
+    {
+        var calls = 0;
+        var provider = new FakeProvider(_ => ++calls switch
+        {
+            1 => "중간 요약 본문입니다.",
+            2 => "### 일본의 크리스마스 치킨 문화 요약",
+            _ => "### 일본의 크리스마스 치킨 문화 요약\n\n일본에서 크리스마스에 치킨을 먹는 문화의 배경과 현재의 소비 형태를 설명합니다."
+        });
+        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "Japan eats chicken at Christmas." } };
+
+        var result = await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Detailed, "Korean");
+
+        Assert.Contains("현재의 소비 형태", result, StringComparison.Ordinal);
+        Assert.Equal(3, calls);
+    }
+
+    [Fact]
+    public async Task DetailedSummaryFinalPassUsesTheIntermediateDetailedContent()
+    {
+        var prompts = new List<string>();
+        var provider = new FakeProvider(prompt =>
+        {
+            prompts.Add(prompt);
+            return prompts.Count == 1 ? "중간 상세 요약에 포함된 본문입니다." : "최종 상세 요약 본문입니다.";
+        });
+        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "원본 자막에만 있는 사실" } };
+
+        await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Detailed, "Korean");
+
+        Assert.Contains("중간 상세 요약에 포함된 본문입니다.", prompts[^1], StringComparison.Ordinal);
+        Assert.DoesNotContain("원본 자막에만 있는 사실", prompts[^1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DetailedSummaryPreservesMarkdownBody()
+    {
+        const string markdown = "**일본의 크리스마스 치킨 문화와 KFC 관련 상세 요약**\n\n**1. 문화적 배경 및 기원**\n일본의 크리스마스 치킨 문화는 KFC의 마케팅에서 시작되었습니다.";
+        var provider = new FakeProvider(_ => markdown);
+        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "일본의 크리스마스 치킨 문화" } };
+
+        var result = await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Detailed, "Korean");
+
+        Assert.Equal(markdown, result);
+    }
+
+    [Fact]
     public async Task GoogleMapsThinkingLevelOnlyForSupportedModelFamilies()
     {
         string? body = null;

@@ -88,24 +88,33 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
         var intermediateSummaries = string.Join("\n\n---\n\n", partials);
-        var finalMaterial = kind == SummaryKind.Detailed && chunks.Count == 1 ? chunks[0] : intermediateSummaries;
-        var finalPrompt = $"{instruction} Write the final summary in {targetLanguage}. Return only the substantive summary; do not write an introduction such as 'Here is a detailed summary based on the provided content.' Synthesize the material below without repetition and without adding unsupported claims.\n\n{finalMaterial}";
+        var finalPrompt = $"{instruction} Write the final summary in {targetLanguage}. Return only the substantive summary; do not write an introduction such as 'Here is a detailed summary based on the provided content.' A title alone is incomplete: after every heading, include the corresponding explanatory paragraphs, facts, examples, and conclusions. Synthesize the intermediate summaries below without repetition and without adding unsupported claims.\n\n{intermediateSummaries}";
         var finalOptions = new LlmGenerationOptions(thinkingLevel, 0.2, MaximumOutputTokens: kind == SummaryKind.Detailed ? 4_000 : 1_600);
         var final = await provider.GenerateAsync(model, $"You create faithful final summaries from the supplied transcript material. Always write the final summary in {targetLanguage}. Never return a generic acknowledgement or an introduction; return the actual summary content.", finalPrompt, finalOptions, cancellationToken).ConfigureAwait(false);
-        var cleanedFinal = RemoveSummaryPreamble(final);
-        if (kind == SummaryKind.Detailed && string.IsNullOrWhiteSpace(cleanedFinal))
+        var cleanedFinal = CleanSummaryResponse(final);
+        if (kind == SummaryKind.Detailed && IsInsufficientDetailedSummary(cleanedFinal))
         {
-            var recoveryPrompt = $"{instruction} The previous response contained only a generic introductory sentence. Ignore it and write the actual summary from the transcript below. Return only the substantive summary in {targetLanguage}; do not describe what you are doing and do not say that this is a summary.\n\n{string.Join("\n\n---\n\n", chunks)}";
+            var recoveryMaterial = intermediateSummaries;
+            if (IsInsufficientDetailedSummary(CleanSummaryResponse(recoveryMaterial)))
+                recoveryMaterial = string.Join("\n\n---\n\n", chunks);
+            var recoveryPrompt = $"{instruction} The previous response was unusable because it contained only a heading or a generic introduction. Ignore it and write the actual factual summary now. A heading by itself is not a valid answer: include the substantive paragraphs, facts, examples, and conclusions supported by the source. Return only the substantive summary in {targetLanguage}; do not describe what you are doing and do not say that this is a summary.\n\n{recoveryMaterial}";
             var recovery = await provider.GenerateAsync(model, $"Write only the detailed factual summary in {targetLanguage}. Use the transcript as the source of truth and never answer with an acknowledgement.", recoveryPrompt, finalOptions, cancellationToken).ConfigureAwait(false);
-            cleanedFinal = RemoveSummaryPreamble(recovery);
+            cleanedFinal = CleanSummaryResponse(recovery);
+            if (IsInsufficientDetailedSummary(cleanedFinal))
+            {
+                var intermediateFallback = CleanSummaryResponse(intermediateSummaries);
+                if (!IsInsufficientDetailedSummary(intermediateFallback)) cleanedFinal = intermediateFallback;
+            }
         }
         progress?.Report(1);
         return cleanedFinal;
     }
 
-    private static string RemoveSummaryPreamble(string text)
+    private static string CleanSummaryResponse(string text)
     {
         var cleaned = text.Trim();
+        var thinkingEnd = cleaned.LastIndexOf("</think>", StringComparison.OrdinalIgnoreCase);
+        if (thinkingEnd >= 0) cleaned = cleaned[(thinkingEnd + "</think>".Length)..].Trim();
         foreach (var preamble in new[]
         {
             "제공된 내용을 바탕으로 작성한 상세 요약입니다.",
@@ -118,6 +127,21 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
             cleaned = cleaned.Replace(preamble, string.Empty, StringComparison.OrdinalIgnoreCase);
 
         return cleaned.Trim().TrimStart(':', '：', '-', '—', ' ', '\r', '\n').Trim();
+    }
+
+    private static bool IsInsufficientDetailedSummary(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return true;
+        var lines = text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return lines.Length == 1 && IsMarkdownHeading(lines[0]);
+    }
+
+    private static bool IsMarkdownHeading(string line)
+    {
+        var trimmed = line.Trim();
+        var hashCount = 0;
+        while (hashCount < trimmed.Length && trimmed[hashCount] == '#') hashCount++;
+        return hashCount is >= 1 and <= 6 && hashCount < trimmed.Length && char.IsWhiteSpace(trimmed[hashCount]);
     }
 
     private static ParsedTranslations ParseTranslations(string response)

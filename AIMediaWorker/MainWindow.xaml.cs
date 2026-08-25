@@ -122,6 +122,11 @@ public sealed partial class MainWindow : Window
     private DateTimeOffset _fullscreenCursorLastMovedAt;
     private NativePoint? _lastFullscreenCursorPosition;
     private bool _fullscreenCursorHidden;
+    private bool _mediaOpenReady;
+    private bool _firstFrameUiReadyForMedia;
+    private string? _pendingMediaOpenSource;
+    private string? _firstFrameWaitSource;
+    private TaskCompletionSource? _firstFrameWaiter;
     private string? _pendingLaunchSource;
     private string[]? _pendingDroppedFiles;
     private PendingPostOpenWork? _pendingPostOpenWork;
@@ -196,6 +201,7 @@ public sealed partial class MainWindow : Window
             if (!_playback.IsAvailable || _pendingDroppedFiles is { Length: > 0 } ||
                 _pendingLaunchSource is not { Length: > 0 } launchSource) return;
             _pendingLaunchSource = null;
+            BeginMediaOpen(launchSource);
             await _playback.OpenAsync(launchSource).ConfigureAwait(false);
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             if (!DispatcherQueue.TryEnqueue(() =>
@@ -516,12 +522,18 @@ public sealed partial class MainWindow : Window
             if (!_playback.IsAvailable) throw new InvalidOperationException(L("StatusPlaybackUnavailable"));
             await _historyService.LoadRecentAsync();
             RememberCurrentPosition();
+            BeginMediaOpen(source);
             await _playback.OpenAsync(source, httpHeaders);
             await aiPipelineCancellation;
             CompleteMediaOpen(source, httpHeaders, mediaSource ?? MediaSourceFactory.Parse(source), preservePlaylist, showInExplorer: false);
         }
         catch (Exception exception)
         {
+            if (string.Equals(_pendingMediaOpenSource, source, StringComparison.OrdinalIgnoreCase))
+            {
+                _mediaOpenReady = false;
+                _pendingMediaOpenSource = null;
+            }
             await aiPipelineCancellation;
             await AppLog.WriteAsync("error", "playback", "OPEN_MEDIA_ERROR", exception.Message, exception);
             await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
@@ -549,6 +561,19 @@ public sealed partial class MainWindow : Window
         QueuePostOpenWork(source, _currentMediaSource as LocalMediaSource, !preservePlaylist, showInExplorer);
         UpdatePlaylistButtons();
         FocusPlaybackSurface();
+        _mediaOpenReady = true;
+        _pendingMediaOpenSource = null;
+        if (_firstFrameUiReadyForMedia) StartAutomaticSubtitleGenerationIfReady();
+    }
+
+    private void BeginMediaOpen(string source)
+    {
+        _mediaOpenReady = false;
+        _firstFrameUiReadyForMedia = false;
+        _pendingMediaOpenSource = source;
+        _firstFrameWaiter?.TrySetCanceled();
+        _firstFrameWaitSource = source;
+        _firstFrameWaiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private async Task SaveHistoryAfterOpenAsync(IMediaSource source)
@@ -1271,10 +1296,39 @@ public sealed partial class MainWindow : Window
     });
     private void OnFirstFrameReady(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
+        if (string.Equals(_firstFrameWaitSource, _playback.CurrentSource, StringComparison.OrdinalIgnoreCase))
+        {
+            _firstFrameUiReadyForMedia = true;
+            _firstFrameWaiter?.TrySetResult();
+        }
         ApplySubtitleVisibilityPreference();
         StartPostOpenWorkIfReady();
-        if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null) StartCheckedAiPipeline();
+        StartAutomaticSubtitleGenerationIfReady();
     });
+
+    private void StartAutomaticSubtitleGenerationIfReady()
+    {
+        if (!_mediaOpenReady || !_firstFrameUiReadyForMedia ||
+            !string.Equals(_currentMediaSource?.Location, _playback.CurrentSource, StringComparison.OrdinalIgnoreCase)) return;
+        if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null)
+            StartCheckedAiPipeline(waitForMediaReady: true);
+    }
+
+    private async Task<bool> WaitForFirstFrameAsync(string source)
+    {
+        if (!_mediaOpenReady || !string.Equals(_playback.CurrentSource, source, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!_firstFrameUiReadyForMedia)
+        {
+            var waiter = _firstFrameWaiter;
+            if (waiter is null || !string.Equals(_firstFrameWaitSource, source, StringComparison.OrdinalIgnoreCase)) return false;
+            try { await waiter.Task.WaitAsync(TimeSpan.FromSeconds(12)); }
+            catch (TimeoutException) { return false; }
+            catch (OperationCanceledException) { return false; }
+        }
+        return _mediaOpenReady && _firstFrameUiReadyForMedia &&
+               _playback.IsFirstFrameReady &&
+               string.Equals(_playback.CurrentSource, source, StringComparison.OrdinalIgnoreCase);
+    }
     private void OnPlaybackPositionChanged(object? sender, EventArgs e)
     {
         if (Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 1) != 0) return;
@@ -1428,9 +1482,11 @@ public sealed partial class MainWindow : Window
         if (ctrl && shift && !alt && e.Key == Windows.System.VirtualKey.N) { PlayFromBeginning(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Enter) { ToggleFullscreen(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.F) { ToggleFullscreen(); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.F11) { ToggleFullscreen(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.M) { OnMuteClick(this, new RoutedEventArgs()); e.Handled = true; return; }
         if (playbackHasFocus && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Up) { TryPlayback(() => _playback.SetVolume(_playback.Volume + 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
         if (playbackHasFocus && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Down) { TryPlayback(() => _playback.SetVolume(_playback.Volume - 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Back) { PlayFromBeginning(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Home) { SeekAndRestartAi(TimeSpan.Zero, () => _playback.Seek(TimeSpan.Zero, true)); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.End) { SeekAndRestartAi(_playback.Duration, () => _playback.Seek(_playback.Duration, true)); e.Handled = true; return; }
         bool Is(string action) => _settings.General.Shortcuts.TryGetValue(action, out var gesture) && ShortcutGesture.Matches(gesture, key, ctrl, shift, alt);
@@ -1493,7 +1549,7 @@ public sealed partial class MainWindow : Window
         SubtitleVisibilityMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSubtitles);
         ShowBottomPanelMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleTimelinePanel);
         ShowRightPanelMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSidePanel);
-        FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F")} · Esc";
+        FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F", "F11")} · Esc";
 
         ToolTipService.SetToolTip(PlayPauseButton, $"{L("PlayPause.Text")} ({Combine(Shortcut(ShortcutActions.PlayPause), Shortcut(ShortcutActions.PlayPauseAlternate))})");
         ToolTipService.SetToolTip(BeginningButton, L("TooltipBeginning"));
@@ -1860,10 +1916,10 @@ public sealed partial class MainWindow : Window
         StartCheckedAiPipeline();
     }
 
-    private void StartCheckedAiPipeline(long? requestedStartMicroseconds = null)
+    private void StartCheckedAiPipeline(long? requestedStartMicroseconds = null, bool waitForMediaReady = false)
     {
         if (_aiPipelineTask is { IsCompleted: false } || _aiOperationCancellation is not null) return;
-        _aiPipelineTask = RunCheckedAiPipelineAsync(requestedStartMicroseconds);
+        _aiPipelineTask = RunCheckedAiPipelineAsync(requestedStartMicroseconds, waitForMediaReady);
     }
 
     private async Task CancelAiPipelineAsync()
@@ -1927,7 +1983,7 @@ public sealed partial class MainWindow : Window
         catch (OperationCanceledException) when (!seekCancellationToken.IsCancellationRequested) { }
     }
 
-    private async Task RunCheckedAiPipelineAsync(long? requestedStartMicroseconds = null)
+    private async Task RunCheckedAiPipelineAsync(long? requestedStartMicroseconds = null, bool waitForMediaReady = false)
     {
         if (_aiOperationCancellation is not null) return;
         var generate = GenerateSubtitlesMenuItem.IsChecked && !_subtitleGenerationCompletedForCurrentMedia;
@@ -1944,13 +2000,17 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var startMicroseconds = requestedStartMicroseconds ?? CurrentPlaybackPositionMicroseconds;
         _aiOperationCancellation = new CancellationTokenSource();
         string? temporaryInput = null;
         var translating = false;
         try
         {
             var token = _aiOperationCancellation.Token;
+            if (waitForMediaReady) await Task.Delay(250, token);
+            var startMicroseconds = waitForMediaReady
+                ? 0
+                : requestedStartMicroseconds ?? CurrentPlaybackPositionMicroseconds;
+            var preserveExistingSubtitles = requestedStartMicroseconds.HasValue && !waitForMediaReady;
             if (generate)
             {
                 if (!File.Exists(source) && _currentHttpHeaders is { Count: > 0 })
@@ -1959,13 +2019,13 @@ public sealed partial class MainWindow : Window
                     temporaryInput = await DownloadAsrInputAsync(source, _currentHttpHeaders, token);
                     source = temporaryInput;
                 }
-                _translationCompletedForCurrentMedia = await GenerateSubtitlesAsync(source, startMicroseconds, token, preserveExistingSubtitles: requestedStartMicroseconds.HasValue);
+                _translationCompletedForCurrentMedia = await GenerateSubtitlesAsync(source, startMicroseconds, token, preserveExistingSubtitles);
                 _subtitleGenerationCompletedForCurrentMedia = true;
             }
             if (TranslateMenuItem.IsChecked && !_translationCompletedForCurrentMedia)
             {
                 translating = true;
-                _translationCompletedForCurrentMedia = await TranslateSubtitlesAsync(startMicroseconds, token, includeAllMissing: requestedStartMicroseconds.HasValue);
+                _translationCompletedForCurrentMedia = await TranslateSubtitlesAsync(startMicroseconds, token, includeAllMissing: preserveExistingSubtitles);
             }
         }
         catch (OperationCanceledException) { StatusText.Text = L(translating ? "StatusTranslationCancelled" : "StatusSubtitleGenerationCancelled"); }
@@ -2363,24 +2423,31 @@ public sealed partial class MainWindow : Window
             var summaryLanguage = _settings.Llm.TranslationLanguage.Trim();
             var summary = await service.SummarizeAsync(track.Cues, (SummaryKind)(choices.SelectedItem ?? SummaryKind.Short), summaryLanguage, progress, cancellationToken: _aiOperationCancellation.Token);
             // ContentDialog has a 548px maximum width including its padding. Keep the
-            // summary content below that limit so the TextBox receives a real wrapping
-            // width instead of measuring one long line outside the dialog.
+            // summary content below that limit so the text can wrap inside the dialog.
             var summaryWidth = Math.Min(480, Math.Max(240, RootGrid.ActualWidth - 96));
-            var output = new TextBox
+            var summaryHeight = Math.Clamp(RootGrid.ActualHeight - 440, 140, 280);
+            // Keep the provider response as plain text. In particular, Markdown markers
+            // such as ** must not be treated as delimiters that can hide the rest.
+            var output = new TextBlock
             {
                 Text = summary,
-                IsReadOnly = true,
-                AcceptsReturn = true,
                 TextWrapping = TextWrapping.Wrap,
+                Width = Math.Max(200, summaryWidth - 32)
+            };
+            var outputScrollViewer = new ScrollViewer
+            {
+                Content = output,
                 Width = summaryWidth,
                 MaxWidth = summaryWidth,
+                Height = summaryHeight,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Stretch,
-                VerticalContentAlignment = VerticalAlignment.Top,
-                Height = Math.Clamp(RootGrid.ActualHeight - 360, 160, 360)
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                HorizontalScrollMode = ScrollMode.Disabled,
+                VerticalScrollMode = ScrollMode.Auto,
+                Padding = new Thickness(4, 0, 4, 0)
             };
-            ScrollViewer.SetVerticalScrollBarVisibility(output, ScrollBarVisibility.Auto);
-            ScrollViewer.SetHorizontalScrollBarVisibility(output, ScrollBarVisibility.Disabled);
             var copyButton = new Button
             {
                 Content = new SymbolIcon(Symbol.Copy),
@@ -2394,11 +2461,11 @@ public sealed partial class MainWindow : Window
             copyButton.Click += (_, _) =>
             {
                 var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-                package.SetText(output.Text);
+                package.SetText(summary);
                 Clipboard.SetContent(package);
             };
             var summaryContent = new StackPanel { Width = summaryWidth, Spacing = 8 };
-            summaryContent.Children.Add(output);
+            summaryContent.Children.Add(outputScrollViewer);
             summaryContent.Children.Add(copyButton);
             await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("TranscriptSummaryTitle"), Content = summaryContent, CloseButtonText = L("CloseButton") });
             StatusText.Text = L("StatusSummaryComplete");
@@ -3329,7 +3396,11 @@ public sealed partial class MainWindow : Window
         if (_settings.General.ResumePlayback && recent.LastPlaybackPositionMicroseconds > 0)
         {
             var resumePosition = TimeSpan.FromTicks(recent.LastPlaybackPositionMicroseconds * 10);
-            SeekAndRestartAi(resumePosition, () => _playback.Seek(resumePosition, true));
+            // OpenAsync queues loadfile and returns before libmpv has produced a
+            // frame. Waiting for the UI first-frame signal prevents a recent-file
+            // resume seek from racing AV1/WebM decoder initialization.
+            if (await WaitForFirstFrameAsync(recent.Location))
+                SeekAndRestartAi(resumePosition, () => _playback.Seek(resumePosition, true));
         }
     }
 

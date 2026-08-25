@@ -188,10 +188,10 @@ API keys are stored in Windows Credential Manager.
 | Ctrl+Z / Ctrl+Y | Undo/redo |
 | Delete | Delete selected cues |
 | Ctrl+W | Close the application |
-| Enter | Toggle fullscreen |
+| Enter / F / F11 | Toggle fullscreen |
 | Esc | Leave fullscreen |
-| F | Toggle fullscreen |
 | Home / End | Seek to start/end |
+| Backspace / Ctrl+Shift+N | Play the current media from the beginning |
 
 Text boxes retain ordinary editing shortcuts. Available shortcuts are shown beside their menu commands or in the related control tooltip. Shortcut gestures are persisted as a declarative action-to-gesture map in `settings.json`, so custom configuration UI can be added without changing command routing.
 

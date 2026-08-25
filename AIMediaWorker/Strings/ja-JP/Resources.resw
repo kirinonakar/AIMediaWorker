@@ -68,7 +68,7 @@
   <data name="PlaybackStateIdle"><value>待機中</value></data>
   <data name="PlaybackStateFailed"><value>再生エラー</value></data>
   <data name="PlaybackStateUninitialized"><value>未初期化</value></data>
-  <data name="TooltipBeginning"><value>先頭へ移動 (Home)</value></data>
+  <data name="TooltipBeginning"><value>先頭へ移動 (Home / Backspace / Ctrl+Shift+N)</value></data>
   <data name="TooltipPreviousMedia"><value>前のメディア ({0})</value></data>
   <data name="TooltipNextMedia"><value>次のメディア ({0})</value></data>
   <data name="TooltipSeekBackward"><value>{0:0.#}秒戻る ({1})</value></data>
@@ -80,8 +80,8 @@
   <data name="TooltipRepeatCurrent"><value>現在のメディアをリピート</value></data>
   <data name="TooltipRepeatPlaylist"><value>プレイリストをリピート</value></data>
   <data name="TooltipRepeatOff"><value>リピート解除</value></data>
-  <data name="TooltipEnterFullscreen"><value>全画面に切り替え (F)</value></data>
-  <data name="TooltipExitFullscreen"><value>全画面を終了 (Esc)</value></data>
+  <data name="TooltipEnterFullscreen"><value>全画面に切り替え (Enter / F / F11)</value></data>
+  <data name="TooltipExitFullscreen"><value>全画面を終了 (Esc / Enter / F / F11)</value></data>
   <data name="TooltipClose"><value>アプリを閉じる</value></data>
   <data name="BrowserFilter.PlaceholderText"><value>名前でフィルター</value></data>
   <data name="WebDavFilter.PlaceholderText"><value>名前でフィルター</value></data>
