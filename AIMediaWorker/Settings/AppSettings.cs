@@ -128,7 +128,7 @@ public sealed class GeneralSettings
     public const string DefaultUiFontFamily = "Noto Sans CJK JP";
 
     public AppLanguage Language { get; set; } = AppLanguage.Default;
-    public AppTheme Theme { get; set; } = AppTheme.System;
+    public AppTheme Theme { get; set; } = AppTheme.Dark;
     public string UiFontFamily { get; set; } = DefaultUiFontFamily;
     public int RecentMediaCount { get; set; } = 20;
     public bool ResumePlayback { get; set; } = true;

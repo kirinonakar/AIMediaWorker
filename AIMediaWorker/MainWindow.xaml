@@ -36,6 +36,18 @@
                 <Setter Property="HorizontalContentAlignment" Value="Center" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
             </Style>
+            <Style x:Key="PanelToggleButtonStyle" TargetType="ToggleButton" BasedOn="{StaticResource DefaultToggleButtonStyle}">
+                <Setter Property="Width" Value="36" />
+                <Setter Property="MinWidth" Value="36" />
+                <Setter Property="Height" Value="36" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderBrush" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+            </Style>
         </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
@@ -52,7 +64,8 @@
                 <TextBlock x:Name="AppTitleText" Grid.Column="1" Text="AIMediaWorker" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
             </Grid>
         </Grid>
-        <MenuBar x:Name="MainMenuBar" Grid.Row="1">
+        <Grid x:Name="MainMenuBarHost" Grid.Row="1">
+            <MenuBar x:Name="MainMenuBar">
             <MenuBarItem x:Uid="FileMenu" Title="File">
                 <MenuFlyoutItem x:Uid="OpenMedia" Text="Open media…" Click="OnOpenMediaClick" /><MenuFlyoutItem x:Uid="OpenUrl" Text="Open URL…" Click="OnOpenUrlClick" />
                 <MenuFlyoutSubItem x:Uid="RecentMedia" x:Name="RecentMenu" Text="Recent media" />
@@ -94,7 +107,54 @@
             </MenuBarItem>
             <MenuBarItem x:Uid="SettingsMenu" Title="Settings"><MenuFlyoutItem x:Uid="Preferences" Text="Preferences…" Click="OnSettingsClick" /></MenuBarItem>
             <MenuBarItem x:Uid="HelpMenu" Title="Help"><MenuFlyoutItem x:Uid="About" Text="About" Click="OnAboutClick" /></MenuBarItem>
-        </MenuBar>
+            </MenuBar>
+            <StackPanel x:Name="PanelToggleButtons" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="2" Margin="0,0,8,0">
+                <StackPanel.Resources>
+                    <ResourceDictionary>
+                        <ResourceDictionary.ThemeDictionaries>
+                            <ResourceDictionary x:Key="Light">
+                                <SolidColorBrush x:Key="ToggleButtonBackground" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="#12000000" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="#22000000" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#12000000" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#22000000" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrush" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushPressed" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPressed" Color="Transparent" />
+                            </ResourceDictionary>
+                            <ResourceDictionary x:Key="Dark">
+                                <SolidColorBrush x:Key="ToggleButtonBackground" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="#18FFFFFF" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="#2AFFFFFF" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#18FFFFFF" />
+                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#2AFFFFFF" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrush" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushPressed" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPressed" Color="Transparent" />
+                            </ResourceDictionary>
+                        </ResourceDictionary.ThemeDictionaries>
+                    </ResourceDictionary>
+                </StackPanel.Resources>
+                <ToggleButton x:Name="BottomPanelToggleButton" Style="{StaticResource PanelToggleButtonStyle}" IsChecked="True" Click="OnBottomPanelToggleButtonClick" AutomationProperties.Name="Toggle bottom panel">
+                    <Image x:Name="BottomPanelToggleIcon" Width="18" Height="18">
+                        <Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Panels/bottom-panel.svg" /></Image.Source>
+                    </Image>
+                </ToggleButton>
+                <ToggleButton x:Name="RightPanelToggleButton" Style="{StaticResource PanelToggleButtonStyle}" IsChecked="True" Click="OnRightPanelToggleButtonClick" AutomationProperties.Name="Toggle side panel">
+                    <Image x:Name="RightPanelToggleIcon" Width="18" Height="18">
+                        <Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Panels/right-panel.svg" /></Image.Source>
+                    </Image>
+                </ToggleButton>
+            </StackPanel>
+        </Grid>
         <Grid x:Name="MainContentGrid" Grid.Row="2" MinHeight="260">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="320" /><ColumnDefinition x:Name="RightPanelSplitterColumn" Width="6" /><ColumnDefinition x:Name="RightPanelColumn" Width="360" MinWidth="0" /></Grid.ColumnDefinitions>
             <Border x:Name="VideoPlaceholder" Grid.Column="0" Background="Black" Margin="8,4,4,4" DoubleTapped="OnVideoDoubleTapped">

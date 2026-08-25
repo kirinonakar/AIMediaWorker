@@ -36,6 +36,8 @@
   <data name="ClearApiKeyButton.Content"><value>Clear stored key</value></data><data name="CredentialRemovedTitle"><value>Credential removed</value></data><data name="CredentialRemovedMessage"><value>Removed the stored key for {0}.</value></data>
   <data name="ShowRightPanel.Text"><value>Show side panel</value></data>
   <data name="ShowBottomPanel.Text"><value>Show timeline panel</value></data>
+  <data name="TooltipToggleRightPanel"><value>Toggle side panel ({0})</value></data>
+  <data name="TooltipToggleBottomPanel"><value>Toggle timeline panel ({0})</value></data>
   <data name="SubtitleVisibility.Text"><value>Show subtitles</value></data>
   <data name="FavoritesTab.Header"><value>Favorites</value></data>
   <data name="AddBrowserFavorite.Text"><value>Add to favorites</value></data>

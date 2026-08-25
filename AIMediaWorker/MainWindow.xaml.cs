@@ -1638,6 +1638,11 @@ public sealed partial class MainWindow : Window
         ShowRightPanelMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSidePanel);
         FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F", "F11")} · Esc";
 
+        ToolTipService.SetToolTip(BottomPanelToggleButton, F("TooltipToggleBottomPanel", Shortcut(ShortcutActions.ToggleTimelinePanel)));
+        ToolTipService.SetToolTip(RightPanelToggleButton, F("TooltipToggleRightPanel", Shortcut(ShortcutActions.ToggleSidePanel)));
+        AutomationProperties.SetName(BottomPanelToggleButton, L("ShowBottomPanel.Text"));
+        AutomationProperties.SetName(RightPanelToggleButton, L("ShowRightPanel.Text"));
+
         ToolTipService.SetToolTip(PlayPauseButton, $"{L("PlayPause.Text")} ({Combine(Shortcut(ShortcutActions.PlayPause), Shortcut(ShortcutActions.PlayPauseAlternate))})");
         ToolTipService.SetToolTip(BeginningButton, L("TooltipBeginning"));
         ToolTipService.SetToolTip(PreviousButton, F("TooltipPreviousMedia", Shortcut(ShortcutActions.PreviousMedia)));
@@ -1662,6 +1667,8 @@ public sealed partial class MainWindow : Window
     }
     private void OnToggleRightPanelClick(object sender, RoutedEventArgs e) { _rightPanelVisible = ShowRightPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
     private void OnToggleBottomPanelClick(object sender, RoutedEventArgs e) { _bottomPanelVisible = ShowBottomPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
+    private void OnRightPanelToggleButtonClick(object sender, RoutedEventArgs e) { _rightPanelVisible = RightPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
+    private void OnBottomPanelToggleButtonClick(object sender, RoutedEventArgs e) { _bottomPanelVisible = BottomPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
 
     private void ToggleFullscreen()
     {
@@ -1691,7 +1698,7 @@ public sealed partial class MainWindow : Window
             _windowBoundsBeforeFullscreen = new RectInt32(_appWindow.Position.X, _appWindow.Position.Y, _appWindow.Size.Width, _appWindow.Size.Height);
             _workAreaBeforeFullscreen = display.WorkArea;
             _isFullscreen = true;
-            MainMenuBar.Visibility = Visibility.Collapsed;
+            MainMenuBarHost.Visibility = Visibility.Collapsed;
             AppTitleBarArea.Visibility = Visibility.Collapsed;
             PlaybackControls.Visibility = Visibility.Collapsed;
             VisualizationPanel.Visibility = Visibility.Collapsed;
@@ -1741,7 +1748,7 @@ public sealed partial class MainWindow : Window
             _fullscreenHoverTimer?.Stop();
             SetFullscreenCursorHidden(false);
             _lastFullscreenCursorPosition = null;
-            MainMenuBar.Visibility = Visibility.Visible;
+            MainMenuBarHost.Visibility = Visibility.Visible;
             AppTitleBarArea.Visibility = Visibility.Visible;
             PlaybackControls.Visibility = Visibility.Visible;
             VideoPlaceholder.Margin = new Thickness(8, 4, 4, 4);
@@ -1828,6 +1835,9 @@ public sealed partial class MainWindow : Window
         StatusPanel.Visibility = _bottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
         ShowRightPanelMenuItem.IsChecked = _rightPanelVisible;
         ShowBottomPanelMenuItem.IsChecked = _bottomPanelVisible;
+        RightPanelToggleButton.IsChecked = _rightPanelVisible;
+        BottomPanelToggleButton.IsChecked = _bottomPanelVisible;
+        UpdatePanelToggleIcons();
         if (_initialized)
         {
             _settings.Window.IsRightPanelVisible = _rightPanelVisible;
@@ -1956,7 +1966,7 @@ public sealed partial class MainWindow : Window
         if (inside)
         {
             // Keep the top chrome discoverable across the full custom title-bar height.
-            if (cursor.Y <= top + 32 || MainMenuBar.Visibility == Visibility.Visible && cursor.Y <= top + 70) _showFullscreenMenuUntil = now.AddSeconds(1.5);
+            if (cursor.Y <= top + 32 || MainMenuBarHost.Visibility == Visibility.Visible && cursor.Y <= top + 70) _showFullscreenMenuUntil = now.AddSeconds(1.5);
             if (cursor.Y >= bottom - 32 || PlaybackControls.Visibility == Visibility.Visible && cursor.Y >= bottom - 150) _showFullscreenControlsUntil = now.AddSeconds(1.5);
         }
         var verticallyAligned = cursor.Y >= top && cursor.Y < bottom;
@@ -1964,7 +1974,7 @@ public sealed partial class MainWindow : Window
             _showFullscreenRightPanelUntil = now.AddSeconds(1.5);
         var showTopChrome = now < _showFullscreenMenuUntil;
         AppTitleBarArea.Visibility = showTopChrome ? Visibility.Visible : Visibility.Collapsed;
-        MainMenuBar.Visibility = showTopChrome ? Visibility.Visible : Visibility.Collapsed;
+        MainMenuBarHost.Visibility = showTopChrome ? Visibility.Visible : Visibility.Collapsed;
         var showControls = now < _showFullscreenControlsUntil;
         PlaybackControls.Visibility = showControls ? Visibility.Visible : Visibility.Collapsed;
         StatusPanel.Visibility = showControls ? Visibility.Visible : Visibility.Collapsed;
@@ -3233,7 +3243,19 @@ public sealed partial class MainWindow : Window
         NextIcon.Source = PlaybackIconSource("next");
         MuteIcon.Source = PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
         RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.AutoAdvance => "repeat-auto", _ => "repeat" });
+        UpdatePanelToggleIcons();
     }
+
+    private void UpdatePanelToggleIcons()
+    {
+        BottomPanelToggleIcon.Source = PanelToggleIconSource("bottom-panel", _bottomPanelVisible);
+        RightPanelToggleIcon.Source = PanelToggleIconSource("right-panel", _rightPanelVisible);
+    }
+
+    private SvgImageSource PanelToggleIconSource(string name, bool isOpen) => new()
+    {
+        UriSource = new Uri($"ms-appx:///Assets/Panels/{name}{(isOpen ? string.Empty : "-closed")}{(RootGrid.ActualTheme == ElementTheme.Dark ? "-dark" : string.Empty)}.svg")
+    };
 
     private void OnRootActualThemeChanged(FrameworkElement sender, object args)
     {
