@@ -26,6 +26,8 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private volatile bool _firstFrameReady;
     private volatile bool _loadfileIssued;
     private bool _disposed;
+    private RtxVideoSuperResolutionMode _rtxVideoSuperResolutionMode = RtxVideoSuperResolutionMode.Off;
+    private bool _rtxVideoSuperResolutionFilterApplied;
 
     public PlaybackState State => _state;
     public bool IsAvailable => _context != 0 && !_disposed && _state is not PlaybackState.Uninitialized and not PlaybackState.Failed;
@@ -42,6 +44,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public int? VideoWidth { get; private set; }
     public int? VideoHeight { get; private set; }
     public string? LibraryVersion { get; private set; }
+    public string RtxVideoSuperResolutionStatus { get; private set; } = "Disabled";
 
     public event EventHandler? StateChanged;
     public event EventHandler? FirstFrameReady;
@@ -72,30 +75,30 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     /// Creates the libmpv context and applies pre-initialization options. It deliberately
     /// does not need an HWND, so callers can overlap this work with XAML construction.
     /// </summary>
-    public Task PrepareAsync(HardwareDecoder hardwareDecoder, string renderer = "gpu-next", CancellationToken cancellationToken = default)
+    public Task PrepareAsync(HardwareDecoder hardwareDecoder, string renderer = "gpu-next", RtxVideoSuperResolutionMode rtxVideoSuperResolution = RtxVideoSuperResolutionMode.Auto, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         lock (_sync)
         {
-            _preparationTask ??= PrepareCoreAsync(hardwareDecoder, renderer);
+            _preparationTask ??= PrepareCoreAsync(hardwareDecoder, renderer, rtxVideoSuperResolution);
             return _preparationTask.WaitAsync(cancellationToken);
         }
     }
 
-    private async Task PrepareCoreAsync(HardwareDecoder hardwareDecoder, string renderer)
+    private async Task PrepareCoreAsync(HardwareDecoder hardwareDecoder, string renderer, RtxVideoSuperResolutionMode rtxVideoSuperResolution)
     {
         await PreloadAsync().ConfigureAwait(false);
-        await Task.Run(() => CreateAndConfigureCore(hardwareDecoder, renderer), CancellationToken.None).ConfigureAwait(false);
+        await Task.Run(() => CreateAndConfigureCore(hardwareDecoder, renderer, rtxVideoSuperResolution), CancellationToken.None).ConfigureAwait(false);
     }
 
-    public async Task InitializeAsync(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer = "gpu-next", CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer = "gpu-next", RtxVideoSuperResolutionMode rtxVideoSuperResolution = RtxVideoSuperResolutionMode.Auto, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (IsAvailable) return;
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            await PrepareAsync(hardwareDecoder, renderer, cancellationToken).ConfigureAwait(false);
+            await PrepareAsync(hardwareDecoder, renderer, rtxVideoSuperResolution, cancellationToken).ConfigureAwait(false);
             if (IsAvailable) return;
             var initialization = Task.Run(() => InitializeCore(videoWindowHandle, cancellationToken), cancellationToken);
             _initializationTask = initialization;
@@ -128,7 +131,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         finally { _initializationTask = null; }
     }
 
-    private void CreateAndConfigureCore(HardwareDecoder hardwareDecoder, string renderer)
+    private void CreateAndConfigureCore(HardwareDecoder hardwareDecoder, string renderer, RtxVideoSuperResolutionMode rtxVideoSuperResolution)
     {
         StartupProfiler.Mark("mpv-create-start");
         _context = MpvInterop.mpv_create();
@@ -152,6 +155,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             HardwareDecoder.Off => "no",
             _ => "auto-safe"
         });
+        ConfigureRtxVideoSuperResolutionOption(rtxVideoSuperResolution);
         // mpv defaults deinterlacing to "no". Use automatic detection so interlaced
         // MPEG-2 sources such as DVD/VOB are passed through bwdif while progressive
         // sources remain untouched.
@@ -265,7 +269,11 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         Command("show-text", text, durationMilliseconds.ToString(CultureInfo.InvariantCulture));
     }
     public void SetMute(bool muted) { IsMuted = muted; SetProperty("mute", muted ? "yes" : "no"); }
-    public void SetSubtitleVisibility(bool visible) { AreSubtitlesVisible = visible; SetProperty("sub-visibility", visible ? "yes" : "no"); }
+    public void SetSubtitleVisibility(bool visible)
+    {
+        SetProperty("sub-visibility", visible ? "yes" : "no");
+        AreSubtitlesVisible = visible;
+    }
     public void SetRate(double rate) { Rate = Math.Clamp(rate, 0.25, 4); SetProperty("speed", Rate.ToString("0.###", CultureInfo.InvariantCulture)); }
     public void FrameStep(bool backwards = false) => Command(backwards ? "frame-back-step" : "frame-step");
     public void SaveScreenshot(string path, bool includeSubtitles = true)
@@ -280,13 +288,17 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         SetProperty("ab-loop-b", end is null ? "no" : end.Value.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture));
     }
 
-    public void SelectTrack(MediaTrackType type, int? id) => SetProperty(type switch
+    public void SelectTrack(MediaTrackType type, int? id)
     {
-        MediaTrackType.Video => "vid",
-        MediaTrackType.Audio => "aid",
-        MediaTrackType.Subtitle => "sid",
-        _ => throw new ArgumentOutOfRangeException(nameof(type))
-    }, id?.ToString(CultureInfo.InvariantCulture) ?? "no");
+        SetProperty(type switch
+        {
+            MediaTrackType.Video => "vid",
+            MediaTrackType.Audio => "aid",
+            MediaTrackType.Subtitle => "sid",
+            _ => throw new ArgumentOutOfRangeException(nameof(type))
+        }, id?.ToString(CultureInfo.InvariantCulture) ?? "no");
+        if (type == MediaTrackType.Subtitle) RestoreSubtitleVisibility();
+    }
 
     public void LoadSubtitle(string path, bool select = true)
     {
@@ -296,6 +308,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             SetProperty("secondary-sid", "no");
         }
         Command("sub-add", path, select ? "select" : "auto");
+        RestoreSubtitleVisibility();
     }
 
     public void UpdateEditorSubtitle(string path)
@@ -333,6 +346,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             // Subtitle track changes can briefly inherit mpv's paused state while
             // the external file is parsed. Preserve the user's active playback.
             if (wasPlaying) MpvInterop.CommandAsync(_context, NextCommandId(), "set", "pause", "no");
+            RestoreSubtitleVisibility();
             _editorSubtitlePath = fullPath;
         }
     }
@@ -366,6 +380,49 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         TrySetProperty("sub-back-color", background);
         TrySetProperty("sub-border-size", outline.ToString("0.##", CultureInfo.InvariantCulture));
         TrySetProperty("sub-margin-y", Math.Max(0, bottomMargin).ToString(CultureInfo.InvariantCulture));
+    }
+
+    public void ConfigureRtxVideoSuperResolution(RtxVideoSuperResolutionMode mode)
+    {
+        EnsureAvailable();
+        var wasEnabled = _rtxVideoSuperResolutionFilterApplied;
+        var shouldEnable = mode != RtxVideoSuperResolutionMode.Off;
+        if (wasEnabled == shouldEnable)
+        {
+            _rtxVideoSuperResolutionMode = mode;
+            RtxVideoSuperResolutionStatus = shouldEnable
+                ? "NVIDIA RTX Video Super Resolution filter configured; per-frame activation is driver controlled."
+                : "Disabled";
+            return;
+        }
+
+        try
+        {
+            if (wasEnabled)
+            {
+                MpvInterop.Command(_context, "vf", "remove", $"@{RtxVideoSuperResolutionFilter.Label}");
+                _rtxVideoSuperResolutionFilterApplied = false;
+            }
+
+            if (shouldEnable)
+            {
+                var filter = RtxVideoSuperResolutionFilter.Build(mode) ?? throw new InvalidOperationException("Could not build the RTX VSR filter.");
+                MpvInterop.Command(_context, "vf", "add", filter);
+                _rtxVideoSuperResolutionFilterApplied = true;
+            }
+
+            _rtxVideoSuperResolutionMode = mode;
+            RtxVideoSuperResolutionStatus = shouldEnable
+                ? "NVIDIA RTX Video Super Resolution filter configured; per-frame activation is driver controlled."
+                : "Disabled";
+        }
+        catch (MpvException exception)
+        {
+            _rtxVideoSuperResolutionFilterApplied = false;
+            _rtxVideoSuperResolutionMode = mode;
+            RtxVideoSuperResolutionStatus = $"Unavailable: {exception.Message}";
+            throw;
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -435,6 +492,10 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 break;
             case MpvInterop.MpvEventId.FileLoaded:
                 StartupProfiler.Mark("file-loaded");
+                // libmpv can restore per-file subtitle state when a new source is
+                // loaded. Reapply the user's preference after the file is ready so
+                // the menu checkmark and the renderer cannot drift apart.
+                RestoreSubtitleVisibility();
                 SetState(GetBool("pause") ? PlaybackState.Paused : PlaybackState.Playing);
                 break;
             case MpvInterop.MpvEventId.EndFile:
@@ -538,6 +599,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             result.Add(new MediaTrack(GetInt(prefix + "id") ?? -1, type, GetString(prefix + "lang"), GetString(prefix + "title"), GetString(prefix + "codec"), GetBool(prefix + "default"), GetBool(prefix + "forced"), GetBool(prefix + "selected")));
         }
         lock (_sync) { _tracks.Clear(); _tracks.AddRange(result); }
+        RestoreSubtitleVisibility();
         TracksChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -568,6 +630,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private bool TrySetOption(string name, string value) { try { SetOption(name, value); return true; } catch (MpvException) { return false; } }
     private void SetProperty(string name, string value) { EnsureAvailable(); MpvInterop.EnsureSuccess(MpvInterop.mpv_set_property_string(_context, name, value), $"set property {name}"); }
     private bool TrySetProperty(string name, string value) { try { SetProperty(name, value); return true; } catch (MpvException) { return false; } }
+    private void RestoreSubtitleVisibility() => TrySetProperty("sub-visibility", AreSubtitlesVisible ? "yes" : "no");
     private void Command(params string[] args) { EnsureAvailable(); MpvInterop.Command(_context, args); }
     private string? GetString(string property) => _context == 0 ? null : MpvInterop.GetString(_context, property);
     private int? GetInt(string property) => int.TryParse(GetString(property), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : null;
@@ -588,4 +651,27 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
 
     private void SetState(PlaybackState state) { if (_state == state) return; _state = state; StateChanged?.Invoke(this, EventArgs.Empty); }
     private void RaiseError(string code, string message, Exception? exception = null) => ErrorOccurred?.Invoke(this, new PlaybackError(code, message, exception));
+
+    private void ConfigureRtxVideoSuperResolutionOption(RtxVideoSuperResolutionMode mode)
+    {
+        _rtxVideoSuperResolutionMode = mode;
+        _rtxVideoSuperResolutionFilterApplied = false;
+        if (mode == RtxVideoSuperResolutionMode.Off)
+        {
+            RtxVideoSuperResolutionStatus = "Disabled";
+            return;
+        }
+
+        var filter = RtxVideoSuperResolutionFilter.Build(mode) ?? throw new InvalidOperationException("Could not build the RTX VSR filter.");
+        try
+        {
+            SetOption("vf", filter);
+            _rtxVideoSuperResolutionFilterApplied = true;
+            RtxVideoSuperResolutionStatus = "NVIDIA RTX Video Super Resolution filter configured; per-frame activation is driver controlled.";
+        }
+        catch (MpvException exception)
+        {
+            RtxVideoSuperResolutionStatus = $"Unavailable: {exception.Message}";
+        }
+    }
 }

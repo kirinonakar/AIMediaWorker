@@ -65,8 +65,24 @@ public sealed class BatchShiftCommand(SubtitleDocument document, IReadOnlyCollec
     public void Undo() => Shift(-deltaMicroseconds);
     private void Shift(long delta)
     {
-        if (cues.Any(c => c.StartMicroseconds + delta < 0)) throw new InvalidOperationException("Shift would move a subtitle before zero.");
-        foreach (var cue in cues) { cue.StartMicroseconds += delta; cue.EndMicroseconds += delta; }
+        var updates = new List<(SubtitleCue Cue, long Start, long End)>(cues.Count);
+        foreach (var cue in cues)
+        {
+            long start;
+            long end;
+            try
+            {
+                start = checked(cue.StartMicroseconds + delta);
+                end = checked(cue.EndMicroseconds + delta);
+            }
+            catch (OverflowException)
+            {
+                throw new InvalidOperationException("Shift exceeds the supported subtitle time range.");
+            }
+            if (start < 0 || end <= start) throw new InvalidOperationException("Shift would move a subtitle before zero.");
+            updates.Add((cue, start, end));
+        }
+        foreach (var update in updates) { update.Cue.StartMicroseconds = update.Start; update.Cue.EndMicroseconds = update.End; }
         document.Sort();
         document.MarkDirty();
     }

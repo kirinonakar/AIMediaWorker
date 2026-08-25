@@ -180,4 +180,22 @@ public sealed class SubtitleTests
         Assert.Single(track.Cues);
         Assert.Equal("Hello world", track.Cues[0].Text);
     }
+
+    [Fact]
+    public void BatchShiftMovesAllCuesAndUndoRestoresTheirOriginalTimes()
+    {
+        var document = new SubtitleDocument();
+        var track = document.EnsureTrack();
+        track.Cues.Add(new SubtitleCue { StartMicroseconds = 1_000_000, EndMicroseconds = 2_000_000, Text = "First" });
+        track.Cues.Add(new SubtitleCue { StartMicroseconds = 4_000_000, EndMicroseconds = 5_000_000, Text = "Second" });
+        var command = new BatchShiftCommand(document, track.Cues.ToArray(), 750_000);
+
+        command.Execute();
+
+        Assert.Equal([(1_750_000L, 2_750_000L), (4_750_000L, 5_750_000L)], track.Cues.Select(cue => (cue.StartMicroseconds, cue.EndMicroseconds)));
+
+        command.Undo();
+
+        Assert.Equal([(1_000_000L, 2_000_000L), (4_000_000L, 5_000_000L)], track.Cues.Select(cue => (cue.StartMicroseconds, cue.EndMicroseconds)));
+    }
 }

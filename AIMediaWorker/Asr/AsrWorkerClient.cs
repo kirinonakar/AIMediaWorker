@@ -211,7 +211,7 @@ public sealed class AsrWorkerClient : IAsrEngine
         try
         {
             yield return new AsrEvent { Id = requestId, Event = "progress", Stage = "decode", Progress = 0, Message = "Decoding audio to 16 kHz mono PCM." };
-            var samples = await DecodeMediaAsync(input, token).ConfigureAwait(false);
+            var samples = await DecodeMediaAsync(input, startMicroseconds, token).ConfigureAwait(false);
             if (samples.Length == 0) throw new AsrWorkerException("AUDIO_EMPTY", "The media file contains no decodable audio samples.");
 
             var chunkSamples = Math.Clamp((int)Math.Round(Math.Clamp(chunkDurationSeconds, 5, 180) * SampleRate), SampleRate, SampleRate * 180);
@@ -503,7 +503,7 @@ public sealed class AsrWorkerClient : IAsrEngine
         }).ToArray();
     }
 
-    private static async Task<float[]> DecodeMediaAsync(string input, CancellationToken cancellationToken)
+    private static async Task<float[]> DecodeMediaAsync(string input, long startMicroseconds, CancellationToken cancellationToken)
     {
         using var process = new Process
         {
@@ -516,11 +516,7 @@ public sealed class AsrWorkerClient : IAsrEngine
                 RedirectStandardError = true
             }
         };
-        foreach (var argument in new[]
-        {
-            "-hide_banner", "-loglevel", "error", "-nostdin", "-i", input,
-            "-map", "0:a:0?", "-vn", "-ac", "1", "-ar", SampleRate.ToString(), "-f", "f32le", "pipe:1"
-        }) process.StartInfo.ArgumentList.Add(argument);
+        foreach (var argument in BuildDecodeArguments(input, startMicroseconds)) process.StartInfo.ArgumentList.Add(argument);
 
         try
         {
@@ -551,6 +547,21 @@ public sealed class AsrWorkerClient : IAsrEngine
         if (bytes.Length == 0) return [];
         if (bytes.Length % sizeof(float) != 0) throw new AsrWorkerException("AUDIO_DECODE_ERROR", "FFmpeg returned an incomplete float PCM frame.");
         return MemoryMarshal.Cast<byte, float>(bytes).ToArray();
+    }
+
+    private static IReadOnlyList<string> BuildDecodeArguments(string input, long startMicroseconds)
+    {
+        var arguments = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-i", input };
+        if (startMicroseconds > 0)
+        {
+            // Seek after opening the input so the timestamps are accurate. The decoded
+            // PCM starts at the requested media position, while TranscribeChunkAsync
+            // restores that same position to every emitted subtitle cue.
+            arguments.Add("-ss");
+            arguments.Add((startMicroseconds / 1_000_000d).ToString("0.######", System.Globalization.CultureInfo.InvariantCulture));
+        }
+        arguments.AddRange(["-map", "0:a:0?", "-vn", "-ac", "1", "-ar", SampleRate.ToString(), "-f", "f32le", "pipe:1"]);
+        return arguments;
     }
 
     private static string ResolveInput(string path)

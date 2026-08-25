@@ -34,7 +34,7 @@ public sealed class DiagnosticsService
             ["ASR model"] = asrModel ?? "not configured",
             ["Aligner model"] = alignerModel ?? "not configured",
             ["GPU"] = graphics.Adapters.Count == 0 ? "not detected" : string.Join("; ", graphics.Adapters.Select(adapter => $"{adapter.Name} ({adapter.DriverVersion ?? "unknown driver"})")),
-            ["RTX Video Super Resolution"] = graphics.Status,
+            ["RTX Video Super Resolution"] = $"{graphics.Status} App filter: {playback.RtxVideoSuperResolutionStatus}",
             ["Cold startup to first frame"] = StartupProfiler.LatestSummary ?? "not measured in this process",
             ["Log directory"] = AppLog.DirectoryPath
         };

@@ -207,7 +207,7 @@ public sealed partial class MainWindow : Window
 
     private async Task InitializePlaybackAsync(nint videoWindowHandle)
     {
-        await _playback.InitializeAsync(videoWindowHandle, _settings.Playback.HardwareDecoder, _settings.Playback.Renderer).ConfigureAwait(false);
+        await _playback.InitializeAsync(videoWindowHandle, _settings.Playback.HardwareDecoder, _settings.Playback.Renderer, _settings.Playback.RtxVideoSuperResolution).ConfigureAwait(false);
         if (!_playback.IsAvailable) return;
         _playback.SetVolume(_settings.Playback.DefaultVolume);
         _playback.SetRate(_settings.Playback.PlaybackRate);
@@ -521,6 +521,7 @@ public sealed partial class MainWindow : Window
         UpdateWindowTitle(_currentMediaSource.DisplayName);
         if (_currentMediaSource is WebDavMediaSource webDavSource) SelectWebDavEntry(webDavSource.ServerId, webDavSource.Uri);
         _ = SaveHistoryAfterOpenAsync(_currentMediaSource);
+        _timelineTransform.Reset();
         var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
         _subtitleGenerationCompletedForCurrentMedia = false;
         _translationCompletedForCurrentMedia = false;
@@ -736,6 +737,7 @@ public sealed partial class MainWindow : Window
         TryPlayback(() => _playback.SetSubtitleVisibility(visible));
         SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
         _settings.Playback.ShowSubtitles = SubtitleVisibilityMenuItem.IsChecked;
+        if (visible && _document.ActiveTrack?.Cues.Count > 0) ScheduleSubtitleOverlaySync(force: true);
     }
     private void OnRateChanged(object sender, SelectionChangedEventArgs e) { if (RateCombo.SelectedItem is double rate && _playback.IsAvailable) TryPlayback(() => _playback.SetRate(rate)); }
     private void OnRepeatClick(object sender, RoutedEventArgs e)
@@ -909,7 +911,7 @@ public sealed partial class MainWindow : Window
     private void OnAddCueClick(object sender, RoutedEventArgs e)
     {
         var track = _document.EnsureTrack();
-        var start = Math.Max(0, (long)(_playback.Position.TotalMilliseconds * 1000));
+        var start = CurrentPlaybackPositionMicroseconds;
         var cue = new SubtitleCue { StartMicroseconds = start, EndMicroseconds = start + 2_000_000, Text = string.Empty, Source = SubtitleCueSource.Manual };
         _history.Execute(new AddSubtitleCommand(_document, track.Cues, cue));
         SubtitleList.SelectedItem = cue;
@@ -932,7 +934,7 @@ public sealed partial class MainWindow : Window
     {
         var track = _document.ActiveTrack;
         if (track is null || SubtitleList.SelectedItem is not SubtitleCue cue) return;
-        var playhead = (long)(_playback.Position.TotalMilliseconds * 1000);
+        var playhead = CurrentPlaybackPositionMicroseconds;
         var split = playhead > cue.StartMicroseconds && playhead < cue.EndMicroseconds ? playhead : cue.StartMicroseconds + cue.DurationMicroseconds / 2;
         _history.Execute(new SplitSubtitleCommand(_document, track.Cues, cue, split));
         DrawTimeline();
@@ -996,6 +998,67 @@ public sealed partial class MainWindow : Window
         catch (Exception exception) { await ShowMessageAsync(L("InvalidShiftTitle"), exception.Message); }
     }
 
+    private async void OnAdjustSubtitleSyncClick(object sender, RoutedEventArgs e)
+    {
+        var track = _document.ActiveTrack;
+        if (track is null || track.Cues.Count == 0)
+        {
+            await ShowMessageAsync(L("SubtitleSyncTitle"), L("LoadSubtitlesFirst"));
+            return;
+        }
+
+        var referenceCue = SubtitleList.SelectedItems.Cast<SubtitleCue>().OrderBy(cue => cue.StartMicroseconds).FirstOrDefault();
+        var offsetInput = new NumberBox
+        {
+            Header = L("SubtitleSyncOffsetHeader"),
+            Value = 0,
+            SmallChange = 0.1,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            MinWidth = 320
+        };
+        var alignButton = new Button
+        {
+            Content = L("SyncToCurrentPositionButton"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            IsEnabled = referenceCue is not null
+        };
+        alignButton.Click += (_, _) =>
+        {
+            if (referenceCue is null) return;
+            offsetInput.Value = (CurrentPlaybackPositionMicroseconds - referenceCue.StartMicroseconds) / 1_000_000d;
+        };
+        var content = new StackPanel
+        {
+            Spacing = 12,
+            Children =
+            {
+                new TextBlock { Text = L("SubtitleSyncOffsetHint"), TextWrapping = TextWrapping.Wrap },
+                offsetInput,
+                alignButton
+            }
+        };
+
+        if (await ShowDialogAsync(CreateDialog(L("SubtitleSyncTitle"), content, L("ApplySyncButton"))) != ContentDialogResult.Primary) return;
+        if (!double.IsFinite(offsetInput.Value))
+        {
+            await ShowMessageAsync(L("InvalidShiftTitle"), L("SubtitleSyncInvalidValue"));
+            return;
+        }
+
+        try
+        {
+            var deltaMicroseconds = checked((long)Math.Round(offsetInput.Value * 1_000_000d, MidpointRounding.AwayFromZero));
+            if (deltaMicroseconds == 0) return;
+            _history.Execute(new BatchShiftCommand(_document, track.Cues.ToArray(), deltaMicroseconds));
+            DrawTimeline();
+            ScheduleSubtitleOverlaySync();
+        }
+        catch (Exception exception)
+        {
+            await ShowMessageAsync(L("InvalidShiftTitle"), exception.Message);
+        }
+    }
+
     private void OnSelectAllCuesClick(object sender, RoutedEventArgs e) => SubtitleList.SelectAll();
 
     private void OnCopyCuesClick(object sender, RoutedEventArgs e)
@@ -1014,7 +1077,7 @@ public sealed partial class MainWindow : Window
             if (text.Contains("-->", StringComparison.Ordinal)) cues = SrtParser.Parse(text).ActiveTrack?.Cues.Select(cue => cue.Clone(false)).ToArray() ?? [];
             else
             {
-                var start = (long)(_playback.Position.TotalMilliseconds * 1000);
+                var start = CurrentPlaybackPositionMicroseconds;
                 cues = text.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries).Select((line, index) => new SubtitleCue { StartMicroseconds = start + index * 2_000_000, EndMicroseconds = start + (index + 1) * 2_000_000, Text = line, Source = SubtitleCueSource.Manual }).ToArray();
             }
             var commands = cues.Select(cue => (IUndoableSubtitleCommand)new AddSubtitleCommand(_document, track.Cues, cue)).ToArray();
@@ -1047,7 +1110,7 @@ public sealed partial class MainWindow : Window
         var delta = _timelineTransform.XToTime(currentX) - _timelineTransform.XToTime(_dragStartX);
         var trackCues = _document.ActiveTrack?.Cues;
         var candidates = (trackCues is null ? Enumerable.Empty<long>() : trackCues.Where(cue => cue != _dragCue).SelectMany(cue => new[] { cue.StartMicroseconds, cue.EndMicroseconds }))
-            .Append((long)(_playback.Position.TotalMilliseconds * 1000));
+            .Append(CurrentPlaybackPositionMicroseconds);
         var tolerance = Math.Max(1L, _timelineTransform.XToTime(8) - _timelineTransform.XToTime(0));
         switch (_dragMode)
         {
@@ -1088,7 +1151,7 @@ public sealed partial class MainWindow : Window
     }
     private void OnVisualizationSizeChanged(object sender, SizeChangedEventArgs e) => DrawTimeline();
 
-    private void DrawTimeline()
+    private void DrawTimeline(long? positionMicroseconds = null)
     {
         TimelineCanvas.Children.Clear();
         _timelinePlayhead = null;
@@ -1127,7 +1190,7 @@ public sealed partial class MainWindow : Window
         };
         Canvas.SetTop(_timelinePlayhead, 0);
         TimelineCanvas.Children.Add(_timelinePlayhead);
-        UpdateTimelinePlayhead(Math.Max(0, _playback.Position.Ticks / 10));
+        UpdateTimelinePlayhead(positionMicroseconds ?? CurrentPlaybackPositionMicroseconds);
     }
 
     private void UpdateTimelinePlayhead(long positionMicroseconds)
@@ -1168,6 +1231,7 @@ public sealed partial class MainWindow : Window
     });
     private void OnFirstFrameReady(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
+        ApplySubtitleVisibilityPreference();
         StartPostOpenWorkIfReady();
         if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null) StartCheckedAiPipeline();
     });
@@ -1213,7 +1277,7 @@ public sealed partial class MainWindow : Window
                     if (cueChanged) SubtitleList.ScrollIntoView(cue, ScrollIntoViewAlignment.Leading);
                 }
             }
-            if (viewportChanged) DrawTimeline();
+            if (viewportChanged) DrawTimeline(positionMicroseconds);
             else UpdateTimelinePlayhead(positionMicroseconds);
         }
         finally { Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 0); }
@@ -1229,6 +1293,7 @@ public sealed partial class MainWindow : Window
     });
     private void OnTracksChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
+        ApplySubtitleVisibilityPreference();
         AudioTrackCombo.ItemsSource = _playback.Tracks.Where(t => t.Type == MediaTrackType.Audio).ToArray(); AudioTrackCombo.SelectedItem = _playback.Tracks.FirstOrDefault(t => t.Type == MediaTrackType.Audio && t.IsSelected);
         SubtitleTrackCombo.ItemsSource = _playback.Tracks.Where(t => t.Type == MediaTrackType.Subtitle).ToArray(); SubtitleTrackCombo.SelectedItem = _playback.Tracks.FirstOrDefault(t => t.Type == MediaTrackType.Subtitle && t.IsSelected);
     });
@@ -1789,7 +1854,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var startMicroseconds = requestedStartMicroseconds ?? Math.Max(0, _playback.Position.Ticks / 10);
+        var startMicroseconds = requestedStartMicroseconds ?? CurrentPlaybackPositionMicroseconds;
         _aiOperationCancellation = new CancellationTokenSource();
         string? temporaryInput = null;
         var translating = false;
@@ -2438,6 +2503,7 @@ public sealed partial class MainWindow : Window
                     _playback.ConfigureNetwork(TimeSpan.FromSeconds(settings.Network.TimeoutSeconds), settings.Network.Proxy);
                     _playback.ConfigurePreferredLanguages(settings.Playback.DefaultAudioLanguage, settings.Playback.DefaultSubtitleLanguage);
                     _playback.ConfigureSubtitleStyle(settings.Subtitle.FontFamily, settings.Subtitle.FontSize, settings.Subtitle.Color, settings.Subtitle.Background, settings.Subtitle.Outline, settings.Subtitle.BottomMargin);
+                    _playback.ConfigureRtxVideoSuperResolution(settings.Playback.RtxVideoSuperResolution);
                 });
                 ScheduleSubtitleOverlaySync();
             };
@@ -3107,7 +3173,7 @@ public sealed partial class MainWindow : Window
     private void RememberCurrentPosition()
     {
         if (_currentMediaSource is null) return;
-        _historyService.AddRecent(_currentMediaSource, (long)(_playback.Position.TotalMilliseconds * 1000), _settings.General.RecentMediaCount);
+        _historyService.AddRecent(_currentMediaSource, CurrentPlaybackPositionMicroseconds, _settings.General.RecentMediaCount);
     }
 
     private void ScheduleSubtitleOverlaySync(bool force = false)
@@ -3143,6 +3209,13 @@ public sealed partial class MainWindow : Window
         TryPlayback(() => _playback.SetSubtitleVisibility(true));
         SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
         _settings.Playback.ShowSubtitles = _playback.AreSubtitlesVisible;
+    }
+
+    private void ApplySubtitleVisibilityPreference()
+    {
+        var visible = _settings.Playback.ShowSubtitles;
+        TryPlayback(() => _playback.SetSubtitleVisibility(visible));
+        SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
     }
 
     private async Task SyncSubtitleOverlayAsync(CancellationToken cancellationToken, bool force)
@@ -3266,6 +3339,7 @@ public sealed partial class MainWindow : Window
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
     private static Brush ThemeBrush(string resourceKey, Windows.UI.Color fallback) => Application.Current.Resources.TryGetValue(resourceKey, out var value) && value is Brush brush ? brush : new SolidColorBrush(fallback);
+    private long CurrentPlaybackPositionMicroseconds => Math.Max(0, _playback.Position.Ticks / 10);
     private static string FormatTime(TimeSpan value)
     {
         var totalSeconds = Math.Max(0, (long)value.TotalSeconds);

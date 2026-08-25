@@ -29,7 +29,6 @@ public sealed class PlaybackSettings
     public string Renderer { get; set; } = "gpu-next";
     public HardwareDecoder HardwareDecoder { get; set; } = HardwareDecoder.Auto;
     public RtxVideoSuperResolutionMode RtxVideoSuperResolution { get; set; } = RtxVideoSuperResolutionMode.Auto;
-    public int? RtxQuality { get; set; }
     public double DefaultVolume { get; set; } = 100;
     public double PlaybackRate { get; set; } = 1;
     public double SeekIntervalSeconds { get; set; } = 5;

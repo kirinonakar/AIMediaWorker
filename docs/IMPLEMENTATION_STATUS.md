@@ -36,7 +36,7 @@ Last updated: 2026-08-23
 - Favorites browsing/removal, local folder favorites, WebDAV folder favorites, and re-entry into saved WebDAV directories.
 - Provider model synchronization with cached-list and manual-ID fallback.
 - Full diagnostics probes and structured rotating logs that exclude credentials.
-- RTX-class GPU detection, unsupported-control state, D3D11 path, driver-controlled activation disclosure, and normal scaler fallback.
+- RTX-class GPU detection, unsupported-control state, D3D11 path, mpv NVIDIA RTX VSR filter configuration, driver-controlled activation disclosure, and normal scaler fallback.
 - Camera resolution/frame-rate selection and configurable live-caption font, size, colors, position, and line count.
 - Authenticated remote media preparation for ASR, direct unauthenticated HTTP ASR, network timeout/reconnect behavior, and cancellable FFmpeg extraction.
 - Subtitle encoding selection and explicit style-loss status when converting formats.
@@ -63,7 +63,7 @@ Last updated: 2026-08-23
 
 - The current machine has a verified x64 `mpv-2.dll` and passes local generated-video playback startup. Qwen model weights, CUDA, a WebDAV test server, provider API keys and known camera/microphone fixtures still require environment-dependent validation.
 - The WinUI C# client uses bounded rolling-window transcription for live partial captions and serialized CrispASR session calls; offline results additionally use the CrispASR forced-aligner ABI.
-- RTX Video Super Resolution activation is driver/profile controlled for the D3D11 video path; the application can detect compatible-class hardware but cannot independently prove the driver's per-frame enhancement state.
+- RTX Video Super Resolution activation is driver/profile controlled for the D3D11 video path; the application now submits mpv's `d3d11vpp` NVIDIA scaling request, but cannot independently prove the driver's per-frame enhancement state.
 - A language change fully applies after application restart; newly opened views use the updated resource qualifier immediately.
 
 ## Architecture Decisions

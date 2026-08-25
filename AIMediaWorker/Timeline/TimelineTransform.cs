@@ -8,6 +8,12 @@ public sealed class TimelineTransform
     public double PixelsPerSecond { get; private set; } = 100;
     public long ViewStartMicroseconds { get; private set; }
 
+    public void Reset()
+    {
+        PixelsPerSecond = 100;
+        ViewStartMicroseconds = 0;
+    }
+
     public double TimeToX(long microseconds) => ((microseconds - ViewStartMicroseconds) / 1_000_000d) * PixelsPerSecond;
     public long XToTime(double x) => Math.Max(0, ViewStartMicroseconds + checked((long)Math.Round(x / PixelsPerSecond * 1_000_000d)));
 

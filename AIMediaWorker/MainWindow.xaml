@@ -69,7 +69,7 @@
                 <MenuFlyoutSeparator />
                 <MenuFlyoutItem x:Uid="AddCue" Text="Add at playhead" Click="OnAddCueClick" /><MenuFlyoutItem x:Uid="SplitCue" Text="Split" Click="OnSplitCueClick" />
                 <MenuFlyoutItem x:Uid="MergeCue" Text="Merge with next" Click="OnMergeCueClick" /><MenuFlyoutItem x:Uid="DeleteCue" x:Name="DeleteCueMenuItem" Text="Delete" Click="OnDeleteCueClick" />
-                <MenuFlyoutItem x:Uid="DuplicateCue" Text="Duplicate" Click="OnDuplicateCueClick" /><MenuFlyoutItem x:Uid="ShiftCue" Text="Shift…" Click="OnShiftCueClick" />
+                <MenuFlyoutItem x:Uid="DuplicateCue" Text="Duplicate" Click="OnDuplicateCueClick" /><MenuFlyoutItem x:Uid="ShiftCue" Text="Shift…" Click="OnShiftCueClick" /><MenuFlyoutItem x:Uid="AdjustSubtitleSync" Text="Adjust subtitle sync…" Click="OnAdjustSubtitleSyncClick" />
                 <MenuFlyoutItem x:Uid="PreviousSubtitle" x:Name="PreviousSubtitleMenuItem" Text="Previous subtitle" Click="OnPreviousSubtitleClick" /><MenuFlyoutItem x:Uid="NextSubtitle" x:Name="NextSubtitleMenuItem" Text="Next subtitle" Click="OnNextSubtitleClick" />
                 <MenuFlyoutItem x:Uid="SelectAll" Text="Select all" Click="OnSelectAllCuesClick" /><MenuFlyoutItem x:Uid="Copy" Text="Copy" Click="OnCopyCuesClick" /><MenuFlyoutItem x:Uid="Paste" Text="Paste" Click="OnPasteCuesClick" />
                 <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="Undo" x:Name="UndoMenuItem" Text="Undo" Click="OnUndoClick" /><MenuFlyoutItem x:Uid="Redo" x:Name="RedoMenuItem" Text="Redo" Click="OnRedoClick" />

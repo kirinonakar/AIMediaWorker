@@ -41,4 +41,18 @@ public sealed class TimelineTests
         Assert.False(transform.EnsureVisible(5_000_000, 1_000));
         Assert.Equal(0, transform.ViewStartMicroseconds);
     }
+
+    [Fact]
+    public void ResetReturnsTimelineToTheSameAbsoluteZeroAsPlayback()
+    {
+        var transform = new TimelineTransform();
+        transform.PanTo(18_000_000);
+        transform.ZoomAt(2, 300);
+
+        transform.Reset();
+
+        Assert.Equal(0, transform.ViewStartMicroseconds);
+        Assert.Equal(100, transform.PixelsPerSecond);
+        Assert.Equal(0, transform.XToTime(0));
+    }
 }

@@ -61,7 +61,7 @@ The [official mpv installation page](https://mpv.io/installation/) lists maintai
 
 AIMediaWorker requests mpv's `gpu-next` D3D11 renderer and `auto-safe` hardware decoding by default. D3D11VA, NVDEC, software decode, renderer, language preferences, cache/network timeout, subtitle appearance, playback rate, and seek interval are configurable.
 
-RTX Video Super Resolution is controlled by the NVIDIA driver/NVIDIA App. AIMediaWorker detects RTX-class hardware and preserves the D3D11 video path, but does not claim driver-side enhancement is active. Enable RTX Video enhancement for the application in NVIDIA App. Playback falls back to mpv's normal scaler when unsupported or disabled.
+When RTX Video Super Resolution is set to Auto or On, AIMediaWorker adds mpv's `d3d11vpp` filter with `scaling-mode=nvidia` and a 2x scale request to the D3D11 video path. NVIDIA App/Control Panel must still allow RTX Video enhancement for AIMediaWorker; the driver decides whether each frame is enhanced. Playback falls back to mpv's normal scaler when the filter is disabled or unavailable.
 
 ## FFmpeg setup
 

@@ -29,7 +29,7 @@ public sealed class GraphicsCapabilityService
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or System.Security.SecurityException) { }
         var supported = adapters.Any(adapter => IsRtxAdapterName(adapter.Name, adapter.Provider));
         var status = supported
-            ? "Supported RTX hardware detected. AIMediaWorker uses the D3D11 video path; enable RTX Video Super Resolution and quality in the NVIDIA App. Activation remains driver/profile controlled."
+            ? "Supported RTX hardware detected. AIMediaWorker requests NVIDIA RTX Video Super Resolution through mpv's D3D11 video filter; enable RTX Video Super Resolution in NVIDIA App. Per-frame activation remains driver controlled."
             : "No NVIDIA RTX 20-series-or-newer adapter was detected. Playback uses the normal mpv scaler and hardware/software decode fallback.";
         return new RtxVideoSuperResolutionCapability(supported, status, adapters);
     }
