@@ -17,6 +17,7 @@ using AIMediaWorker.Localization;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
@@ -63,7 +64,6 @@ public sealed partial class MainWindow : Window
     private double _bottomPanelHeight = 160;
     private bool _initialized;
     private CameraWindow? _cameraWindow;
-    private ScreenRecordingWindow? _screenRecordingWindow;
     private SettingsWindow? _settingsWindow;
     private AppSettings _settings = new();
     private readonly WindowsCredentialService _windowsCredentials = new();
@@ -166,7 +166,7 @@ public sealed partial class MainWindow : Window
         TranslateMenuItem.IsChecked = _settings.Llm.TranslateSubtitles;
         var handle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
-        _appWindow?.Resize(new SizeInt32(1280, 820));
+        ResizeToAvailableWorkArea(1280, 820);
         if (_appWindow is not null)
         {
             var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
@@ -244,12 +244,25 @@ public sealed partial class MainWindow : Window
         if (_appWindow is null || !layout.HasPlacement) return;
         var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
         var workArea = display.WorkArea;
-        var width = Math.Clamp(layout.Width, 640, Math.Max(640, workArea.Width));
-        var height = Math.Clamp(layout.Height, 420, Math.Max(420, workArea.Height));
-        var x = Math.Clamp(layout.X, workArea.X - width + 120, workArea.X + workArea.Width - 120);
-        var y = Math.Clamp(layout.Y, workArea.Y, workArea.Y + workArea.Height - 80);
+        var maxWidth = Math.Max(1, workArea.Width - 32);
+        var maxHeight = Math.Max(1, workArea.Height - 32);
+        var minWidth = Math.Min(640, maxWidth);
+        var minHeight = Math.Min(420, maxHeight);
+        var width = Math.Clamp(layout.Width, minWidth, maxWidth);
+        var height = Math.Clamp(layout.Height, minHeight, maxHeight);
+        var x = Math.Clamp(layout.X, workArea.X, workArea.X + workArea.Width - width);
+        var y = Math.Clamp(layout.Y, workArea.Y, workArea.Y + workArea.Height - height);
         _appWindow.MoveAndResize(new RectInt32(x, y, width, height));
         if (layout.IsMaximized && _appWindow.Presenter is OverlappedPresenter presenter) presenter.Maximize();
+    }
+
+    private void ResizeToAvailableWorkArea(int preferredWidth, int preferredHeight)
+    {
+        if (_appWindow is null) return;
+        var workArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary).WorkArea;
+        var width = Math.Min(preferredWidth, Math.Max(1, workArea.Width - 32));
+        var height = Math.Min(preferredHeight, Math.Max(1, workArea.Height - 32));
+        _appWindow.Resize(new SizeInt32(width, height));
     }
 
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
@@ -2347,9 +2360,47 @@ public sealed partial class MainWindow : Window
             using var disposable = provider as IDisposable;
             var service = new LlmService(provider, _settings.Llm.Model, _settings.Llm.ThinkingLevel);
             var progress = new Progress<double>(value => StatusText.Text = F("StatusSummarizing", value));
-            var summary = await service.SummarizeAsync(track.Cues, (SummaryKind)(choices.SelectedItem ?? SummaryKind.Short), progress, cancellationToken: _aiOperationCancellation.Token);
-            var output = new TextBox { Text = summary, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinWidth = 600, MinHeight = 380 };
-            await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("TranscriptSummaryTitle"), Content = output, CloseButtonText = L("CloseButton") });
+            var summaryLanguage = _settings.Llm.TranslationLanguage.Trim();
+            var summary = await service.SummarizeAsync(track.Cues, (SummaryKind)(choices.SelectedItem ?? SummaryKind.Short), summaryLanguage, progress, cancellationToken: _aiOperationCancellation.Token);
+            // ContentDialog has a 548px maximum width including its padding. Keep the
+            // summary content below that limit so the TextBox receives a real wrapping
+            // width instead of measuring one long line outside the dialog.
+            var summaryWidth = Math.Min(480, Math.Max(240, RootGrid.ActualWidth - 96));
+            var output = new TextBox
+            {
+                Text = summary,
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap,
+                Width = summaryWidth,
+                MaxWidth = summaryWidth,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                VerticalContentAlignment = VerticalAlignment.Top,
+                Height = Math.Clamp(RootGrid.ActualHeight - 360, 160, 360)
+            };
+            ScrollViewer.SetVerticalScrollBarVisibility(output, ScrollBarVisibility.Auto);
+            ScrollViewer.SetHorizontalScrollBarVisibility(output, ScrollBarVisibility.Disabled);
+            var copyButton = new Button
+            {
+                Content = new SymbolIcon(Symbol.Copy),
+                Width = 40,
+                Height = 40,
+                Padding = new Thickness(0),
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            ToolTipService.SetToolTip(copyButton, L("Copy.Text"));
+            AutomationProperties.SetName(copyButton, L("Copy.Text"));
+            copyButton.Click += (_, _) =>
+            {
+                var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+                package.SetText(output.Text);
+                Clipboard.SetContent(package);
+            };
+            var summaryContent = new StackPanel { Width = summaryWidth, Spacing = 8 };
+            summaryContent.Children.Add(output);
+            summaryContent.Children.Add(copyButton);
+            await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("TranscriptSummaryTitle"), Content = summaryContent, CloseButtonText = L("CloseButton") });
             StatusText.Text = L("StatusSummaryComplete");
         }
         catch (OperationCanceledException) { StatusText.Text = L("StatusSummaryCancelled"); }
@@ -2611,22 +2662,6 @@ public sealed partial class MainWindow : Window
             _cameraWindow = null;
             await AppLog.WriteAsync("error", "camera", "CAMERA_WINDOW_ERROR", exception.Message, exception);
             await ShowMessageAsync(L("CameraErrorTitle"), exception.Message);
-        }
-    }
-    private async void OnScreenRecordingClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            if (_screenRecordingWindow is not null) { _screenRecordingWindow.Activate(); return; }
-            _screenRecordingWindow = new ScreenRecordingWindow(this, RootGrid.ActualTheme);
-            _screenRecordingWindow.Closed += (_, _) => _screenRecordingWindow = null;
-            _screenRecordingWindow.Activate();
-        }
-        catch (Exception exception)
-        {
-            _screenRecordingWindow = null;
-            await AppLog.WriteAsync("error", "screen-recording", "SCREEN_RECORDING_WINDOW_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("ScreenRecordingErrorTitle"), exception.Message);
         }
     }
     private async void OnSettingsClick(object sender, RoutedEventArgs e)
@@ -3551,7 +3586,6 @@ public sealed partial class MainWindow : Window
 
         _settingsWindow?.Close();
         if (_cameraWindow is { } cameraWindow) await cameraWindow.CloseAsync();
-        if (_screenRecordingWindow is { } screenRecordingWindow) await screenRecordingWindow.CloseAsync();
 
         if (_aiPipelineTask is { IsCompleted: false } aiPipeline)
         {

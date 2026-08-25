@@ -20,8 +20,8 @@ namespace AIMediaWorker.Views;
 
 public sealed partial class SettingsWindow : Window
 {
-    private const int FixedWidth = 1510;
-    private const int FixedHeight = 1080;
+    private const int PreferredWidth = 1510;
+    private const int PreferredHeight = 1080;
 
     public IReadOnlyList<string> CaptionPositions { get; } = ["Top", "Center", "Bottom"];
     private readonly SettingsService _service = SettingsService.CreateDefault();
@@ -95,8 +95,8 @@ public sealed partial class SettingsWindow : Window
         var ownerHandle = WindowNative.GetWindowHandle(owner);
         var ownerWindowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(ownerHandle);
         var workArea = DisplayArea.GetFromWindowId(ownerWindowId, DisplayAreaFallback.Nearest).WorkArea;
-        const int width = FixedWidth;
-        const int height = FixedHeight;
+        var width = Math.Min(PreferredWidth, Math.Max(1, workArea.Width - 32));
+        var height = Math.Min(PreferredHeight, Math.Max(1, workArea.Height - 32));
         var x = workArea.X + (workArea.Width - width) / 2;
         var y = workArea.Y + (workArea.Height - height) / 2;
 

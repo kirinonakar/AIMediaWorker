@@ -2,7 +2,7 @@
 
 AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 10, libmpv, FFmpeg, and the prebuilt CrispASR native runtime loaded directly from C#.
 
-It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures still video frames and window/region screen recordings with system audio; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
+It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures still video frames; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
 Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs; Explorer and WebDAV entries support name filtering and cyclic name/newest/oldest sorting. Drag the divider beside the side panel or above the timeline to resize either panel. The bottom playback toolbar provides previous/next media, seek, play/pause, stop, current-frame PNG capture, progress, time, volume, speed, and repeat controls. Window size, position, maximized state, panel visibility, and panel dimensions are restored on the next launch.
 
@@ -72,11 +72,11 @@ ffmpeg -version
 ffprobe -version
 ```
 
-FFmpeg is used as the audio extractor for ASR and as the H.264/AAC encoder for screen recordings. Child processes are terminated when work is cancelled.
+FFmpeg is used as the audio extractor for ASR. Child processes are terminated when work is cancelled.
 
-## Screenshots and screen recording
+## Screenshots
 
-Use the camera button in the playback toolbar or **Playback → Save current frame** to save the currently displayed video frame as PNG. Use **Tools → Screen recording** to record either a selected top-level window or a region chosen by dragging across the virtual desktop. The default Windows playback device is captured through WASAPI loopback and muxed with the video when **Stop and save** is selected. Screen recording requires `ffmpeg.exe` on `PATH`, as described above.
+Use the camera button in the playback toolbar or **Playback → Save current frame** to save the currently displayed video frame as PNG.
 
 ## Native Qwen3 and CrispASR setup
 

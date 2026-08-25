@@ -107,9 +107,43 @@ public sealed class LlmTests
         var provider = new FakeProvider(_ => $"summary {++calls}");
         var cues = Enumerable.Range(0, 30).Select(index => new SubtitleCue { StartMicroseconds = index * 1_000_000L, EndMicroseconds = (index + 1) * 1_000_000L, Text = new string('x', 100) }).ToArray();
         var service = new LlmService(provider, "fake");
-        var result = await service.SummarizeAsync(cues, SummaryKind.Short, chunkCharacters: 1000);
+        var result = await service.SummarizeAsync(cues, SummaryKind.Short, "Korean", chunkCharacters: 1000);
         Assert.True(calls >= 4);
         Assert.StartsWith("summary", result);
+    }
+
+    [Fact]
+    public async Task SummaryUsesTheRequestedTargetLanguageForEveryPass()
+    {
+        var prompts = new List<string>();
+        var provider = new FakeProvider(prompt =>
+        {
+            prompts.Add(prompt);
+            return "summary";
+        });
+        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "Hello" } };
+
+        await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Short, "日本語");
+
+        Assert.NotEmpty(prompts);
+        Assert.All(prompts, prompt => Assert.Contains("日本語", prompt));
+    }
+
+    [Fact]
+    public async Task DetailedSummaryKeepsDetailInstructionsThroughTheFinalPass()
+    {
+        var prompts = new List<string>();
+        var provider = new FakeProvider(prompt =>
+        {
+            prompts.Add(prompt);
+            return "summary";
+        });
+        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "The decision was approved on 2026-01-02." } };
+
+        await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Detailed, "English");
+
+        Assert.Contains(prompts, prompt => prompt.Contains("comprehensive intermediate summary", StringComparison.Ordinal));
+        Assert.Contains("Do not omit relevant details", prompts[^1], StringComparison.Ordinal);
     }
 
     [Fact]

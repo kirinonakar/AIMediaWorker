@@ -5,7 +5,7 @@ using AIMediaWorker.Subtitle;
 
 namespace AIMediaWorker.Llm;
 
-public enum SummaryKind { Short, Detailed, Chapters }
+public enum SummaryKind { Short, Detailed }
 public sealed record TranslationProgress(int Completed, int Total);
 public sealed record TranslationBatch(IReadOnlyDictionary<Guid, string> Items, int Completed, int Total);
 
@@ -60,28 +60,36 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
         return result;
     }
 
-    public async Task<string> SummarizeAsync(IReadOnlyCollection<SubtitleCue> cues, SummaryKind kind, IProgress<double>? progress = null, int chunkCharacters = 12_000, CancellationToken cancellationToken = default)
+    public async Task<string> SummarizeAsync(IReadOnlyCollection<SubtitleCue> cues, SummaryKind kind, string targetLanguage, IProgress<double>? progress = null, int chunkCharacters = 12_000, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(targetLanguage)) throw new ArgumentException("A target language is required.", nameof(targetLanguage));
         if (chunkCharacters < 1_000) throw new ArgumentOutOfRangeException(nameof(chunkCharacters));
         var chunks = BuildTranscriptChunks(cues, chunkCharacters);
         if (chunks.Count == 0) return string.Empty;
         var partials = new List<string>(chunks.Count);
+        var chunkInstruction = kind switch
+        {
+            SummaryKind.Short => "Create a concise but accurate intermediate summary of this transcript chunk.",
+            SummaryKind.Detailed => "Create a comprehensive intermediate summary of this transcript chunk. Preserve every important name, date, number, decision, example, and relationship; do not collapse distinct facts into a vague sentence.",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+        var chunkOptions = new LlmGenerationOptions(thinkingLevel, 0.2, MaximumOutputTokens: kind == SummaryKind.Detailed ? 2_400 : 1_200);
         for (var index = 0; index < chunks.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var prompt = $"Summarize this transcript chunk accurately. Retain key names, decisions, facts, and topic transitions. Do not invent information.\n\n{chunks[index]}";
-            partials.Add(await provider.GenerateAsync(model, "You summarize audiovisual transcripts using only supplied evidence.", prompt, new LlmGenerationOptions(thinkingLevel, 0.2), cancellationToken).ConfigureAwait(false));
+            var prompt = $"{chunkInstruction} Write it in {targetLanguage}. Retain key names, decisions, facts, and topic transitions. Do not invent information.\n\n{chunks[index]}";
+            partials.Add(await provider.GenerateAsync(model, $"You summarize audiovisual transcripts using only supplied evidence. Always write the summary in {targetLanguage}.", prompt, chunkOptions, cancellationToken).ConfigureAwait(false));
             progress?.Report((index + 1d) / (chunks.Count + 1));
         }
         var instruction = kind switch
         {
             SummaryKind.Short => "Produce a concise summary of at most five paragraphs.",
-            SummaryKind.Detailed => "Produce a detailed, well-structured summary with key points, evidence, and conclusions.",
-            SummaryKind.Chapters => "Produce chronological chapters with timestamp ranges, descriptive titles, and a short topic summary for each chapter.",
+            SummaryKind.Detailed => "Produce a comprehensive detailed summary, not a brief overview. Use clear headings and sections for the overview, key points, evidence or examples, decisions, and conclusions when applicable. Preserve names, dates, numbers, and important relationships from the transcript. Do not omit relevant details or replace them with vague generalizations.",
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
-        var finalPrompt = $"{instruction} Synthesize the chunk summaries below without repetition and without adding unsupported claims.\n\n{string.Join("\n\n---\n\n", partials)}";
-        var final = await provider.GenerateAsync(model, "You create faithful final summaries from intermediate transcript summaries.", finalPrompt, new LlmGenerationOptions(thinkingLevel, 0.2), cancellationToken).ConfigureAwait(false);
+        var finalPrompt = $"{instruction} Write the final summary in {targetLanguage}. Synthesize the chunk summaries below without repetition and without adding unsupported claims.\n\n{string.Join("\n\n---\n\n", partials)}";
+        var finalOptions = new LlmGenerationOptions(thinkingLevel, 0.2, MaximumOutputTokens: kind == SummaryKind.Detailed ? 4_000 : 1_600);
+        var final = await provider.GenerateAsync(model, $"You create faithful final summaries from intermediate transcript summaries. Always write the final summary in {targetLanguage}.", finalPrompt, finalOptions, cancellationToken).ConfigureAwait(false);
         progress?.Report(1);
         return final;
     }

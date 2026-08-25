@@ -21,6 +21,9 @@
             <Setter Property="MaxHeight" Value="40" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
         </Grid.Resources>
         <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <Grid RowSpacing="16">

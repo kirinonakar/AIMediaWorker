@@ -87,7 +87,6 @@
             </MenuBarItem>
             <MenuBarItem x:Uid="ToolsMenu" Title="Tools">
                 <MenuFlyoutItem x:Uid="AddWebDavServerMenu" Text="Add WebDAV server…" Click="OnAddWebDavServerClick" /><MenuFlyoutItem x:Uid="CameraCaptions" Text="Camera and live captions…" Click="OnCameraClick" />
-                <MenuFlyoutItem x:Uid="ScreenRecording" Text="Screen recording…" Click="OnScreenRecordingClick" />
                 <MenuFlyoutItem x:Uid="Diagnostics" Text="Diagnostics…" Click="OnDiagnosticsClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SettingsMenu" Title="Settings"><MenuFlyoutItem x:Uid="Preferences" Text="Preferences…" Click="OnSettingsClick" /></MenuBarItem>
@@ -121,7 +120,11 @@
                                     <DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
                                 </BreadcrumbBar.ItemTemplate>
                             </BreadcrumbBar>
-                            <TextBox x:Uid="BrowserFilter" x:Name="BrowserFilterBox" Grid.Row="2" PlaceholderText="Filter by name" TextChanged="OnBrowserFilterTextChanged" />
+                            <Grid Grid.Row="2" ColumnSpacing="8" Margin="4,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <SymbolIcon Symbol="Filter" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
+                                <TextBox x:Uid="BrowserFilter" x:Name="BrowserFilterBox" Grid.Column="1" PlaceholderText="Filter by name" TextChanged="OnBrowserFilterTextChanged" />
+                            </Grid>
                             <ListView x:Name="FolderEntryList" Grid.Row="3" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnFolderEntryClick">
                                 <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnBrowserEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddBrowserFavorite" Text="Add to favorites" Click="OnAddBrowserFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding Details}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
@@ -172,7 +175,11 @@
                                 </BreadcrumbBar>
                                 <TextBlock x:Name="WebDavConnectionStatusText" Text="" TextTrimming="CharacterEllipsis" Opacity="0.7" FontSize="11" />
                             </StackPanel>
-                            <TextBox x:Uid="WebDavFilter" x:Name="WebDavFilterBox" Grid.Row="4" Margin="4,0" PlaceholderText="Filter by name" TextChanged="OnWebDavFilterTextChanged" />
+                            <Grid Grid.Row="4" ColumnSpacing="8" Margin="4,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <SymbolIcon Symbol="Filter" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
+                                <TextBox x:Uid="WebDavFilter" x:Name="WebDavFilterBox" Grid.Column="1" PlaceholderText="Filter by name" TextChanged="OnWebDavFilterTextChanged" />
+                            </Grid>
                             <ListView x:Name="WebDavPanelEntryList" Grid.Row="5" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnWebDavPanelEntryClick">
                                 <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnWebDavEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddWebDavFavorite" Text="Add to favorites" Click="OnAddWebDavFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>

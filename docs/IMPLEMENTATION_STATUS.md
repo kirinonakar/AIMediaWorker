@@ -22,9 +22,9 @@ Last updated: 2026-08-23
 - Windows Credential Manager storage for WebDAV and LLM secrets; no secrets in settings JSON.
 - Recent local/HTTP/WebDAV media, playback-position resume and media favorites persistence.
 - Camera/microphone enumeration, Media Foundation camera preview, MP4 camera capture, WASAPI microphone capture, bounded buffering, 16 kHz mono resampling, live ASR and live caption overlay.
-- Current-frame PNG capture plus FFmpeg window/region screen recording with drag-region selection, WASAPI system-audio loopback, MP4 finalization, cancellation and temporary-file cleanup.
+- Current-frame PNG capture.
 - LLM abstraction and capability model with Google Gemini, Ollama Cloud, OpenCode Go, OpenCode Zen and Unsloth Studio HTTP providers.
-- ID-mapped chunked subtitle translation and hierarchical short/detailed/chapter summarization with progress and cancellation.
+- ID-mapped chunked subtitle translation and hierarchical short/detailed summarization with progress and cancellation.
 - JSON settings with atomic replacement, corruption recovery, separate Preferences UI, System/Light/Dark theme selection and core shortcut handling.
 - Data-loss confirmation on close, media replacement and subtitle replacement.
 - Unit/integration tests for subtitle formats/editing, timeline transforms, settings recovery, recent media, credential identifiers, WebDAV URI handling, ASR protocol/worker lifecycle and LLM mapping/hierarchical summarization.
