@@ -145,6 +145,7 @@ public sealed partial class MainWindow : Window
         StartupProfiler.Mark("xaml-start");
         InitializeComponent();
         StartupProfiler.Mark("xaml-ready");
+        PositionSlider.ThumbToolTipValueConverter = new PositionSliderThumbToolTipValueConverter();
         _playback.StateChanged += OnPlaybackStateChanged;
         _playback.FirstFrameReady += OnFirstFrameReady;
         _playback.PositionChanged += OnPlaybackPositionChanged;
@@ -809,15 +810,27 @@ public sealed partial class MainWindow : Window
 
     private void OnPositionSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
+        if (_positionSliderDragging)
+        {
+            PositionText.Text = $"{FormatTime(TimeSpan.FromSeconds(e.NewValue))} / {FormatTime(_playback.Duration)}";
+            return;
+        }
+
         if (!_updatingPosition && !_positionSliderDragging && _playback.IsAvailable && PositionSlider.Maximum > 0) SeekAndRestartAi(TimeSpan.FromSeconds(e.NewValue), () => _playback.Seek(TimeSpan.FromSeconds(e.NewValue)));
     }
 
-    private void OnPositionSliderPointerPressed(object sender, PointerRoutedEventArgs e) => _positionSliderDragging = true;
+    private void OnPositionSliderPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        _positionSliderDragging = true;
+        PositionText.Text = $"{FormatTime(TimeSpan.FromSeconds(PositionSlider.Value))} / {FormatTime(_playback.Duration)}";
+    }
     private void OnPositionSliderPointerReleased(object sender, PointerRoutedEventArgs e)
     {
         if (!_positionSliderDragging) return;
         _positionSliderDragging = false;
-        if (_playback.IsAvailable) SeekAndRestartAi(TimeSpan.FromSeconds(PositionSlider.Value), () => _playback.Seek(TimeSpan.FromSeconds(PositionSlider.Value), true));
+        var position = TimeSpan.FromSeconds(PositionSlider.Value);
+        PositionText.Text = $"{FormatTime(position)} / {FormatTime(_playback.Duration)}";
+        if (_playback.IsAvailable) SeekAndRestartAi(position, () => _playback.Seek(position, true));
     }
 
     private async void OnLoadSubtitleClick(object sender, RoutedEventArgs e)
@@ -3500,7 +3513,17 @@ public sealed partial class MainWindow : Window
     private static string FormatTime(TimeSpan value)
     {
         var totalSeconds = Math.Max(0, (long)value.TotalSeconds);
-        return $"{totalSeconds / 60:00}:{totalSeconds % 60:00}";
+        return $"{totalSeconds / 3600:00}:{totalSeconds / 60 % 60:00}:{totalSeconds % 60:00}";
+    }
+    private sealed class PositionSliderThumbToolTipValueConverter : Microsoft.UI.Xaml.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, string language)
+        {
+            if (value is double seconds && double.IsFinite(seconds)) return FormatTime(TimeSpan.FromSeconds(Math.Max(0, seconds)));
+            return FormatTime(TimeSpan.Zero);
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
     }
     private System.Text.Encoding ResolveSubtitleEncoding()
     {
