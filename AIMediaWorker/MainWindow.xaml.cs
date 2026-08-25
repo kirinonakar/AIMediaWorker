@@ -1813,6 +1813,9 @@ public sealed partial class MainWindow : Window
             new RightPanelSectionEntry("\uE734", L("RightPanelFavorites")),
             new RightPanelSectionEntry("\uE8C1", L("RightPanelSubtitles"))
         };
+        PlaylistTitleText.Text = L("RightPanelPlaylist");
+        FavoritesTitleText.Text = L("RightPanelFavorites");
+        SubtitlesTitleText.Text = L("RightPanelSubtitles");
         RightPanelSectionList.SelectedIndex = Math.Clamp(selectedIndex, 0, 4);
         ApplyRightPanelSection((RightPanelSection)RightPanelSectionList.SelectedIndex);
     }
@@ -3614,7 +3617,6 @@ public sealed partial class MainWindow : Window
             _favoriteEntries.Add(new FavoriteListEntry(item, L("RemoveFavoriteButton")));
         }
         FavoritesEmptyText.Visibility = _favoriteEntries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        UpdateFavoriteCommands();
     }
 
     private async void OnFavoriteDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
@@ -3625,35 +3627,9 @@ public sealed partial class MainWindow : Window
         await _historyService.SaveFavoritesAsync();
     }
 
-    private void OnFavoriteSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateFavoriteCommands();
-
-    private void UpdateFavoriteCommands()
-    {
-        var hasSelection = FavoriteList.SelectedItems.Count > 0;
-        OpenFavoriteButton.IsEnabled = hasSelection;
-        RemoveSelectedFavoritesButton.IsEnabled = hasSelection;
-    }
-
-    private async void OnOpenFavoriteClick(object sender, RoutedEventArgs e)
-    {
-        if (FavoriteList.SelectedItem is FavoriteListEntry entry) await OpenFavoriteAsync(entry.Item);
-    }
-
     private async void OnFavoriteItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is FavoriteListEntry entry) await OpenFavoriteAsync(entry.Item);
-    }
-
-    private async void OnRemoveSelectedFavoritesClick(object sender, RoutedEventArgs e)
-    {
-        await _historyService.LoadFavoritesAsync();
-        var selected = FavoriteList.SelectedItems.OfType<FavoriteListEntry>().ToArray();
-        if (selected.Length == 0) return;
-        var removed = false;
-        foreach (var entry in selected) removed |= _historyService.RemoveFavorite(entry.Item.Location);
-        if (!removed) return;
-        await _historyService.SaveFavoritesAsync();
-        RefreshFavoritesList();
     }
 
     private async void OnRemoveFavoriteItemClick(object sender, RoutedEventArgs e)

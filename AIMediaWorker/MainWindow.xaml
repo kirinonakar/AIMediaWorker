@@ -106,7 +106,7 @@
             <primitives:Thumb x:Name="RightPanelSplitter" Grid.Column="1" DragDelta="OnRightPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
             <Grid x:Name="SubtitlePanel" Grid.Column="2" Margin="4,4,8,4">
                 <Grid ColumnSpacing="4">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="56" /></Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
                     <Grid>
                     <Grid x:Name="ExplorerSection">
                         <Grid RowSpacing="6">
@@ -134,7 +134,7 @@
                         </Grid>
                     </Grid>
                     <Grid x:Name="PlaylistSection" Visibility="Collapsed">
-                        <Grid RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><CommandBar DefaultLabelPosition="Collapsed"><AppBarButton x:Uid="PlaylistAddMedia" Icon="OpenFile" Label="Add media" Click="OnOpenMediaClick" /><AppBarButton x:Uid="PlaylistClear" Icon="Delete" Label="Clear" Click="OnClearPlaylistClick" /></CommandBar><ListView x:Name="PlaylistList" Grid.Row="1" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnPlaylistItemClick"><ListView.ItemTemplate><DataTemplate><Grid Padding="5"><TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Path}" /></Grid></DataTemplate></ListView.ItemTemplate></ListView></Grid>
+                        <Grid RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><TextBlock x:Name="PlaylistTitleText" Grid.Row="0" Text="Playlist" FontWeight="SemiBold" Margin="4,4,4,0" /><CommandBar Grid.Row="1" DefaultLabelPosition="Collapsed"><AppBarButton x:Uid="PlaylistAddMedia" Icon="OpenFile" Label="Add media" Click="OnOpenMediaClick" /><AppBarButton x:Uid="PlaylistClear" Icon="Delete" Label="Clear" Click="OnClearPlaylistClick" /></CommandBar><ListView x:Name="PlaylistList" Grid.Row="2" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnPlaylistItemClick"><ListView.ItemTemplate><DataTemplate><Grid Padding="5"><TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Path}" /></Grid></DataTemplate></ListView.ItemTemplate></ListView></Grid>
                     </Grid>
                     <Grid x:Name="WebDavSection" Visibility="Collapsed">
                         <Grid RowSpacing="6">
@@ -194,12 +194,9 @@
                     <Grid x:Name="FavoritesSection" Visibility="Collapsed">
                         <Grid RowSpacing="6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                            <CommandBar DefaultLabelPosition="Collapsed">
-                                <AppBarButton x:Uid="OpenFavoriteButton" x:Name="OpenFavoriteButton" Icon="OpenFile" Label="Open" Click="OnOpenFavoriteClick" IsEnabled="False" />
-                                <AppBarButton x:Uid="RemoveSelectedFavoritesButton" x:Name="RemoveSelectedFavoritesButton" Icon="Delete" Label="Remove from favorites" Click="OnRemoveSelectedFavoritesClick" IsEnabled="False" />
-                            </CommandBar>
+                            <TextBlock x:Name="FavoritesTitleText" Grid.Row="0" Text="Favorites" FontWeight="SemiBold" Margin="4,4,4,0" />
                             <Grid Grid.Row="1">
-                                <ListView x:Name="FavoriteList" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnFavoriteItemClick" SelectionChanged="OnFavoriteSelectionChanged" CanDragItems="True" CanReorderItems="True" AllowDrop="True" DragItemsCompleted="OnFavoriteDragItemsCompleted">
+                                <ListView x:Name="FavoriteList" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnFavoriteItemClick" CanDragItems="True" CanReorderItems="True" AllowDrop="True" DragItemsCompleted="OnFavoriteDragItemsCompleted">
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <Grid Padding="6" ColumnSpacing="8">
@@ -223,15 +220,16 @@
                     </Grid>
                     <Grid x:Name="SubtitlesSection" Visibility="Collapsed">
                         <Grid RowSpacing="6">
-                            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <ListView x:Name="SubtitleList" SelectionMode="Multiple" IsItemClickEnabled="True" ItemClick="OnSubtitleItemClick">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <TextBlock x:Name="SubtitlesTitleText" Grid.Row="0" Text="Subtitles" FontWeight="SemiBold" Margin="4,4,4,0" />
+                            <ListView x:Name="SubtitleList" Grid.Row="1" SelectionMode="Multiple" IsItemClickEnabled="True" ItemClick="OnSubtitleItemClick">
                                 <ListView.ItemTemplate><DataTemplate><Grid Padding="4" MinWidth="280"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions><Grid ColumnSpacing="4"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBox x:Uid="CueStart" Header="Start (µs)" Text="{Binding StartMicroseconds, Mode=OneWay}" Tag="Start" FontFamily="Consolas" FontSize="11" GotFocus="OnCueTimeGotFocus" LostFocus="OnCueTimeLostFocus" /><TextBox x:Uid="CueEnd" Grid.Column="1" Header="End (µs)" Text="{Binding EndMicroseconds, Mode=OneWay}" Tag="End" FontFamily="Consolas" FontSize="11" GotFocus="OnCueTimeGotFocus" LostFocus="OnCueTimeLostFocus" /><TextBox x:Uid="CueDuration" Grid.Column="2" Header="Duration (µs)" Text="{Binding DurationMicroseconds, Mode=OneWay}" Tag="Duration" FontFamily="Consolas" FontSize="11" GotFocus="OnCueTimeGotFocus" LostFocus="OnCueTimeLostFocus" /></Grid><StackPanel Grid.Row="1" Spacing="2"><TextBox Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="52" GotFocus="OnCueTextGotFocus" LostFocus="OnCueTextLostFocus" /><TextBlock Text="{Binding TranslatedText, Mode=OneWay}" Visibility="{Binding HasDistinctTranslation, Converter={StaticResource BooleanToVisibilityConverter}}" TextWrapping="Wrap" Opacity="0.72" /></StackPanel></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
-                            <CommandBar Grid.Row="1" DefaultLabelPosition="Collapsed"><AppBarButton x:Uid="SaveSubtitleButton" Icon="Save" Label="Save subtitle" Click="OnSaveSubtitleClick" /><AppBarSeparator /><AppBarButton x:Uid="AddCueButton" Icon="Add" Label="Add" Click="OnAddCueClick" /><AppBarButton x:Uid="SplitCueButton" Icon="Cut" Label="Split" Click="OnSplitCueClick" /><AppBarButton x:Uid="DeleteCueButton" Icon="Delete" Label="Delete" Click="OnDeleteCueClick" /><AppBarSeparator /><AppBarButton x:Uid="UndoButton" Icon="Undo" Label="Undo" Click="OnUndoClick" /><AppBarButton x:Uid="RedoButton" Icon="Redo" Label="Redo" Click="OnRedoClick" /></CommandBar>
+                            <CommandBar Grid.Row="2" DefaultLabelPosition="Collapsed"><AppBarButton x:Uid="SaveSubtitleButton" Icon="Save" Label="Save subtitle" Click="OnSaveSubtitleClick" /><AppBarSeparator /><AppBarButton x:Uid="AddCueButton" Icon="Add" Label="Add" Click="OnAddCueClick" /><AppBarButton x:Uid="SplitCueButton" Icon="Cut" Label="Split" Click="OnSplitCueClick" /><AppBarButton x:Uid="DeleteCueButton" Icon="Delete" Label="Delete" Click="OnDeleteCueClick" /><AppBarSeparator /><AppBarButton x:Uid="UndoButton" Icon="Undo" Label="Undo" Click="OnUndoClick" /><AppBarButton x:Uid="RedoButton" Icon="Redo" Label="Redo" Click="OnRedoClick" /></CommandBar>
                         </Grid>
                     </Grid>
                     </Grid>
-                    <Border Grid.Column="1" Padding="4" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
+                    <Border Grid.Column="1" Padding="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="0">
                         <ListView x:Name="RightPanelSectionList"
                                   SelectionMode="Single"
                                   HorizontalContentAlignment="Stretch"
@@ -243,7 +241,7 @@
                                     <Setter Property="Height" Value="48" />
                                     <Setter Property="MinWidth" Value="0" />
                                     <Setter Property="Padding" Value="0" />
-                                    <Setter Property="Margin" Value="0,2" />
+                                    <Setter Property="Margin" Value="0" />
                                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                                     <Setter Property="VerticalContentAlignment" Value="Stretch" />
                                 </Style>
