@@ -75,6 +75,10 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _aiOperationCancellation;
     private Task? _aiPipelineTask;
     private int _generatedSubtitleUiRefreshQueued;
+    private bool _generatedSubtitleOsdActive;
+    private bool _generatedSubtitleOsdConfigured;
+    private Guid? _generatedSubtitleOsdCueId;
+    private string? _generatedSubtitleOsdText;
     private int _playbackPositionUiRefreshQueued;
     private CancellationTokenSource? _seekAiRestartCancellation;
     private bool _subtitleGenerationCompletedForCurrentMedia;
@@ -1265,6 +1269,8 @@ public sealed partial class MainWindow : Window
 
     private void BindDocument(SubtitleDocument document)
     {
+        ClearGeneratedSubtitleOsd(force: true);
+        _generatedSubtitleOsdActive = false;
         _overlaySyncCancellation?.Cancel();
         _overlaySyncCancellation?.Dispose();
         _overlaySyncCancellation = null;
@@ -1293,6 +1299,14 @@ public sealed partial class MainWindow : Window
             PlaybackState.Failed => "PlaybackStateFailed",
             _ => "PlaybackStateUninitialized"
         });
+        if (_playback.State == PlaybackState.Playing)
+        {
+            // show-text has a finite lifetime. Re-arm the current cue after a
+            // pause/resume so a long pause cannot make it disappear permanently.
+            _generatedSubtitleOsdCueId = null;
+            _generatedSubtitleOsdText = null;
+        }
+        RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
     });
     private void OnFirstFrameReady(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
@@ -1338,6 +1352,14 @@ public sealed partial class MainWindow : Window
 
     private void OnPlaybackSeeked(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
     {
+        if (_generatedSubtitleOsdActive)
+        {
+            ApplySubtitleVisibilityPreference();
+            ClearGeneratedSubtitleOsd(force: true);
+            RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
+            return;
+        }
+
         // Seeking can temporarily clear the selected subtitle track in libmpv. Restore the
         // visibility preference and reselect the editor overlay without rebuilding its file.
         ApplySubtitleVisibilityPreference();
@@ -1375,6 +1397,7 @@ public sealed partial class MainWindow : Window
             }
             if (viewportChanged) DrawTimeline(positionMicroseconds);
             else UpdateTimelinePlayhead(positionMicroseconds);
+            RefreshGeneratedSubtitleOsd(positionMicroseconds);
         }
         finally { Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 0); }
     }
@@ -1404,6 +1427,11 @@ public sealed partial class MainWindow : Window
         }
 
         if (option.TrackId is not { } trackId) return;
+        if (_generatedSubtitleOsdActive)
+        {
+            _generatedSubtitleOsdActive = false;
+            ClearGeneratedSubtitleOsd(force: true);
+        }
         _subtitleDisplayMode = null;
         _selectedNativeSubtitleTrackId = trackId;
         TryPlayback(() => _playback.SelectTrack(MediaTrackType.Subtitle, trackId));
@@ -3445,6 +3473,11 @@ public sealed partial class MainWindow : Window
     private void ScheduleSubtitleOverlaySync(bool force = false)
     {
         if (_subtitleDisplayMode is null || !_playback.IsAvailable || _playback.CurrentSource is null || _document.ActiveTrack is null) return;
+        if (_generatedSubtitleOsdActive)
+        {
+            RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
+            return;
+        }
         _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = new CancellationTokenSource();
         var token = _overlaySyncCancellation.Token;
         _ = SyncSubtitleOverlayAsync(token, force);
@@ -3472,9 +3505,22 @@ public sealed partial class MainWindow : Window
     private void EnableGeneratedSubtitleOverlay()
     {
         if (!_playback.IsAvailable) return;
-        TryPlayback(() => _playback.SetSubtitleVisibility(true));
+        _generatedSubtitleOsdActive = true;
+        ClearGeneratedSubtitleOsd(force: true);
+        _overlaySyncCancellation?.Cancel();
+        TryPlayback(() =>
+        {
+            _playback.SetSubtitleVisibility(true);
+            // Generated cues are rendered through OSD. Do not add/reload an external
+            // ASS track while the media is playing, because libass track changes can
+            // pause the playback clock while the track is rebuilt.
+            _playback.SelectTrack(MediaTrackType.Subtitle, null);
+            _playback.ConfigureGeneratedSubtitleOsd(true);
+            _generatedSubtitleOsdConfigured = true;
+        });
         SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
         _settings.Playback.ShowSubtitles = _playback.AreSubtitlesVisible;
+        RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
     }
 
     private void ApplySubtitleVisibilityPreference()
@@ -3487,9 +3533,58 @@ public sealed partial class MainWindow : Window
             // separate states. A seek or file reconfiguration can leave the
             // menu checked while sid is still "no", so restore both states
             // whenever subtitles are meant to be visible.
-            if (visible) _playback.RestoreSubtitleSelection(_selectedNativeSubtitleTrackId, _subtitleDisplayMode is not null);
+            if (_generatedSubtitleOsdActive)
+            {
+                _playback.SelectTrack(MediaTrackType.Subtitle, null);
+                _playback.ConfigureGeneratedSubtitleOsd(visible);
+                _generatedSubtitleOsdConfigured = visible;
+            }
+            else if (visible)
+            {
+                _playback.RestoreSubtitleSelection(_selectedNativeSubtitleTrackId, _subtitleDisplayMode is not null);
+            }
         });
         SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
+        if (_generatedSubtitleOsdActive)
+        {
+            if (visible) RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
+            else ClearGeneratedSubtitleOsd();
+        }
+    }
+
+    private void RefreshGeneratedSubtitleOsd(long positionMicroseconds)
+    {
+        if (!_generatedSubtitleOsdActive || !_playback.IsAvailable) return;
+        if (!_settings.Playback.ShowSubtitles || _subtitleDisplayMode is not { } displayMode)
+        {
+            ClearGeneratedSubtitleOsd();
+            return;
+        }
+
+        var cue = _document.FindActiveCue(positionMicroseconds);
+        var text = cue?.GetDisplayText(displayMode).Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        if (cue is null || string.IsNullOrWhiteSpace(text))
+        {
+            ClearGeneratedSubtitleOsd();
+            return;
+        }
+
+        if (_generatedSubtitleOsdCueId == cue.Id && string.Equals(_generatedSubtitleOsdText, text, StringComparison.Ordinal)) return;
+        var remainingSeconds = Math.Clamp((cue.EndMicroseconds - positionMicroseconds) / 1_000_000d + 0.5, 0.2, 60);
+        _generatedSubtitleOsdCueId = cue.Id;
+        _generatedSubtitleOsdText = text;
+        _generatedSubtitleOsdConfigured = true;
+        TryPlayback(() => _playback.ShowSubtitleOsdText(text, remainingSeconds));
+    }
+
+    private void ClearGeneratedSubtitleOsd(bool force = false)
+    {
+        var wasShowing = _generatedSubtitleOsdCueId is not null || _generatedSubtitleOsdText is not null;
+        var shouldClear = force || wasShowing || _generatedSubtitleOsdConfigured;
+        _generatedSubtitleOsdConfigured = false;
+        _generatedSubtitleOsdCueId = null;
+        _generatedSubtitleOsdText = null;
+        if (shouldClear && _playback.IsAvailable) TryPlayback(_playback.ClearSubtitleOsdText);
     }
 
     private async Task SyncSubtitleOverlayAsync(CancellationToken cancellationToken, bool force)

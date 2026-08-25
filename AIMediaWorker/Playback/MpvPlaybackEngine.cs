@@ -29,6 +29,12 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private bool _disposed;
     private RtxVideoSuperResolutionMode _rtxVideoSuperResolutionMode = RtxVideoSuperResolutionMode.Off;
     private bool _rtxVideoSuperResolutionFilterApplied;
+    private string _subtitleFontFamily = "Noto Sans CJK JP";
+    private double _subtitleFontSize = 42;
+    private string _subtitleColor = "#FFFFFFFF";
+    private string _subtitleBackground = "#80000000";
+    private double _subtitleOutline = 2;
+    private int _subtitleBottomMargin = 45;
 
     public PlaybackState State => _state;
     public bool IsAvailable => _context != 0 && !_disposed && _state is not PlaybackState.Uninitialized and not PlaybackState.Failed;
@@ -273,7 +279,39 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             ? Math.Clamp(durationSeconds, 0.1, int.MaxValue / 1000d)
             : 1.2;
         var durationMilliseconds = (int)Math.Round(normalizedDuration * 1000, MidpointRounding.AwayFromZero);
-        Command("show-text", text, durationMilliseconds.ToString(CultureInfo.InvariantCulture));
+        EnsureAvailable();
+        MpvInterop.CommandAsync(_context, NextCommandId(), "show-text", text, durationMilliseconds.ToString(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// Displays one generated cue through mpv's lightweight OSD. Updating an ASS
+    /// subtitle track can make libass rebuild the track on mpv's playback core;
+    /// OSD messages avoid that track-level reconfiguration while still rendering
+    /// the cue over the video.
+    /// </summary>
+    public void ShowSubtitleOsdText(string text, double durationSeconds = 1.2)
+    {
+        var normalizedDuration = double.IsFinite(durationSeconds)
+            ? Math.Clamp(durationSeconds, 0.1, int.MaxValue / 1000d)
+            : 1.2;
+        var durationMilliseconds = (int)Math.Round(normalizedDuration * 1000, MidpointRounding.AwayFromZero);
+        EnsureAvailable();
+        ConfigureSubtitleOsdPlacement();
+        MpvInterop.CommandAsync(_context, NextCommandId(), "show-text", text, durationMilliseconds.ToString(CultureInfo.InvariantCulture));
+    }
+
+    public void ConfigureGeneratedSubtitleOsd(bool enabled)
+    {
+        EnsureAvailable();
+        if (enabled) ConfigureSubtitleOsdPlacement();
+        else RestoreDefaultOsdPlacement();
+    }
+
+    public void ClearSubtitleOsdText()
+    {
+        if (!IsAvailable) return;
+        MpvInterop.CommandAsync(_context, NextCommandId(), "show-text", string.Empty, "100");
+        RestoreDefaultOsdPlacement();
     }
     public void SetMute(bool muted) { IsMuted = muted; SetProperty("mute", muted ? "yes" : "no"); }
     public void SetSubtitleVisibility(bool visible)
@@ -445,12 +483,18 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
 
     public void ConfigureSubtitleStyle(string fontFamily, double fontSize, string color, string background, double outline, int bottomMargin)
     {
-        TrySetProperty("sub-font", fontFamily);
-        TrySetProperty("sub-font-size", fontSize.ToString("0.##", CultureInfo.InvariantCulture));
-        TrySetProperty("sub-color", color);
-        TrySetProperty("sub-back-color", background);
-        TrySetProperty("sub-border-size", outline.ToString("0.##", CultureInfo.InvariantCulture));
-        TrySetProperty("sub-margin-y", Math.Max(0, bottomMargin).ToString(CultureInfo.InvariantCulture));
+        _subtitleFontFamily = string.IsNullOrWhiteSpace(fontFamily) ? "Noto Sans CJK JP" : fontFamily;
+        _subtitleFontSize = double.IsFinite(fontSize) ? Math.Clamp(fontSize, 1, 500) : 42;
+        _subtitleColor = string.IsNullOrWhiteSpace(color) ? "#FFFFFFFF" : color;
+        _subtitleBackground = string.IsNullOrWhiteSpace(background) ? "#80000000" : background;
+        _subtitleOutline = double.IsFinite(outline) ? Math.Clamp(outline, 0, 100) : 2;
+        _subtitleBottomMargin = Math.Max(0, bottomMargin);
+        TrySetProperty("sub-font", _subtitleFontFamily);
+        TrySetProperty("sub-font-size", _subtitleFontSize.ToString("0.##", CultureInfo.InvariantCulture));
+        TrySetProperty("sub-color", _subtitleColor);
+        TrySetProperty("sub-back-color", _subtitleBackground);
+        TrySetProperty("sub-border-size", _subtitleOutline.ToString("0.##", CultureInfo.InvariantCulture));
+        TrySetProperty("sub-margin-y", _subtitleBottomMargin.ToString(CultureInfo.InvariantCulture));
     }
 
     public void ConfigureRtxVideoSuperResolution(RtxVideoSuperResolutionMode mode)
@@ -731,6 +775,27 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     {
         try { return string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase); }
         catch (Exception) { return string.Equals(first, second, StringComparison.OrdinalIgnoreCase); }
+    }
+
+    private void ConfigureSubtitleOsdPlacement()
+    {
+        TrySetProperty("osd-align-x", "center");
+        TrySetProperty("osd-align-y", "bottom");
+        TrySetProperty("osd-margin-x", "20");
+        TrySetProperty("osd-margin-y", _subtitleBottomMargin.ToString(CultureInfo.InvariantCulture));
+        TrySetProperty("osd-font", _subtitleFontFamily);
+        TrySetProperty("osd-font-size", _subtitleFontSize.ToString("0.##", CultureInfo.InvariantCulture));
+        TrySetProperty("osd-color", _subtitleColor);
+        TrySetProperty("osd-back-color", _subtitleBackground);
+        TrySetProperty("osd-border-size", _subtitleOutline.ToString("0.##", CultureInfo.InvariantCulture));
+    }
+
+    private void RestoreDefaultOsdPlacement()
+    {
+        TrySetProperty("osd-align-x", "left");
+        TrySetProperty("osd-align-y", "top");
+        TrySetProperty("osd-margin-x", "20");
+        TrySetProperty("osd-margin-y", "16");
     }
 
     private void SetOption(string name, string value) => MpvInterop.EnsureSuccess(MpvInterop.mpv_set_option_string(_context, name, value), $"set option {name}");
