@@ -29,6 +29,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private bool _disposed;
     private RtxVideoSuperResolutionMode _rtxVideoSuperResolutionMode = RtxVideoSuperResolutionMode.Off;
     private bool _rtxVideoSuperResolutionFilterApplied;
+    private volatile bool _eofReached;
     private string _subtitleFontFamily = "Noto Sans CJK JP";
     private double _subtitleFontSize = 42;
     private string _subtitleColor = "#FFFFFFFF";
@@ -232,6 +233,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         // frame instead of making the decoder and d3d11vpp initialize together.
         RemoveRtxVideoSuperResolutionFilter();
         _firstFrameReady = false;
+        _eofReached = false;
         SetState(PlaybackState.Loading);
         CurrentSource = source;
         Position = TimeSpan.Zero;
@@ -603,10 +605,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                     }
                 }
                 if (endedNaturally)
-                {
-                    SetState(PlaybackState.Ended);
-                    MediaEnded?.Invoke(this, EventArgs.Empty);
-                }
+                    RaiseMediaEnded();
                 break;
             case MpvInterop.MpvEventId.Seek:
                 Seeked?.Invoke(this, EventArgs.Empty);
@@ -669,6 +668,10 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     {
         if (_context == 0) return;
         var position = GetDouble("time-pos");
+        // keep-open leaves the current file loaded at EOF, so mpv does not always
+        // emit MPV_EVENT_END_FILE. Convert the eof-reached property into the same
+        // one-shot event used by the normal end-file path.
+        var eofReached = GetBool("eof-reached");
         var changed = false;
         if (position is not null)
         {
@@ -683,6 +686,16 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             DecoderDescription = GetString("video-codec") is { } codec ? $"{codec} / {GetString("hwdec-current") ?? "software"}" : null;
         }
         if (changed) PositionChanged?.Invoke(this, EventArgs.Empty);
+        if (eofReached) RaiseMediaEnded();
+        else _eofReached = false;
+    }
+
+    private void RaiseMediaEnded()
+    {
+        if (_eofReached) return;
+        _eofReached = true;
+        SetState(PlaybackState.Ended);
+        MediaEnded?.Invoke(this, EventArgs.Empty);
     }
 
     private void ReadTracks()
