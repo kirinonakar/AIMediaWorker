@@ -1927,13 +1927,13 @@ public sealed partial class MainWindow : Window
                     temporaryInput = await DownloadAsrInputAsync(source, _currentHttpHeaders, token);
                     source = temporaryInput;
                 }
-                _translationCompletedForCurrentMedia = await GenerateSubtitlesAsync(source, startMicroseconds, token);
+                _translationCompletedForCurrentMedia = await GenerateSubtitlesAsync(source, startMicroseconds, token, preserveExistingSubtitles: requestedStartMicroseconds.HasValue);
                 _subtitleGenerationCompletedForCurrentMedia = true;
             }
             if (TranslateMenuItem.IsChecked && !_translationCompletedForCurrentMedia)
             {
                 translating = true;
-                _translationCompletedForCurrentMedia = await TranslateSubtitlesAsync(startMicroseconds, token);
+                _translationCompletedForCurrentMedia = await TranslateSubtitlesAsync(startMicroseconds, token, includeAllMissing: requestedStartMicroseconds.HasValue);
             }
         }
         catch (OperationCanceledException) { StatusText.Text = L(translating ? "StatusTranslationCancelled" : "StatusSubtitleGenerationCancelled"); }
@@ -1956,8 +1956,16 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task<bool> GenerateSubtitlesAsync(string source, long startMicroseconds, CancellationToken token)
+    private async Task<bool> GenerateSubtitlesAsync(string source, long startMicroseconds, CancellationToken token, bool preserveExistingSubtitles)
     {
+        var document = preserveExistingSubtitles ? _document : new SubtitleDocument();
+        var track = document.EnsureTrack("srt");
+        if (string.IsNullOrWhiteSpace(track.Name)) track.Name = "Qwen3-ASR";
+        var generationStartMicroseconds = preserveExistingSubtitles
+            ? FindGenerationStartMicroseconds(track, startMicroseconds)
+            : Math.Max(0, startMicroseconds);
+        var translateGeneratedCues = TranslateMenuItem.IsChecked;
+
         StatusText.Text = L("StatusStartingAsr");
         var runtimeDirectory = AsrRuntimePaths.GetCrispAsrRuntimeDirectory(_settings.Asr.CrispAsrRuntimeDirectory);
         await _asrEngine.StartAsync(runtimeDirectory, token);
@@ -1966,19 +1974,38 @@ public sealed partial class MainWindow : Window
         var loadProgress = new Progress<AsrEvent>(update => { if (acceptingLoadProgress) UpdateAsrModelProgress(update); });
         try { await _asrEngine.LoadModelAsync(_settings.Asr.ModelPath!, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress, token); }
         finally { acceptingLoadProgress = false; }
-        var document = new SubtitleDocument();
-        var track = document.EnsureTrack("srt"); track.Name = "Qwen3-ASR";
-        BindDocument(document);
-        SetSubtitleDisplayMode(TranslateMenuItem.IsChecked ? SubtitleDisplayMode.Translation : SubtitleDisplayMode.Original, refreshOverlay: false);
-        // Clear the previous generated track immediately. Otherwise a seek that restarts
-        // ASR keeps displaying the old overlay until the first new segment arrives.
-        ScheduleSubtitleOverlaySync();
+        if (!preserveExistingSubtitles)
+        {
+            BindDocument(document);
+        }
+        else if (!ReferenceEquals(_document, document))
+        {
+            return false;
+        }
+
+        var displayMode = preserveExistingSubtitles && _subtitleDisplayMode is { } existingDisplayMode
+            ? existingDisplayMode
+            : TranslateMenuItem.IsChecked ? SubtitleDisplayMode.Translation : SubtitleDisplayMode.Original;
+        SetSubtitleDisplayMode(displayMode, refreshOverlay: false);
         _rightPanelVisible = true;
         ApplyPanelVisibility();
         ShowRightPanelSection(RightPanelSection.Subtitles);
         StatusText.Text = F("StatusGeneratingSubtitles", 0d);
         EnableGeneratedSubtitleOverlay();
-        var translateGeneratedCues = TranslateMenuItem.IsChecked;
+
+        var durationMicroseconds = Math.Max(0, _playback.Duration.Ticks / 10);
+        if (preserveExistingSubtitles && durationMicroseconds > 0 && generationStartMicroseconds >= durationMicroseconds)
+        {
+            await DispatchSubtitleUiAsync(() =>
+            {
+                DrawTimeline();
+                StatusText.Text = translateGeneratedCues
+                    ? F("StatusTranslated", track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
+                    : F("StatusGeneratedSubtitles", track.Cues.Count);
+            }, document, token).ConfigureAwait(false);
+            return !translateGeneratedCues || track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
+        }
+
         var translationQueue = Channel.CreateUnbounded<SubtitleCue>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
         var translationTask = TranslateGeneratedCuesRealtimeAsync(translationQueue.Reader, document, track, token);
         var translatedCount = 0;
@@ -1986,7 +2013,7 @@ public sealed partial class MainWindow : Window
         var asrSegmentation = new AsrSegmentationOptions(segmentation.MinimumCueSeconds, segmentation.MaximumCueSeconds, segmentation.MaximumLines, segmentation.TargetCharactersPerLine, segmentation.SilenceSplitSeconds, segmentation.MaximumCharactersPerSecond);
         try
         {
-            await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, startMicroseconds, token).ConfigureAwait(false))
+            await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, generationStartMicroseconds, token).ConfigureAwait(false))
             {
                 if (!ReferenceEquals(_document, document)) throw new OperationCanceledException(token);
                 if (result.Event == "progress" && result.Progress is { } progress)
@@ -1996,6 +2023,7 @@ public sealed partial class MainWindow : Window
                     var cue = new SubtitleCue { StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds, Text = segment.Text, Confidence = segment.Confidence, Source = SubtitleCueSource.AutomaticSpeechRecognition };
                     await DispatchSubtitleUiAsync(() =>
                     {
+                        if (IsAlreadyGeneratedCue(track, segment)) return;
                         track.Cues.Add(cue);
                         translationQueue.Writer.TryWrite(cue);
                         ScheduleGeneratedSubtitleUiRefresh();
@@ -2018,6 +2046,7 @@ public sealed partial class MainWindow : Window
         var finalCueCount = 0;
         await DispatchSubtitleUiAsync(() =>
         {
+            SubtitleDocument.Sort(track);
             document.MarkDirty();
             DrawTimeline();
             // Reload the native subtitle track once after the complete ASR result is
@@ -2027,7 +2056,39 @@ public sealed partial class MainWindow : Window
             finalCueCount = track.Cues.Count;
             StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
         }, document, token).ConfigureAwait(false);
-        return translateGeneratedCues && translatedCount == finalCueCount;
+        return !translateGeneratedCues || track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
+    }
+
+    private static long FindGenerationStartMicroseconds(SubtitleTrack track, long requestedStartMicroseconds)
+    {
+        var cursor = Math.Max(0, requestedStartMicroseconds);
+        foreach (var cue in track.Cues.OrderBy(cue => cue.StartMicroseconds))
+        {
+            if (cue.EndMicroseconds <= cursor) continue;
+            if (cue.StartMicroseconds > cursor) break;
+            cursor = Math.Max(cursor, cue.EndMicroseconds);
+        }
+        return cursor;
+    }
+
+    private static bool IsAlreadyGeneratedCue(SubtitleTrack track, AsrSegment segment)
+    {
+        var segmentStart = Math.Max(0, segment.StartMicroseconds);
+        var segmentEnd = Math.Max(segmentStart + 1, segment.EndMicroseconds);
+        var segmentDuration = segmentEnd - segmentStart;
+        var normalizedText = segment.Text.Trim();
+        foreach (var existing in track.Cues)
+        {
+            var overlap = Math.Min(segmentEnd, existing.EndMicroseconds) - Math.Max(segmentStart, existing.StartMicroseconds);
+            if (overlap <= 0) continue;
+            if (string.Equals(existing.Text.Trim(), normalizedText, StringComparison.OrdinalIgnoreCase)) return true;
+
+            var existingDuration = Math.Max(1, existing.EndMicroseconds - existing.StartMicroseconds);
+            var sharedHalf = Math.Max(1, Math.Min(segmentDuration, existingDuration) / 2);
+            var segmentCoverage = Math.Max(1, segmentDuration / 3);
+            if (overlap >= sharedHalf && overlap >= segmentCoverage) return true;
+        }
+        return false;
     }
 
     private Task DispatchSubtitleUiAsync(Action action, SubtitleDocument targetDocument, CancellationToken cancellationToken)
@@ -2174,7 +2235,7 @@ public sealed partial class MainWindow : Window
         StartCheckedAiPipeline();
     }
 
-    private async Task<bool> TranslateSubtitlesAsync(long startMicroseconds, CancellationToken cancellationToken)
+    private async Task<bool> TranslateSubtitlesAsync(long startMicroseconds, CancellationToken cancellationToken, bool includeAllMissing = false)
     {
         var targetDocument = _document;
         var track = targetDocument.ActiveTrack;
@@ -2188,17 +2249,21 @@ public sealed partial class MainWindow : Window
             StatusText.Text = L("LlmModelMissingMessage");
             return false;
         }
+        // Translation can finish after ASR. Only send cues that still have no
+        // translation so existing results survive a seek and are not replaced.
         var cues = track.Cues
-            .Where(cue => cue.EndMicroseconds > startMicroseconds)
+            .Where(cue => string.IsNullOrWhiteSpace(cue.TranslatedText) && (includeAllMissing || cue.EndMicroseconds > startMicroseconds))
             .OrderBy(cue => cue.StartMicroseconds)
             .ToArray();
-        if (cues.Length == 0)
-        {
-            StatusText.Text = F("StatusTranslated", 0);
-            return true;
-        }
 
         SetSubtitleDisplayMode(SubtitleDisplayMode.Translation, refreshOverlay: false);
+        if (cues.Length == 0)
+        {
+            ScheduleSubtitleOverlaySync(force: true);
+            StatusText.Text = F("StatusTranslated", 0);
+            return track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
+        }
+
         EnableGeneratedSubtitleOverlay();
         StatusText.Text = F("StatusTranslating", 0, cues.Length);
         var provider = CreateLlmProvider();
@@ -2210,7 +2275,7 @@ public sealed partial class MainWindow : Window
         ScheduleSubtitleOverlaySync(force: true);
         StatusText.Text = F("StatusTranslated", translated.Count);
         await AppLog.WriteAsync("info", "translation", "TRANSLATION_COMPLETED", $"Translated {translated.Count} cues from {startMicroseconds} microseconds using {_settings.Llm.Provider}.");
-        return true;
+        return cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
     }
 
     private Task ApplyTranslationBatchAsync(SubtitleDocument targetDocument, TranslationBatch batch, IReadOnlyDictionary<Guid, SubtitleCue> cuesById, CancellationToken cancellationToken)
@@ -2239,6 +2304,10 @@ public sealed partial class MainWindow : Window
                 .Select(item => (IUndoableSubtitleCommand)new SetSubtitleTranslationCommand(targetDocument, cuesById[item.Key], item.Value))
                 .ToArray();
             if (commands.Length > 0) _history.Execute(new CompositeSubtitleCommand("Translate subtitle batch", commands));
+            // Translation arrives asynchronously after the subtitle file has
+            // already been rendered. Rebuild the current display mode so the
+            // user does not need to select Translation a second time.
+            ScheduleSubtitleOverlaySync();
             ScheduleGeneratedSubtitleUiRefresh();
             StatusText.Text = F("StatusTranslating", batch.Completed, batch.Total);
         }
