@@ -99,6 +99,16 @@ public sealed class AsrWorkerClient : IAsrEngine
             throw new AsrWorkerException("MODEL_NOT_FOUND", $"The Qwen3 ASR model was not found: {resolvedModelPath}");
         }
 
+        try
+        {
+            CrispAsrModelFormat.ValidateCrispAsrQwen3Model(resolvedModelPath);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException)
+        {
+            SetState(AsrWorkerState.Ready);
+            throw new AsrWorkerException("MODEL_FORMAT_ERROR", exception.Message);
+        }
+
         if (!File.Exists(resolvedAlignerPath))
         {
             progress?.Report(new AsrEvent
@@ -120,7 +130,7 @@ public sealed class AsrWorkerClient : IAsrEngine
             Stage = "loading",
             Progress = 0.05,
             ElapsedSeconds = 0,
-            Message = $"Loading {Path.GetFileName(resolvedModelPath)} with CrispASR qwen3-1.7b"
+            Message = $"Loading {Path.GetFileName(resolvedModelPath)} with CrispASR qwen3"
         });
 
         nint newSession = 0;

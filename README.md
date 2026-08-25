@@ -89,7 +89,7 @@ Open **Settings → Automatic speech recognition** and choose **Install**. The
 installer checks the native runtime and downloads these exact files to
 `asr-worker\models` beside the executable:
 
-- `Qwen3-ASR-1.7B-Q8_0.gguf`
+- `Qwen3-ASR-1.7B-Q8_0.gguf` (CrispASR single-file `qwen3asr` Q8_0 model)
 - `mmproj-Qwen3-ASR-1.7B-bf16.gguf` (kept as the requested companion asset; the CrispASR C ABI does not load it)
 - `qwen3-forced-aligner-0.6b-q8_0.gguf`
 

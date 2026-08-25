@@ -19,9 +19,8 @@ internal static class CrispAsrNative
     private static extern bool SetDllDirectory(string? pathName);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern nint crispasr_session_open_explicit(
+    private static extern nint crispasr_session_open(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string modelPath,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string backendName,
         int nThreads);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
@@ -123,7 +122,10 @@ internal static class CrispAsrNative
 
     public static nint OpenSession(string modelPath, int nThreads)
     {
-        var session = crispasr_session_open_explicit(modelPath, "qwen3-1.7b", nThreads);
+        // Let CrispASR inspect general.architecture. This is the same path as
+        // its supported C# binding and avoids passing a CLI-only alias such as
+        // qwen3-1.7b to the native dispatcher.
+        var session = crispasr_session_open(modelPath, nThreads);
         if (session == 0) throw new InvalidOperationException($"CrispASR could not open the Qwen3 session for '{modelPath}'.");
         return session;
     }
