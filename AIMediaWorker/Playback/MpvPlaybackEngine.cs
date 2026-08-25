@@ -309,12 +309,15 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
 
     public void LoadSubtitle(string path, bool select = true)
     {
+        EnsureAvailable();
         if (select)
         {
             SetProperty("sid", "no");
             SetProperty("secondary-sid", "no");
         }
-        Command("sub-add", path, select ? "select" : "auto");
+        // Loading/parsing an external subtitle can take long enough to stall the
+        // playback thread. Queue it through libmpv instead of waiting synchronously.
+        MpvInterop.CommandAsync(_context, NextCommandId(), "sub-add", path, select ? "select" : "auto");
         RestoreSubtitleVisibility();
     }
 
@@ -340,7 +343,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                     // selector below will select this track again once it is visible in
                     // track-list, which is important when an embedded subtitle was
                     // selected before the editor overlay was added.
-                    Command("sub-add", fullPath, "select");
+                    MpvInterop.CommandAsync(_context, NextCommandId(), "sub-add", fullPath, "select");
                 }
                 else
                 {
@@ -348,7 +351,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                     // temporary track behind. Keep one track, select it explicitly, and
                     // reload that track so mpv cannot continue rendering an older selection.
                     foreach (var duplicateId in trackIds.Skip(1).OrderByDescending(id => id))
-                        Command("sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
+                        MpvInterop.CommandAsync(_context, NextCommandId(), "sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
 
                     var editorTrackId = trackIds[0];
                     SetProperty("sid", editorTrackId.ToString(CultureInfo.InvariantCulture));
@@ -670,7 +673,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
 
                     SetProperty("secondary-sid", "no");
                     foreach (var duplicateId in trackIds.Skip(1).OrderByDescending(id => id))
-                        Command("sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
+                        MpvInterop.CommandAsync(_context, NextCommandId(), "sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
                     SetProperty("sid", trackIds[0].ToString(CultureInfo.InvariantCulture));
                     RestoreSubtitleVisibility();
                     return;

@@ -1949,7 +1949,9 @@ public sealed partial class MainWindow : Window
         var cancellationToken = cancellation.Token;
         try
         {
-            await Task.Delay(250, cancellationToken);
+            // Give mpv's seek and the WebM/Opus demuxer time to settle before FFmpeg
+            // opens the same media for subtitle generation.
+            await Task.Delay(AutomaticSubtitleStartDelay, cancellationToken);
             await CancelAiPipelineForSeekAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!ReferenceEquals(_seekAiRestartCancellation, cancellation)) return;
@@ -2006,7 +2008,16 @@ public sealed partial class MainWindow : Window
         try
         {
             var token = _aiOperationCancellation.Token;
-            if (waitForMediaReady) await Task.Delay(250, token);
+            if (waitForMediaReady)
+            {
+                // The player must get a short uninterrupted playback window before
+                // ASR opens the same WebM file. This avoids probing an Opus stream
+                // while libmpv is still finalizing the first audio packets.
+                await Task.Delay(AutomaticSubtitleStartDelay, token);
+                token.ThrowIfCancellationRequested();
+                if (!string.Equals(_playback.CurrentSource, source, StringComparison.OrdinalIgnoreCase) ||
+                    _playback.State is not (PlaybackState.Playing or PlaybackState.Paused)) return;
+            }
             var startMicroseconds = waitForMediaReady
                 ? 0
                 : requestedStartMicroseconds ?? CurrentPlaybackPositionMicroseconds;
@@ -3775,6 +3786,7 @@ public sealed partial class MainWindow : Window
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
+    private static readonly TimeSpan AutomaticSubtitleStartDelay = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan FullscreenCursorHideDelay = TimeSpan.FromSeconds(2);
     [StructLayout(LayoutKind.Sequential)] private struct NativePoint { public int X; public int Y; }
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out NativePoint point);

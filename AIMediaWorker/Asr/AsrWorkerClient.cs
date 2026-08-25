@@ -663,7 +663,10 @@ public sealed class AsrWorkerClient : IAsrEngine
 
     private static long SamplesToMicroseconds(long samples) => samples * 1_000_000 / SampleRate;
 
-    private static int NativeThreadCount => Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+    // Keep ASR from consuming all CPU resources while mpv is decoding/rendering.
+    // CrispASR creates native worker threads, so the limit must leave headroom for
+    // playback (including AV1 decoding and NVIDIA VSR).
+    private static int NativeThreadCount => Math.Clamp(Environment.ProcessorCount / 4, 1, 2);
 
     private static void TryTerminate(Process process)
     {
