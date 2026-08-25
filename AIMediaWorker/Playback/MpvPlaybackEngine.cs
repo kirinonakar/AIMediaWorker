@@ -11,6 +11,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         () => Task.Run(PreloadLibraryCore),
         LazyThreadSafetyMode.ExecutionAndPublication);
     private readonly object _sync = new();
+    private readonly object _subtitleCommandSync = new();
     private readonly SemaphoreSlim _openLock = new(1, 1);
     private readonly List<MediaTrack> _tracks = [];
     private nint _context;
@@ -45,6 +46,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public event EventHandler? StateChanged;
     public event EventHandler? FirstFrameReady;
     public event EventHandler? PositionChanged;
+    public event EventHandler? Seeked;
     public event EventHandler? TracksChanged;
     public event EventHandler<PlaybackError>? ErrorOccurred;
     public event EventHandler? MediaEnded;
@@ -282,13 +284,55 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     }, id?.ToString(CultureInfo.InvariantCulture) ?? "no");
 
-    public void LoadSubtitle(string path, bool select = true) => Command("sub-add", path, select ? "select" : "auto");
+    public void LoadSubtitle(string path, bool select = true)
+    {
+        if (select)
+        {
+            SetProperty("sid", "no");
+            SetProperty("secondary-sid", "no");
+        }
+        Command("sub-add", path, select ? "select" : "auto");
+    }
 
     public void UpdateEditorSubtitle(string path)
     {
         var fullPath = Path.GetFullPath(path);
-        if (_editorSubtitlePath is not null && string.Equals(_editorSubtitlePath, fullPath, StringComparison.OrdinalIgnoreCase)) Command("sub-reload");
-        else { LoadSubtitle(fullPath, true); _editorSubtitlePath = fullPath; }
+        lock (_subtitleCommandSync)
+        {
+            EnsureAvailable();
+            var trackIds = FindExternalSubtitleTrackIds(fullPath);
+            if (trackIds.Count == 0)
+            {
+                SetProperty("sid", "no");
+                SetProperty("secondary-sid", "no");
+                Command("sub-add", fullPath, "select");
+            }
+            else
+            {
+                // A previous interrupted update can leave duplicate instances of the
+                // temporary track behind. Keep one track, select it explicitly, and
+                // reload that track so mpv cannot continue rendering an older selection.
+                SetProperty("sid", "no");
+                SetProperty("secondary-sid", "no");
+                foreach (var duplicateId in trackIds.Skip(1).OrderByDescending(id => id))
+                    Command("sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
+
+                var editorTrackId = trackIds[0];
+                SetProperty("sid", editorTrackId.ToString(CultureInfo.InvariantCulture));
+                Command("sub-reload", editorTrackId.ToString(CultureInfo.InvariantCulture));
+            }
+
+            _editorSubtitlePath = fullPath;
+        }
+    }
+
+    public bool IsEditorSubtitleSelected
+    {
+        get
+        {
+            if (_context == 0 || _editorSubtitlePath is null) return false;
+            return FindExternalSubtitleTrackIds(_editorSubtitlePath, selectedOnly: true).Count > 0;
+        }
     }
 
     public void ConfigureNetwork(TimeSpan timeout, string? proxy)
@@ -400,6 +444,9 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                     MediaEnded?.Invoke(this, EventArgs.Empty);
                 }
                 break;
+            case MpvInterop.MpvEventId.Seek:
+                Seeked?.Invoke(this, EventArgs.Empty);
+                break;
             case MpvInterop.MpvEventId.VideoReconfig:
                 if (_loadfileIssued) StartupProfiler.Mark("video-reconfig");
                 if (_firstFrameReady) ScheduleTrackRefresh();
@@ -481,6 +528,29 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         }
         lock (_sync) { _tracks.Clear(); _tracks.AddRange(result); }
         TracksChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private List<int> FindExternalSubtitleTrackIds(string fullPath, bool selectedOnly = false)
+    {
+        var result = new List<int>();
+        var count = GetInt("track-list/count") ?? 0;
+        for (var i = 0; i < count; i++)
+        {
+            var prefix = $"track-list/{i}/";
+            if (!string.Equals(GetString(prefix + "type"), "sub", StringComparison.OrdinalIgnoreCase) ||
+                selectedOnly && !GetBool(prefix + "selected")) continue;
+
+            var externalFilename = GetString(prefix + "external-filename");
+            if (externalFilename is not null && PathsEqual(externalFilename, fullPath) && GetInt(prefix + "id") is { } id)
+                result.Add(id);
+        }
+        return result;
+    }
+
+    private static bool PathsEqual(string first, string second)
+    {
+        try { return string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase); }
+        catch (Exception) { return string.Equals(first, second, StringComparison.OrdinalIgnoreCase); }
     }
 
     private void SetOption(string name, string value) => MpvInterop.EnsureSuccess(MpvInterop.mpv_set_option_string(_context, name, value), $"set option {name}");

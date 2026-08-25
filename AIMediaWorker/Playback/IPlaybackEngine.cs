@@ -21,6 +21,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     event EventHandler? StateChanged;
     event EventHandler? FirstFrameReady;
     event EventHandler? PositionChanged;
+    event EventHandler? Seeked;
     event EventHandler? TracksChanged;
     event EventHandler<PlaybackError>? ErrorOccurred;
     event EventHandler? MediaEnded;

@@ -106,6 +106,20 @@ public sealed class SubtitleTests
     }
 
     [Fact]
+    public void AssOverlayKeepsIndependentCueTimings()
+    {
+        var track = new SubtitleTrack { Format = "ass" };
+        track.Cues.Add(new SubtitleCue { StartMicroseconds = 1_000_000, EndMicroseconds = 2_000_000, Text = "First" });
+        track.Cues.Add(new SubtitleCue { StartMicroseconds = 4_000_000, EndMicroseconds = 5_000_000, Text = "Second" });
+
+        var parsed = AssParser.Parse(AssWriter.Write(track));
+
+        Assert.Equal(2, parsed.ActiveTrack!.Cues.Count);
+        Assert.Equal((1_000_000, 2_000_000, "First"), (parsed.ActiveTrack.Cues[0].StartMicroseconds, parsed.ActiveTrack.Cues[0].EndMicroseconds, parsed.ActiveTrack.Cues[0].Text));
+        Assert.Equal((4_000_000, 5_000_000, "Second"), (parsed.ActiveTrack.Cues[1].StartMicroseconds, parsed.ActiveTrack.Cues[1].EndMicroseconds, parsed.ActiveTrack.Cues[1].Text));
+    }
+
+    [Fact]
     public void AssOverlayPreservesKoreanText()
     {
         var track = new SubtitleTrack { Format = "ass" };

@@ -99,7 +99,6 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _overlayWriteLock = new(1, 1);
     private string? _renderedOverlayContent;
     private string? _renderedOverlayFontFamily;
-    private AssCueSnapshot[] _renderedOverlayCues = [];
     private Rectangle? _timelinePlayhead;
     private bool _subtitleEditorHasFocus;
     private readonly List<PlaylistEntry> _playlist = [];
@@ -143,6 +142,7 @@ public sealed partial class MainWindow : Window
         _playback.StateChanged += OnPlaybackStateChanged;
         _playback.FirstFrameReady += OnFirstFrameReady;
         _playback.PositionChanged += OnPlaybackPositionChanged;
+        _playback.Seeked += OnPlaybackSeeked;
         _playback.TracksChanged += OnTracksChanged;
         _playback.ErrorOccurred += OnPlaybackError;
         _playback.MediaEnded += OnMediaEnded;
@@ -846,7 +846,10 @@ public sealed partial class MainWindow : Window
             document.MarkSaved(Path.GetExtension(path).Equals(".smi", StringComparison.OrdinalIgnoreCase) ? null : path);
             BindDocument(document);
             _translationCompletedForCurrentMedia = false;
-            if (_playback.IsAvailable) _playback.LoadSubtitle(path);
+            // Keep the native player and the editable document on one subtitle track.
+            // Loading the source file directly left the old track alive when the editor
+            // later switched to its temporary ASS overlay.
+            ScheduleSubtitleOverlaySync();
             StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
         }
         catch (Exception exception) { await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message); }
@@ -1138,11 +1141,13 @@ public sealed partial class MainWindow : Window
 
     private void BindDocument(SubtitleDocument document)
     {
+        _overlaySyncCancellation?.Cancel();
+        _overlaySyncCancellation?.Dispose();
+        _overlaySyncCancellation = null;
         _document = document;
         _playbackLinkedCueId = null;
         _renderedOverlayContent = null;
         _renderedOverlayFontFamily = null;
-        _renderedOverlayCues = [];
         var track = _document.EnsureTrack();
         if (_document.FilePath is null && track.Cues.Count == 0) _document.MarkSaved();
         SubtitleList.ItemsSource = track.Cues; _history.Clear(); DrawTimeline();
@@ -1172,6 +1177,14 @@ public sealed partial class MainWindow : Window
         if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, RefreshPlaybackPositionUi))
             Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 0);
     }
+
+    private void OnPlaybackSeeked(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+    {
+        // A seek should never leave a stale subtitle frame on screen. Only take over the
+        // track again when the editor overlay was active; a user-selected native track must
+        // remain selected.
+        if (_playback.IsEditorSubtitleSelected) ScheduleSubtitleOverlaySync(force: true);
+    });
 
     private void RefreshPlaybackPositionUi()
     {
@@ -1833,6 +1846,9 @@ public sealed partial class MainWindow : Window
         var document = new SubtitleDocument();
         var track = document.EnsureTrack("srt"); track.Name = "Qwen3-ASR";
         BindDocument(document);
+        // Clear the previous generated track immediately. Otherwise a seek that restarts
+        // ASR keeps displaying the old overlay until the first new segment arrives.
+        ScheduleSubtitleOverlaySync();
         _rightPanelVisible = true;
         ApplyPanelVisibility();
         ShowRightPanelSection(RightPanelSection.Subtitles);
@@ -3090,12 +3106,12 @@ public sealed partial class MainWindow : Window
         _historyService.AddRecent(_currentMediaSource, (long)(_playback.Position.TotalMilliseconds * 1000), _settings.General.RecentMediaCount);
     }
 
-    private void ScheduleSubtitleOverlaySync()
+    private void ScheduleSubtitleOverlaySync(bool force = false)
     {
         if (!_playback.IsAvailable || _playback.CurrentSource is null || _document.ActiveTrack is null) return;
         _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = new CancellationTokenSource();
         var token = _overlaySyncCancellation.Token;
-        _ = SyncSubtitleOverlayAsync(token);
+        _ = SyncSubtitleOverlayAsync(token, force);
     }
 
     private void ScheduleGeneratedSubtitleUiRefresh()
@@ -3123,7 +3139,7 @@ public sealed partial class MainWindow : Window
         _settings.Playback.ShowSubtitles = _playback.AreSubtitlesVisible;
     }
 
-    private async Task SyncSubtitleOverlayAsync(CancellationToken cancellationToken)
+    private async Task SyncSubtitleOverlayAsync(CancellationToken cancellationToken, bool force)
     {
         try
         {
@@ -3139,34 +3155,24 @@ public sealed partial class MainWindow : Window
             var nativeHeader = track.NativeHeader;
             var content = await Task.Run(() => AssWriter.Write(cues, nativeHeader, fontFamily), cancellationToken).ConfigureAwait(false);
             if (!ReferenceEquals(_document, document)) return;
-            if (string.Equals(content, _renderedOverlayContent, StringComparison.Ordinal)) return;
-            while (true)
-            {
-                var position = (long)(_playback.Position.TotalMilliseconds * 1000);
-                var renderedActive = FindActiveOverlayCue(_renderedOverlayCues, position);
-                var currentActive = FindActiveOverlayCue(cues, position);
-                var currentSubtitleIsUnchanged = renderedActive is not null && renderedActive == currentActive;
-                var fontIsUnchanged = string.Equals(fontFamily, _renderedOverlayFontFamily, StringComparison.OrdinalIgnoreCase);
-                if (_playback.State == PlaybackState.Playing && _renderedOverlayContent is not null && currentSubtitleIsUnchanged && fontIsUnchanged)
-                {
-                    await Task.Delay(100, cancellationToken);
-                    continue;
-                }
+            var contentChanged = !string.Equals(content, _renderedOverlayContent, StringComparison.Ordinal);
+            var fontChanged = !string.Equals(fontFamily, _renderedOverlayFontFamily, StringComparison.OrdinalIgnoreCase);
+            if (!force && !contentChanged && !fontChanged) return;
 
+            if (!ReferenceEquals(_document, document)) return;
+            await _overlayWriteLock.WaitAsync(cancellationToken);
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!ReferenceEquals(_document, document)) return;
-                await _overlayWriteLock.WaitAsync(cancellationToken);
-                try
-                {
-                    await File.WriteAllTextAsync(_editorOverlayPath, content, new System.Text.UTF8Encoding(false), cancellationToken);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    _playback.UpdateEditorSubtitle(_editorOverlayPath);
-                    _renderedOverlayContent = content;
-                    _renderedOverlayFontFamily = fontFamily;
-                    _renderedOverlayCues = cues;
-                }
-                finally { _overlayWriteLock.Release(); }
-                return;
+                await File.WriteAllTextAsync(_editorOverlayPath, content, new System.Text.UTF8Encoding(false), cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(_document, document)) return;
+                _playback.UpdateEditorSubtitle(_editorOverlayPath);
+                _renderedOverlayContent = content;
+                _renderedOverlayFontFamily = fontFamily;
             }
+            finally { _overlayWriteLock.Release(); }
         }
         catch (OperationCanceledException) { }
         catch (Exception exception) { DispatcherQueue.TryEnqueue(() => StatusText.Text = $"Subtitle overlay update failed: {exception.Message}"); }
@@ -3304,6 +3310,8 @@ public sealed partial class MainWindow : Window
         try { await _playback.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "PLAYBACK_DISPOSE_ERROR", exception.Message, exception); }
         _playback.FirstFrameReady -= OnFirstFrameReady;
+        _playback.PositionChanged -= OnPlaybackPositionChanged;
+        _playback.Seeked -= OnPlaybackSeeked;
         if (_videoHost is not null)
         {
             _videoHost.FilesDropped -= OnNativeVideoFilesDropped;
@@ -3362,21 +3370,6 @@ public sealed partial class MainWindow : Window
     private enum RightPanelSection { Explorer, Playlist, WebDav, Favorites, Subtitles }
 
     private sealed record PendingPostOpenWork(string Source, string? LocalPath, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
-    private static AssCueSnapshot? FindActiveOverlayCue(IReadOnlyList<AssCueSnapshot> cues, long positionMicroseconds)
-    {
-        var low = 0;
-        var high = cues.Count - 1;
-        var candidate = -1;
-        while (low <= high)
-        {
-            var middle = low + (high - low) / 2;
-            if (cues[middle].StartMicroseconds <= positionMicroseconds) { candidate = middle; low = middle + 1; }
-            else high = middle - 1;
-        }
-        if (candidate < 0) return null;
-        var cue = cues[candidate];
-        return positionMicroseconds < cue.EndMicroseconds ? cue : null;
-    }
 
     private sealed record BrowserEntry(string Path, bool IsDirectory, long? Length, DateTime LastModified)
     {
