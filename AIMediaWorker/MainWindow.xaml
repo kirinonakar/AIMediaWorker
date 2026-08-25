@@ -287,7 +287,7 @@
             <ToggleButton x:Name="FullscreenButton" Grid.Column="15" Style="{StaticResource PlaybackControlToggleButtonStyle}" Click="OnFullscreenClick" ToolTipService.ToolTip="Fullscreen (Enter / F / F11)">
                 <FontIcon x:Name="FullscreenButtonIcon" Glyph="&#xE740;" FontSize="19" />
             </ToggleButton>
-            <Button x:Name="CloseButton" Grid.Column="16" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnExitClick" ToolTipService.ToolTip="Close"><FontIcon Glyph="&#xE8BB;" FontSize="19" /></Button>
+            <Button x:Name="CloseButton" Grid.Column="16" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnExitClick" ToolTipService.ToolTip="Close (Ctrl+W)"><FontIcon Glyph="&#xE8BB;" FontSize="19" /></Button>
         </Grid>
         <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="4" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
         <Grid x:Name="VisualizationPanel" Grid.Row="5" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">

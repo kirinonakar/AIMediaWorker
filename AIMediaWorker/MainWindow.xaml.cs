@@ -1563,7 +1563,7 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(PositionSlider, F("TooltipPosition", Shortcut(ShortcutActions.PlayFromBeginning)));
         ToolTipService.SetToolTip(SubtitleList, F("TooltipSubtitleNavigation", Shortcut(ShortcutActions.PreviousSubtitle), Shortcut(ShortcutActions.NextSubtitle)));
         ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.All => "TooltipRepeatPlaylist", _ => "TooltipRepeatOff" }));
-        ToolTipService.SetToolTip(CloseButton, L("TooltipClose"));
+        ToolTipService.SetToolTip(CloseButton, F("TooltipClose", Shortcut(ShortcutActions.CloseWindow)));
         UpdateFullscreenButton();
     }
 

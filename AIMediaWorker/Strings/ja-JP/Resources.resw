@@ -82,7 +82,7 @@
   <data name="TooltipRepeatOff"><value>リピート解除</value></data>
   <data name="TooltipEnterFullscreen"><value>全画面に切り替え (Enter / F / F11)</value></data>
   <data name="TooltipExitFullscreen"><value>全画面を終了 (Esc / Enter / F / F11)</value></data>
-  <data name="TooltipClose"><value>アプリを閉じる</value></data>
+  <data name="TooltipClose"><value>アプリを閉じる ({0})</value></data>
   <data name="BrowserFilter.PlaceholderText"><value>名前でフィルター</value></data>
   <data name="WebDavFilter.PlaceholderText"><value>名前でフィルター</value></data>
   <data name="BrowserSort.Label"><value>名前順</value></data>

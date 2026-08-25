@@ -82,7 +82,7 @@
   <data name="TooltipRepeatOff"><value>Repeat off</value></data>
   <data name="TooltipEnterFullscreen"><value>Enter fullscreen (Enter / F / F11)</value></data>
   <data name="TooltipExitFullscreen"><value>Exit fullscreen (Esc / Enter / F / F11)</value></data>
-  <data name="TooltipClose"><value>Close app</value></data>
+  <data name="TooltipClose"><value>Close app ({0})</value></data>
   <data name="BrowserFilter.PlaceholderText"><value>Filter by name</value></data>
   <data name="WebDavFilter.PlaceholderText"><value>Filter by name</value></data>
   <data name="BrowserSort.Label"><value>Sort by name</value></data>
