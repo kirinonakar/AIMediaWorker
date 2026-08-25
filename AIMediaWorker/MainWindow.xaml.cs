@@ -74,6 +74,9 @@ public sealed partial class MainWindow : Window
     private readonly AsrWorkerClient _asrEngine = new();
     private CancellationTokenSource? _aiOperationCancellation;
     private Task? _aiPipelineTask;
+    private Task? _aiSummaryTask;
+    private SummaryKind _activeSummaryKind = SummaryKind.Short;
+    private AiRetryRequest? _retryableAiOperation;
     private int _generatedSubtitleUiRefreshQueued;
     private bool _generatedSubtitleOsdActive;
     private bool _generatedSubtitleOsdConfigured;
@@ -142,6 +145,8 @@ public sealed partial class MainWindow : Window
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
 
     private sealed record SubtitleSelectionOption(string DisplayName, SubtitleDisplayMode? DisplayMode, int? TrackId);
+    private enum AiRetryOperationKind { SubtitlePipeline, Summary }
+    private sealed record AiRetryRequest(AiRetryOperationKind Kind, SummaryKind SummaryKind, SubtitleDocument Document, string? Source);
 
     public MainWindow() : this(null, new AppSettings()) { }
 
@@ -1946,21 +1951,26 @@ public sealed partial class MainWindow : Window
         StartCheckedAiPipeline();
     }
 
-    private void StartCheckedAiPipeline(long? requestedStartMicroseconds = null, bool waitForMediaReady = false)
+    private void StartCheckedAiPipeline(long? requestedStartMicroseconds = null, bool waitForMediaReady = false, bool continueExistingResults = false)
     {
         if (_aiPipelineTask is { IsCompleted: false } || _aiOperationCancellation is not null) return;
-        _aiPipelineTask = RunCheckedAiPipelineAsync(requestedStartMicroseconds, waitForMediaReady);
+        SetRetryableAiOperation(null);
+        _aiPipelineTask = RunCheckedAiPipelineAsync(requestedStartMicroseconds, waitForMediaReady, continueExistingResults);
     }
 
     private async Task CancelAiPipelineAsync()
     {
         CancelPendingSeekAiRestart();
-        var operation = _aiPipelineTask;
+        var pipelineOperation = _aiPipelineTask;
+        var summaryOperation = _aiSummaryTask;
         _aiOperationCancellation?.Cancel();
-        if (operation is null || operation.IsCompleted) return;
-        try { await operation; }
-        catch (OperationCanceledException) { }
-        catch (Exception exception) { await AppLog.WriteAsync("warning", "ai", "AI_CANCEL_WAIT_ERROR", exception.Message, exception); }
+        foreach (var operation in new[] { pipelineOperation, summaryOperation })
+        {
+            if (operation is null || operation.IsCompleted) continue;
+            try { await operation; }
+            catch (OperationCanceledException) { }
+            catch (Exception exception) { await AppLog.WriteAsync("warning", "ai", "AI_CANCEL_WAIT_ERROR", exception.Message, exception); }
+        }
     }
 
     private void ScheduleAiRestartAfterSeek(TimeSpan requestedPosition)
@@ -2015,7 +2025,7 @@ public sealed partial class MainWindow : Window
         catch (OperationCanceledException) when (!seekCancellationToken.IsCancellationRequested) { }
     }
 
-    private async Task RunCheckedAiPipelineAsync(long? requestedStartMicroseconds = null, bool waitForMediaReady = false)
+    private async Task RunCheckedAiPipelineAsync(long? requestedStartMicroseconds = null, bool waitForMediaReady = false, bool continueExistingResults = false)
     {
         if (_aiOperationCancellation is not null) return;
         var generate = GenerateSubtitlesMenuItem.IsChecked && !_subtitleGenerationCompletedForCurrentMedia;
@@ -2053,7 +2063,7 @@ public sealed partial class MainWindow : Window
             var startMicroseconds = waitForMediaReady
                 ? 0
                 : requestedStartMicroseconds ?? CurrentPlaybackPositionMicroseconds;
-            var preserveExistingSubtitles = requestedStartMicroseconds.HasValue && !waitForMediaReady;
+            var preserveExistingSubtitles = continueExistingResults || requestedStartMicroseconds.HasValue && !waitForMediaReady;
             if (generate)
             {
                 if (!File.Exists(source) && _currentHttpHeaders is { Count: > 0 })
@@ -2068,7 +2078,7 @@ public sealed partial class MainWindow : Window
             if (TranslateMenuItem.IsChecked && !_translationCompletedForCurrentMedia)
             {
                 translating = true;
-                _translationCompletedForCurrentMedia = await TranslateSubtitlesAsync(startMicroseconds, token, includeAllMissing: preserveExistingSubtitles);
+                _translationCompletedForCurrentMedia = await TranslateSubtitlesAsync(startMicroseconds, token, includeAllMissing: preserveExistingSubtitles && !continueExistingResults);
             }
         }
         catch (OperationCanceledException) { StatusText.Text = L(translating ? "StatusTranslationCancelled" : "StatusSubtitleGenerationCancelled"); }
@@ -2579,15 +2589,35 @@ public sealed partial class MainWindow : Window
         if (_aiOperationCancellation is not null) return;
         var choices = new ComboBox { Header = L("SummaryStyleHeader"), MinWidth = 300, ItemsSource = Enum.GetValues<SummaryKind>(), SelectedIndex = 0 };
         if (await ShowDialogAsync(CreateDialog(L("SummarizeTranscriptTitle"), choices, L("SummarizeButton"))) != ContentDialogResult.Primary) return;
-        _aiOperationCancellation = new CancellationTokenSource();
+        await RunSummaryWithTrackingAsync(track, (SummaryKind)(choices.SelectedItem ?? SummaryKind.Short));
+    }
+
+    private async Task RunSummaryWithTrackingAsync(SubtitleTrack track, SummaryKind summaryKind)
+    {
+        if (_aiOperationCancellation is not null) return;
+        SetRetryableAiOperation(null);
+        _activeSummaryKind = summaryKind;
+        var operation = RunSummaryAsync(track, summaryKind);
+        _aiSummaryTask = operation;
+        try { await operation; }
+        finally
+        {
+            if (ReferenceEquals(_aiSummaryTask, operation)) _aiSummaryTask = null;
+        }
+    }
+
+    private async Task RunSummaryAsync(SubtitleTrack track, SummaryKind summaryKind)
+    {
+        using var cancellation = new CancellationTokenSource();
+        _aiOperationCancellation = cancellation;
         try
         {
             var provider = CreateLlmProvider();
             using var disposable = provider as IDisposable;
-            var service = new LlmService(provider, _settings.Llm.Model, _settings.Llm.ThinkingLevel);
+            var service = new LlmService(provider, _settings.Llm.Model!, _settings.Llm.ThinkingLevel);
             var progress = new Progress<double>(value => StatusText.Text = F("StatusSummarizing", value));
             var summaryLanguage = _settings.Llm.TranslationLanguage.Trim();
-            var summary = await service.SummarizeAsync(track.Cues, (SummaryKind)(choices.SelectedItem ?? SummaryKind.Short), summaryLanguage, progress, cancellationToken: _aiOperationCancellation.Token);
+            var summary = await service.SummarizeAsync(track.Cues, summaryKind, summaryLanguage, progress, cancellationToken: cancellation.Token);
             // ContentDialog has a 548px maximum width including its padding. Keep the
             // summary content below that limit so the text can wrap inside the dialog.
             var summaryWidth = Math.Min(480, Math.Max(240, RootGrid.ActualWidth - 96));
@@ -2638,13 +2668,59 @@ public sealed partial class MainWindow : Window
         }
         catch (OperationCanceledException) { StatusText.Text = L("StatusSummaryCancelled"); }
         catch (Exception exception) { await ShowMessageAsync("LLM_ERROR", exception.Message); }
-        finally { _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null; }
+        finally
+        {
+            if (ReferenceEquals(_aiOperationCancellation, cancellation)) _aiOperationCancellation = null;
+        }
     }
 
     private void OnCancelAiClick(object sender, RoutedEventArgs e)
     {
         CancelPendingSeekAiRestart();
-        _aiOperationCancellation?.Cancel();
+        if (_aiOperationCancellation is null) return;
+        var kind = _aiSummaryTask is { IsCompleted: false } ? AiRetryOperationKind.Summary : AiRetryOperationKind.SubtitlePipeline;
+        SetRetryableAiOperation(new AiRetryRequest(kind, _activeSummaryKind, _document, _playback.CurrentSource));
+        _aiOperationCancellation.Cancel();
+    }
+
+    private async void OnRetryAiClick(object sender, RoutedEventArgs e)
+    {
+        var retry = _retryableAiOperation;
+        if (retry is null) return;
+        SetRetryableAiOperation(null);
+        if (!IsRetryStillValid(retry)) return;
+
+        try
+        {
+            await CancelAiPipelineAsync();
+            if (retry.Kind == AiRetryOperationKind.Summary)
+            {
+                var track = _document.ActiveTrack;
+                if (track is null || track.Cues.Count == 0 || string.IsNullOrWhiteSpace(_settings.Llm.Model)) return;
+                await RunSummaryWithTrackingAsync(track, retry.SummaryKind);
+                return;
+            }
+
+            if (!GenerateSubtitlesMenuItem.IsChecked && !TranslateMenuItem.IsChecked) return;
+            StartCheckedAiPipeline(continueExistingResults: true);
+        }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("warning", "ai", "AI_RETRY_ERROR", exception.Message, exception);
+        }
+    }
+
+    private void SetRetryableAiOperation(AiRetryRequest? retry)
+    {
+        _retryableAiOperation = retry;
+        RetryAiMenuItem.IsEnabled = retry is not null;
+    }
+
+    private bool IsRetryStillValid(AiRetryRequest retry)
+    {
+        if (!ReferenceEquals(_document, retry.Document)) return false;
+        return retry.Kind != AiRetryOperationKind.SubtitlePipeline ||
+            string.Equals(_playback.CurrentSource, retry.Source, StringComparison.OrdinalIgnoreCase);
     }
 
     private ILlmProvider CreateLlmProvider()

@@ -23,21 +23,35 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
         if (batchSize is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(batchSize));
         var input = cues.ToArray();
         var result = new Dictionary<Guid, string>();
+        const int maximumTranslationAttempts = 3;
         for (var offset = 0; offset < input.Length; offset += batchSize)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var batch = input.Skip(offset).Take(batchSize).Select(cue => new TranslationItem(cue.Id, cue.Text)).ToArray();
             var prompt = $"Translate every item to {targetLanguage}. Preserve meaning, speaker labels, line breaks where useful, and formatting tags. Return one JSON object with an 'items' array. Every array item should contain the exact original 'id' and a 'text' string. Do not add, omit, merge, reorder, or change items. If an id cannot be copied exactly, still return every item in the original order and include its zero-based 'index'. Do not return commentary outside the JSON. Input:\n{JsonSerializer.Serialize(new { items = batch }, LlmJson.Options)}";
-            var response = await provider.GenerateAsync(model, "You are a precise subtitle translator. Timestamps are managed by the application and must never appear in your output.", prompt, new LlmGenerationOptions(thinkingLevel, 0.1, true), cancellationToken);
-            ParsedTranslations parsedTranslations;
-            try
+            ParsedTranslations? parsedTranslations = null;
+            JsonException? parseException = null;
+            for (var attempt = 1; attempt <= maximumTranslationAttempts; attempt++)
             {
-                parsedTranslations = ParseTranslations(response);
+                cancellationToken.ThrowIfCancellationRequested();
+                var requestPrompt = attempt == 1
+                    ? prompt
+                    : $"{prompt}\n\nThe previous response was invalid JSON. Retry this translation and return only one valid JSON object with the required items array.";
+                var response = await provider.GenerateAsync(model, "You are a precise subtitle translator. Timestamps are managed by the application and must never appear in your output.", requestPrompt, new LlmGenerationOptions(thinkingLevel, 0.1, true), cancellationToken);
+                try
+                {
+                    parsedTranslations = ParseTranslations(response);
+                    break;
+                }
+                catch (JsonException exception)
+                {
+                    parseException = exception;
+                    if (attempt < maximumTranslationAttempts)
+                        await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), cancellationToken).ConfigureAwait(false);
+                }
             }
-            catch (JsonException exception)
-            {
-                throw new LlmProviderException(provider.Id, "Translation response was not valid JSON.", innerException: exception);
-            }
+            if (parsedTranslations is null)
+                throw new LlmProviderException(provider.Id, "Translation response was not valid JSON.", innerException: parseException);
 
             var translations = ResolveTranslations(batch, parsedTranslations);
             var completedBatch = new Dictionary<Guid, string>();

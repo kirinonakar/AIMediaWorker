@@ -79,7 +79,9 @@
             <MenuBarItem x:Uid="AiMenu" Title="AI">
                 <ToggleMenuFlyoutItem x:Uid="GenerateSubtitles" x:Name="GenerateSubtitlesMenuItem" Text="Generate subtitles" Click="OnGenerateSubtitleClick" />
                 <ToggleMenuFlyoutItem x:Uid="Translate" x:Name="TranslateMenuItem" Text="Translate" Click="OnTranslateClick" />
-                <MenuFlyoutItem x:Uid="Summarize" Text="Summarize…" Click="OnSummarizeClick" /><MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="CancelAi" Text="Cancel current AI operation" Click="OnCancelAiClick" />
+                <MenuFlyoutItem x:Uid="Summarize" Text="Summarize…" Click="OnSummarizeClick" /><MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Uid="RetryAi" x:Name="RetryAiMenuItem" Text="Retry AI operation" IsEnabled="False" Click="OnRetryAiClick" />
+                <MenuFlyoutItem x:Uid="CancelAi" Text="Cancel current AI operation" Click="OnCancelAiClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="ViewMenu" Title="View">
                 <MenuFlyoutItem x:Uid="Fullscreen" x:Name="FullscreenMenuItem" Text="Fullscreen" Click="OnFullscreenClick" />
@@ -88,8 +90,7 @@
                 <ToggleMenuFlyoutItem x:Uid="ShowBottomPanel" x:Name="ShowBottomPanelMenuItem" Text="Show timeline panel" IsChecked="True" Click="OnToggleBottomPanelClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="ToolsMenu" Title="Tools">
-                <MenuFlyoutItem x:Uid="AddWebDavServerMenu" Text="Add WebDAV server…" Click="OnAddWebDavServerClick" /><MenuFlyoutItem x:Uid="CameraCaptions" Text="Camera and live captions…" Click="OnCameraClick" />
-                <MenuFlyoutItem x:Uid="Diagnostics" Text="Diagnostics…" Click="OnDiagnosticsClick" />
+                <MenuFlyoutItem x:Uid="CameraCaptions" Text="Camera and live captions…" Click="OnCameraClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SettingsMenu" Title="Settings"><MenuFlyoutItem x:Uid="Preferences" Text="Preferences…" Click="OnSettingsClick" /></MenuBarItem>
             <MenuBarItem x:Uid="HelpMenu" Title="Help"><MenuFlyoutItem x:Uid="About" Text="About" Click="OnAboutClick" /></MenuBarItem>

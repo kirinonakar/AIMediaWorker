@@ -23,6 +23,21 @@ public sealed class LlmTests
     }
 
     [Fact]
+    public async Task TranslationRetriesWhenProviderReturnsInvalidJson()
+    {
+        var calls = 0;
+        var cue = new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "Hello" };
+        var provider = new FakeProvider(_ => ++calls == 1
+            ? "This is not JSON"
+            : $"{{\"items\":[{{\"id\":\"{cue.Id}\",\"text\":\"안녕하세요\"}}]}}");
+
+        var translated = await new LlmService(provider, "fake").TranslateAsync([cue], "Korean");
+
+        Assert.Equal(2, calls);
+        Assert.Equal("안녕하세요", translated[cue.Id]);
+    }
+
+    [Fact]
     public async Task TranslationProcessesSmallBatchesAndReportsEachCompletedBatch()
     {
         var calls = 0;
