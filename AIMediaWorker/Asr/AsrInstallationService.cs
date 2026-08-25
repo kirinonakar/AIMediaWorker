@@ -95,7 +95,8 @@ public sealed class AsrInstallationService
                                          IProgress<AsrInstallationProgress>? progress,
                                          CancellationToken cancellationToken)
     {
-        if (FindInstalledFfmpegPath(_workerDirectory) is { } existingPath && IsNonEmptyFile(existingPath))
+        var existingPath = FindInstalledFfmpegPath(_workerDirectory) ?? FindFfmpegOnPath();
+        if (existingPath is not null)
         {
             progress?.Report(new("requirements-skipped", "FFmpeg", rangeEnd));
             return;
@@ -280,6 +281,23 @@ public sealed class AsrInstallationService
 
         var legacyPath = Path.Combine(workerDirectory, "ffmpeg.exe");
         return IsNonEmptyFile(legacyPath) ? legacyPath : null;
+    }
+
+    private static string? FindFfmpegOnPath()
+    {
+        var pathVariable = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathVariable)) return null;
+
+        foreach (var pathEntry in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var directory = pathEntry.Trim().Trim('"');
+            if (directory.Length == 0) continue;
+
+            var executable = Path.Combine(directory, "ffmpeg.exe");
+            if (IsNonEmptyFile(executable)) return executable;
+        }
+
+        return null;
     }
 
     private static void TryDeleteFile(string path)

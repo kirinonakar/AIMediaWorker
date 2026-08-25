@@ -117,7 +117,7 @@
   <data name="FileAssociationsSelectionRequiredMessage"><value>拡張子を1つ以上選択してください。</value></data>
   <data name="DefaultAppsOpenFailedMessage"><value>Windowsの既定のアプリ設定を開けませんでした。</value></data>
   <data name="AsrInstallationHeading.Text"><value>音声認識のインストール</value></data>
-  <data name="AsrInstallationDescription.Text"><value>実行ファイル下のasr-workerにFFmpegとCrispASRランタイムをインストールし、asr-worker\modelsにQwen3 GGUFモデルをダウンロードします。インストール済みの項目はスキップします。</value></data>
+  <data name="AsrInstallationDescription.Text"><value>PATHにFFmpegがない場合のみ実行ファイル下のasr-workerにFFmpegをインストールし、CrispASRランタイムとQwen3 GGUFモデルを準備します。インストール済みの項目はスキップします。</value></data>
   <data name="InstallAsrButton.Content"><value>インストール</value></data>
   <data name="AsrInstallStartingMessage"><value>音声認識のインストール状態を確認中…</value></data>
   <data name="AsrInstallRuntimeMessage"><value>CrispASRランタイムを確認中: {0}</value></data>

@@ -117,7 +117,7 @@
   <data name="FileAssociationsSelectionRequiredMessage"><value>Select at least one extension.</value></data>
   <data name="DefaultAppsOpenFailedMessage"><value>Windows Default apps settings could not be opened.</value></data>
   <data name="AsrInstallationHeading.Text"><value>ASR installation</value></data>
-  <data name="AsrInstallationDescription.Text"><value>Installs FFmpeg and the CrispASR native runtime under asr-worker, then downloads the Qwen3 GGUF models to asr-worker\models. Existing components are skipped.</value></data>
+  <data name="AsrInstallationDescription.Text"><value>Installs FFmpeg (unless it is already available in PATH) and the CrispASR native runtime under asr-worker, then downloads the Qwen3 GGUF models to asr-worker\models. Existing components are skipped.</value></data>
   <data name="InstallAsrButton.Content"><value>Install</value></data>
   <data name="AsrInstallStartingMessage"><value>Checking the ASR installation…</value></data>
   <data name="AsrInstallRuntimeMessage"><value>Checking the CrispASR runtime: {0}</value></data>

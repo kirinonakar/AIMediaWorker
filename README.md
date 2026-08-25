@@ -78,7 +78,9 @@ ffmpeg -version
 ffprobe -version
 ```
 
-FFmpeg is used as the audio extractor for ASR. Child processes are terminated when work is cancelled.
+If `ffmpeg.exe` is already available in `PATH`, the ASR installer skips the
+local FFmpeg download and uses that executable. FFmpeg is used as the audio
+extractor for ASR. Child processes are terminated when work is cancelled.
 
 ## Screenshots
 
