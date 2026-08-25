@@ -2874,6 +2874,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void OnWebDavDeleteServerButtonLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        var label = L("DeleteButtonText");
+        ToolTipService.SetToolTip(button, label);
+        AutomationProperties.SetName(button, label);
+    }
+
     private async Task ConnectWebDavServerAsync(WebDavServerSettings server, Uri? directory = null)
     {
         var credential = _webDavCredentials.Read(server.Id);

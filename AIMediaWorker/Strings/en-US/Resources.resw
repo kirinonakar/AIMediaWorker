@@ -45,8 +45,6 @@
   <data name="FavoritesEmptyText.Text"><value>No favorites</value></data>
   <data name="AddWebDavServerMenu.Text"><value>Add WebDAV server…</value></data>
   <data name="WebDavAddServerCommand.Label"><value>Add WebDAV server</value></data>
-  <data name="WebDavDeleteServerButton.(AutomationProperties.Name)"><value>Delete server</value></data>
-  <data name="WebDavDeleteServerButton.(ToolTipService.ToolTip)"><value>Delete server</value></data>
   <data name="SettingsGeneralSection.Text"><value>General</value></data>
   <data name="SettingsPlaybackSection.Text"><value>Playback</value></data>
   <data name="SettingsSubtitleSection.Text"><value>Subtitle</value></data>

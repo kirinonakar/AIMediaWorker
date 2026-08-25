@@ -155,7 +155,7 @@
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Glyph="&#xE968;" />
                                                 <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                                <Button x:Uid="WebDavDeleteServerButton" Grid.Column="2" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0" Click="OnDeleteWebDavServerClick">
+                                                <Button Grid.Column="2" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0" Click="OnDeleteWebDavServerClick" Loaded="OnWebDavDeleteServerButtonLoaded">
                                                     <SymbolIcon Symbol="Delete" />
                                                 </Button>
                                             </Grid>
