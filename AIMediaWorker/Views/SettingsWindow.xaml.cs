@@ -439,9 +439,8 @@ public sealed partial class SettingsWindow : Window
         AsrInstallStatusText.Text = update.Stage switch
         {
             "runtime" => F("AsrInstallRuntimeMessage", detail),
-            "asr-skipped" or "mmproj-skipped" or "aligner-skipped" => F("AsrInstallModelSkippedMessage", update.Message),
-            "asr" or "mmproj" => F("AsrInstallModelMessage", update.Message, detail),
-            "aligner" => F("AsrInstallModelMessage", update.Message, detail),
+            "asr-skipped" or "aligner-skipped" => F("AsrInstallModelSkippedMessage", update.Message),
+            "asr" or "aligner" => F("AsrInstallModelMessage", update.Message, detail),
             "complete" => L("AsrInstallCompleteMessage"),
             _ => detail
         };

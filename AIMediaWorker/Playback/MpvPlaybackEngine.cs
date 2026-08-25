@@ -20,6 +20,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private Task? _preparationTask;
     private Task? _initializationTask;
     private CancellationTokenSource? _trackRefreshCancellation;
+    private CancellationTokenSource? _editorSubtitleSelectionCancellation;
     private long _nextCommandId;
     private PlaybackState _state = PlaybackState.Uninitialized;
     private string? _editorSubtitlePath;
@@ -226,6 +227,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         Duration = TimeSpan.Zero;
         VideoWidth = null;
         VideoHeight = null;
+        CancelPendingEditorSubtitleSelection();
         _editorSubtitlePath = null;
         cancellationToken.ThrowIfCancellationRequested();
         if (httpHeaders is null || httpHeaders.Count == 0) SetProperty("http-header-fields", string.Empty);
@@ -314,41 +316,60 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public void UpdateEditorSubtitle(string path)
     {
         var fullPath = Path.GetFullPath(path);
-        lock (_subtitleCommandSync)
+        var selectionCancellation = new CancellationTokenSource();
+        try
         {
-            EnsureAvailable();
-            var wasPlaying = _state == PlaybackState.Playing;
-            var trackIds = FindExternalSubtitleTrackIds(fullPath);
-            if (trackIds.Count == 0)
+            lock (_subtitleCommandSync)
             {
+                EnsureAvailable();
+                var wasPlaying = _state == PlaybackState.Playing;
+                var trackIds = FindExternalSubtitleTrackIds(fullPath);
+                _editorSubtitlePath = fullPath;
+
                 SetProperty("sid", "no");
                 SetProperty("secondary-sid", "no");
-                Command("sub-add", fullPath, "select");
-            }
-            else
-            {
-                // A previous interrupted update can leave duplicate instances of the
-                // temporary track behind. Keep one track, select it explicitly, and
-                // reload that track so mpv cannot continue rendering an older selection.
-                SetProperty("sid", "no");
-                SetProperty("secondary-sid", "no");
-                foreach (var duplicateId in trackIds.Skip(1).OrderByDescending(id => id))
-                    Command("sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
 
-                var editorTrackId = trackIds[0];
-                SetProperty("sid", editorTrackId.ToString(CultureInfo.InvariantCulture));
-                // Queue the reload instead of synchronously waiting for libass to
-                // rebuild the track. This method is called while ASR/translation
-                // results are being applied and must not block playback.
-                MpvInterop.CommandAsync(_context, NextCommandId(), "sub-reload", editorTrackId.ToString(CultureInfo.InvariantCulture));
-            }
+                if (trackIds.Count == 0)
+                {
+                    // sub-add loads the file asynchronously inside mpv. The follow-up
+                    // selector below will select this track again once it is visible in
+                    // track-list, which is important when an embedded subtitle was
+                    // selected before the editor overlay was added.
+                    Command("sub-add", fullPath, "select");
+                }
+                else
+                {
+                    // A previous interrupted update can leave duplicate instances of the
+                    // temporary track behind. Keep one track, select it explicitly, and
+                    // reload that track so mpv cannot continue rendering an older selection.
+                    foreach (var duplicateId in trackIds.Skip(1).OrderByDescending(id => id))
+                        Command("sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
 
-            // Subtitle track changes can briefly inherit mpv's paused state while
-            // the external file is parsed. Preserve the user's active playback.
-            if (wasPlaying) MpvInterop.CommandAsync(_context, NextCommandId(), "set", "pause", "no");
-            RestoreSubtitleVisibility();
-            _editorSubtitlePath = fullPath;
+                    var editorTrackId = trackIds[0];
+                    SetProperty("sid", editorTrackId.ToString(CultureInfo.InvariantCulture));
+                    // Queue the reload instead of synchronously waiting for libass to
+                    // rebuild the track. This method is called while ASR/translation
+                    // results are being applied and must not block playback.
+                    MpvInterop.CommandAsync(_context, NextCommandId(), "sub-reload", editorTrackId.ToString(CultureInfo.InvariantCulture));
+                }
+
+                // Subtitle track changes can briefly inherit mpv's paused state while
+                // the external file is parsed. Preserve the user's active playback.
+                if (wasPlaying) MpvInterop.CommandAsync(_context, NextCommandId(), "set", "pause", "no");
+                RestoreSubtitleVisibility();
+
+                var previousSelection = Interlocked.Exchange(ref _editorSubtitleSelectionCancellation, selectionCancellation);
+                previousSelection?.Cancel();
+                previousSelection?.Dispose();
+            }
         }
+        catch
+        {
+            selectionCancellation.Dispose();
+            throw;
+        }
+
+        _ = EnsureEditorSubtitleSelectedAsync(fullPath, selectionCancellation.Token);
     }
 
     public bool IsEditorSubtitleSelected
@@ -471,6 +492,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     {
         if (_disposed) return;
         _disposed = true;
+        CancelPendingEditorSubtitleSelection();
         if (_initializationTask is { } initialization)
         {
             try { await initialization.ConfigureAwait(false); }
@@ -643,6 +665,45 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         lock (_sync) { _tracks.Clear(); _tracks.AddRange(result); }
         RestoreSubtitleVisibility();
         TracksChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task EnsureEditorSubtitleSelectedAsync(string fullPath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // mpv processes sub-add asynchronously. Retry briefly so an existing native
+            // subtitle cannot remain selected simply because track-list has not caught up
+            // when UpdateEditorSubtitle returns.
+            for (var attempt = 0; attempt < 30; attempt++)
+            {
+                await Task.Delay(attempt == 0 ? TimeSpan.Zero : TimeSpan.FromMilliseconds(50), cancellationToken).ConfigureAwait(false);
+                lock (_subtitleCommandSync)
+                {
+                    if (_disposed || _context == 0 || !PathsEqual(_editorSubtitlePath ?? string.Empty, fullPath)) return;
+                    var trackIds = FindExternalSubtitleTrackIds(fullPath);
+                    if (trackIds.Count == 0) continue;
+
+                    SetProperty("secondary-sid", "no");
+                    foreach (var duplicateId in trackIds.Skip(1).OrderByDescending(id => id))
+                        Command("sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
+                    SetProperty("sid", trackIds[0].ToString(CultureInfo.InvariantCulture));
+                    RestoreSubtitleVisibility();
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) when (!_disposed)
+        {
+            RaiseError("PLAYBACK_ERROR", "The editor subtitle could not be selected.", exception);
+        }
+    }
+
+    private void CancelPendingEditorSubtitleSelection()
+    {
+        var cancellation = Interlocked.Exchange(ref _editorSubtitleSelectionCancellation, null);
+        cancellation?.Cancel();
+        cancellation?.Dispose();
     }
 
     private List<int> FindExternalSubtitleTrackIds(string fullPath, bool selectedOnly = false)

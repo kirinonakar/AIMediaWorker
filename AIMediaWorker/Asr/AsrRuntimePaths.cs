@@ -3,7 +3,6 @@ namespace AIMediaWorker.Asr;
 public static class AsrRuntimePaths
 {
     public const string AsrModelFileName = "Qwen3-ASR-1.7B-Q8_0.gguf";
-    public const string MmprojModelFileName = "mmproj-Qwen3-ASR-1.7B-bf16.gguf";
     public const string AlignerModelFileName = "qwen3-forced-aligner-0.6b-q8_0.gguf";
 
     public static string WorkerDirectory => Path.Combine(AppContext.BaseDirectory, "asr-worker");
@@ -11,7 +10,6 @@ public static class AsrRuntimePaths
     public static string ModelsDirectory => Path.Combine(WorkerDirectory, "models");
     public static string CrispAsrDllPath => Path.Combine(CrispAsrRuntimeDirectory, "crispasr.dll");
     public static string AsrModelPath => Path.Combine(ModelsDirectory, AsrModelFileName);
-    public static string MmprojModelPath => Path.Combine(ModelsDirectory, MmprojModelFileName);
     public static string AlignerModelPath => Path.Combine(ModelsDirectory, AlignerModelFileName);
 
     public static string GetWorkerDirectory(string? anchorPath)

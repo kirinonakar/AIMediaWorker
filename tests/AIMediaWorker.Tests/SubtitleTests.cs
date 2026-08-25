@@ -216,4 +216,22 @@ public sealed class SubtitleTests
         command.Undo();
         Assert.Equal("좋은 아침", cue.TranslatedText);
     }
+
+    [Fact]
+    public void SubtitleWritersPersistTheSelectedTranslationDisplayMode()
+    {
+        var track = new SubtitleTrack { Format = "srt" };
+        track.Cues.Add(new SubtitleCue
+        {
+            StartMicroseconds = 0,
+            EndMicroseconds = 1_000_000,
+            Text = "Hello",
+            TranslatedText = "안녕하세요"
+        });
+
+        Assert.Contains("안녕하세요", SrtWriter.Write(track, SubtitleDisplayMode.Translation));
+        Assert.Contains("안녕하세요", VttWriter.Write(track, SubtitleDisplayMode.Translation));
+        Assert.Contains("안녕하세요", AssWriter.Write(track, SubtitleDisplayMode.Translation));
+        Assert.DoesNotContain("Hello", SrtWriter.Write(track, SubtitleDisplayMode.Translation));
+    }
 }

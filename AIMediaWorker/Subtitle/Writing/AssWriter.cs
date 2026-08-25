@@ -8,11 +8,14 @@ public static class AssWriter
     private const string HeaderPrefix = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n";
     private const string EventsHeader = "\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n";
 
-    public static string Write(SubtitleTrack track, string? fontFamily = null)
+    public static string Write(SubtitleTrack track, string? fontFamily = null, SubtitleDisplayMode displayMode = SubtitleDisplayMode.Original)
     {
         ArgumentNullException.ThrowIfNull(track);
-        return Write(track.Cues.Select(cue => new AssCueSnapshot(cue.Id, cue.StartMicroseconds, cue.EndMicroseconds, cue.Text, cue.Style, cue.Speaker)).ToArray(), track.NativeHeader, fontFamily);
+        return Write(track.Cues.Select(cue => new AssCueSnapshot(cue.Id, cue.StartMicroseconds, cue.EndMicroseconds, cue.GetDisplayText(displayMode), cue.Style, cue.Speaker)).ToArray(), track.NativeHeader, fontFamily);
     }
+
+    public static string Write(SubtitleTrack track, SubtitleDisplayMode displayMode, string? fontFamily = null) =>
+        Write(track, fontFamily, displayMode);
 
     public static string Write(IReadOnlyList<AssCueSnapshot> cues, string? nativeHeader, string? fontFamily = null)
     {

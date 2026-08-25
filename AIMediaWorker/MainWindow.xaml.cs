@@ -902,7 +902,13 @@ public sealed partial class MainWindow : Window
         try
         {
             var targetFormat = System.IO.Path.GetExtension(path).ToLowerInvariant() switch { ".vtt" => "vtt", ".ass" or ".ssa" => "ass", _ => "srt" };
-            var text = targetFormat switch { "vtt" => VttWriter.Write(track), "ass" => AssWriter.Write(track, _settings.Subtitle.FontFamily), _ => SrtWriter.Write(track) };
+            var displayMode = _subtitleDisplayMode ?? SubtitleDisplayMode.Original;
+            var text = targetFormat switch
+            {
+                "vtt" => VttWriter.Write(track, displayMode),
+                "ass" => AssWriter.Write(track, _settings.Subtitle.FontFamily, displayMode),
+                _ => SrtWriter.Write(track, displayMode)
+            };
             var convertedWithStyleLoss = !track.Format.Equals(targetFormat, StringComparison.OrdinalIgnoreCase) && track.Cues.Any(cue => !string.IsNullOrWhiteSpace(cue.Style));
             await File.WriteAllTextAsync(path, text, ResolveSubtitleEncoding());
             track.Format = targetFormat;
@@ -3376,6 +3382,16 @@ public sealed partial class MainWindow : Window
             var contentChanged = !string.Equals(content, _renderedOverlayContent, StringComparison.Ordinal);
             var fontChanged = !string.Equals(fontFamily, _renderedOverlayFontFamily, StringComparison.OrdinalIgnoreCase);
             var displayModeChanged = displayMode != _renderedOverlayDisplayMode;
+
+            // Translation completion can schedule one final forced sync even when the
+            // last batch did not change the rendered text. Re-select the existing editor
+            // track in that case instead of rewriting/reloading ASS, which causes a
+            // visible one-frame subtitle blink.
+            if (!contentChanged && !fontChanged && (displayModeChanged || force) && _playback.RestoreEditorSubtitleAfterSeek())
+            {
+                _renderedOverlayDisplayMode = displayMode;
+                return;
+            }
             if (!force && !contentChanged && !fontChanged && !displayModeChanged) return;
 
             if (!ReferenceEquals(_document, document)) return;

@@ -11,7 +11,6 @@ public sealed class AsrInstallationService
     // The similarly named ggml-org file is a llama.cpp qwen3vl + mmproj pair
     // and cannot be opened through the CrispASR C ABI.
     private const string AsrModelUrl = "https://huggingface.co/cstr/qwen3-asr-1.7b-GGUF/resolve/main/qwen3-asr-1.7b-q8_0.gguf?download=true";
-    private const string MmprojModelUrl = "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main/mmproj-Qwen3-ASR-1.7B-bf16.gguf?download=true";
     private const string AlignerModelUrl = "https://huggingface.co/cstr/qwen3-forced-aligner-0.6b-GGUF/resolve/main/qwen3-forced-aligner-0.6b-q8_0.gguf?download=true";
     private static readonly HttpClient Http = new(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All })
     {
@@ -33,10 +32,9 @@ public sealed class AsrInstallationService
         Directory.CreateDirectory(_modelsDirectory);
         progress?.Report(new("runtime", "CrispASR native runtime is ready.", 0.05));
 
-        await DownloadModelAsync("asr", AsrModelUrl, AsrRuntimePaths.AsrModelFileName, 0.05, 0.45, progress, cancellationToken,
+        await DownloadModelAsync("asr", AsrModelUrl, AsrRuntimePaths.AsrModelFileName, 0.05, 0.55, progress, cancellationToken,
             CrispAsrModelFormat.IsCrispAsrQwen3Model).ConfigureAwait(false);
-        await DownloadModelAsync("mmproj", MmprojModelUrl, AsrRuntimePaths.MmprojModelFileName, 0.45, 0.65, progress, cancellationToken).ConfigureAwait(false);
-        await DownloadModelAsync("aligner", AlignerModelUrl, AsrRuntimePaths.AlignerModelFileName, 0.65, 1.0, progress, cancellationToken).ConfigureAwait(false);
+        await DownloadModelAsync("aligner", AlignerModelUrl, AsrRuntimePaths.AlignerModelFileName, 0.55, 1.0, progress, cancellationToken).ConfigureAwait(false);
         progress?.Report(new("complete", _modelsDirectory, 1.0));
     }
 

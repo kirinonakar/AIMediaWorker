@@ -80,17 +80,50 @@ Use the camera button in the playback toolbar or **Playback → Save current fra
 
 ## Native Qwen3 and CrispASR setup
 
-Place the already prepared native CrispASR runtime at
-`asr-worker\crispasr`. The WinUI3 C# process loads `crispasr.dll`
-directly and calls its C ABI for both Qwen3 ASR and forced alignment. No helper
-ASR executable is built or launched.
+### Install the CrispASR runtime
+
+AIMediaWorker uses CrispASR in-process through its C ABI. Download the full
+Windows CUDA **lib** bundle below. The currently tested runtime is CrispASR
+v0.8.29:
+
+- [Download `libcrispasr-windows-x86_64-cuda.tar.gz`](https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.29/libcrispasr-windows-x86_64-cuda.tar.gz)
+- [View all CrispASR releases](https://github.com/CrispStrobe/CrispASR/releases)
+
+The full bundle is self-contained and includes `crispasr.dll`, the `ggml`
+backend DLLs, and the CUDA runtime DLLs.
+
+On Windows, extract the downloaded `.tar.gz` twice if required by the archive
+tool, then copy every DLL from its `bin` directory into the repository's
+`asr-worker\crispasr` directory. With PowerShell, when the archive is in the
+repository root:
+
+```powershell
+tar -xzf .\libcrispasr-windows-x86_64-cuda.tar.gz
+New-Item -ItemType Directory -Force .\asr-worker\crispasr | Out-Null
+Copy-Item .\libcrispasr-windows-x86_64-cuda\bin\*.dll .\asr-worker\crispasr\ -Force
+```
+
+The resulting layout must be flat; native dependencies must be beside
+`crispasr.dll`:
+
+```text
+asr-worker/
+└─ crispasr/
+   ├─ crispasr.dll
+   ├─ ggml-base.dll
+   ├─ ggml-cpu.dll
+   ├─ ggml-cuda.dll
+   ├─ ggml.dll
+   ├─ cudart64_*.dll
+   ├─ cublas64_*.dll
+   └─ cublasLt64_*.dll
+```
 
 Open **Settings → Automatic speech recognition** and choose **Install**. The
 installer checks the native runtime and downloads these exact files to
 `asr-worker\models` beside the executable:
 
 - `Qwen3-ASR-1.7B-Q8_0.gguf` (CrispASR single-file `qwen3asr` Q8_0 model)
-- `mmproj-Qwen3-ASR-1.7B-bf16.gguf` (kept as the requested companion asset; the CrispASR C ABI does not load it)
 - `qwen3-forced-aligner-0.6b-q8_0.gguf`
 
 In **Settings → Automatic speech recognition**, configure:
@@ -181,7 +214,7 @@ Corrupt settings are preserved as `settings.json.corrupt-*` and replaced with sa
 
 - **Playback unavailable**: confirm x64 `mpv-2.dll` and its dependencies are next to the executable. Check Diagnostics for an architecture mismatch.
 - **FFmpeg/FFprobe unavailable**: add both executables to `PATH`, restart the app, and inspect Diagnostics.
-- **MODEL_NOT_FOUND**: verify the three exact GGUF files under `asr-worker\models`.
+- **MODEL_NOT_FOUND**: verify the two exact GGUF files under `asr-worker\models`.
 - **CUDA_OOM**: use a lower-precision mode, reduce competing GPU load, or select CPU mode.
 - **WebDAV 401/403**: edit the server and re-enter the credential. Only Basic authentication is currently supported by the built-in WebDAV browser.
 - **Remote seek unavailable**: the origin must support byte ranges. mpv can continue sequential playback where the protocol permits.
