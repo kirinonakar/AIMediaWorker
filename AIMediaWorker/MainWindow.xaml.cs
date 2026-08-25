@@ -99,8 +99,12 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _overlayWriteLock = new(1, 1);
     private string? _renderedOverlayContent;
     private string? _renderedOverlayFontFamily;
+    private SubtitleDisplayMode? _renderedOverlayDisplayMode;
     private Rectangle? _timelinePlayhead;
     private bool _subtitleEditorHasFocus;
+    private SubtitleDisplayMode? _subtitleDisplayMode;
+    private int? _selectedNativeSubtitleTrackId;
+    private bool _updatingSubtitleTrackSelector;
     private readonly List<PlaylistEntry> _playlist = [];
     private int _playlistIndex = -1;
     private RepeatMode _repeatMode;
@@ -125,6 +129,8 @@ public sealed partial class MainWindow : Window
     private readonly TaskCompletionSource _firstUiFrameReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _playbackInitializationTask;
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
+
+    private sealed record SubtitleSelectionOption(string DisplayName, SubtitleDisplayMode? DisplayMode, int? TrackId);
 
     public MainWindow() : this(null, new AppSettings()) { }
 
@@ -737,7 +743,6 @@ public sealed partial class MainWindow : Window
         TryPlayback(() => _playback.SetSubtitleVisibility(visible));
         SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
         _settings.Playback.ShowSubtitles = SubtitleVisibilityMenuItem.IsChecked;
-        if (visible && _document.ActiveTrack?.Cues.Count > 0) ScheduleSubtitleOverlaySync(force: true);
     }
     private void OnRateChanged(object sender, SelectionChangedEventArgs e) { if (RateCombo.SelectedItem is double rate && _playback.IsAvailable) TryPlayback(() => _playback.SetRate(rate)); }
     private void OnRepeatClick(object sender, RoutedEventArgs e)
@@ -1211,9 +1216,13 @@ public sealed partial class MainWindow : Window
         _playbackLinkedCueId = null;
         _renderedOverlayContent = null;
         _renderedOverlayFontFamily = null;
+        _renderedOverlayDisplayMode = null;
+        _subtitleDisplayMode = null;
+        _selectedNativeSubtitleTrackId = null;
         var track = _document.EnsureTrack();
+        if (track.Cues.Count > 0) _subtitleDisplayMode = SubtitleDisplayMode.Original;
         if (_document.FilePath is null && track.Cues.Count == 0) _document.MarkSaved();
-        SubtitleList.ItemsSource = track.Cues; _history.Clear(); DrawTimeline();
+        SubtitleList.ItemsSource = track.Cues; _history.Clear(); RefreshSubtitleTrackSelector(); DrawTimeline();
     }
 
     private void OnPlaybackStateChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
@@ -1244,10 +1253,12 @@ public sealed partial class MainWindow : Window
 
     private void OnPlaybackSeeked(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
     {
-        // A seek should never leave a stale subtitle frame on screen. Only take over the
-        // track again when the editor overlay was active; a user-selected native track must
-        // remain selected.
-        if (_playback.IsEditorSubtitleSelected) ScheduleSubtitleOverlaySync(force: true);
+        // Seeking can temporarily clear the selected subtitle track in libmpv. Restore the
+        // visibility preference and reselect the editor overlay without rebuilding its file.
+        ApplySubtitleVisibilityPreference();
+        if (_subtitleDisplayMode is not null && _document.ActiveTrack is { Cues.Count: > 0 } &&
+            !_playback.RestoreEditorSubtitleAfterSeek())
+            ScheduleSubtitleOverlaySync(force: true);
     });
 
     private void RefreshPlaybackPositionUi()
@@ -1295,10 +1306,58 @@ public sealed partial class MainWindow : Window
     {
         ApplySubtitleVisibilityPreference();
         AudioTrackCombo.ItemsSource = _playback.Tracks.Where(t => t.Type == MediaTrackType.Audio).ToArray(); AudioTrackCombo.SelectedItem = _playback.Tracks.FirstOrDefault(t => t.Type == MediaTrackType.Audio && t.IsSelected);
-        SubtitleTrackCombo.ItemsSource = _playback.Tracks.Where(t => t.Type == MediaTrackType.Subtitle).ToArray(); SubtitleTrackCombo.SelectedItem = _playback.Tracks.FirstOrDefault(t => t.Type == MediaTrackType.Subtitle && t.IsSelected);
+        RefreshSubtitleTrackSelector();
     });
     private void OnAudioTrackChanged(object sender, SelectionChangedEventArgs e) { if (AudioTrackCombo.SelectedItem is MediaTrack track) TryPlayback(() => _playback.SelectTrack(MediaTrackType.Audio, track.Id)); }
-    private void OnSubtitleTrackChanged(object sender, SelectionChangedEventArgs e) { if (SubtitleTrackCombo.SelectedItem is MediaTrack track) TryPlayback(() => _playback.SelectTrack(MediaTrackType.Subtitle, track.Id)); }
+    private void OnSubtitleTrackChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_updatingSubtitleTrackSelector || SubtitleTrackCombo.SelectedItem is not SubtitleSelectionOption option) return;
+        if (option.DisplayMode is { } displayMode)
+        {
+            SetSubtitleDisplayMode(displayMode, refreshOverlay: true);
+            return;
+        }
+
+        if (option.TrackId is not { } trackId) return;
+        _subtitleDisplayMode = null;
+        _selectedNativeSubtitleTrackId = trackId;
+        TryPlayback(() => _playback.SelectTrack(MediaTrackType.Subtitle, trackId));
+    }
+
+    private void RefreshSubtitleTrackSelector()
+    {
+        var options = new List<SubtitleSelectionOption>();
+        if (_document.ActiveTrack is { Cues.Count: > 0 } || _subtitleDisplayMode is not null)
+        {
+            options.Add(new SubtitleSelectionOption(L("SubtitleOptionOriginal"), SubtitleDisplayMode.Original, null));
+            options.Add(new SubtitleSelectionOption(L("SubtitleOptionTranslation"), SubtitleDisplayMode.Translation, null));
+            options.Add(new SubtitleSelectionOption(L("SubtitleOptionBoth"), SubtitleDisplayMode.OriginalAndTranslation, null));
+        }
+        options.AddRange(_playback.Tracks
+            .Where(track => track.Type == MediaTrackType.Subtitle)
+            .Select(track => new SubtitleSelectionOption(track.DisplayName, null, track.Id)));
+
+        _updatingSubtitleTrackSelector = true;
+        try
+        {
+            SubtitleTrackCombo.ItemsSource = options;
+            SubtitleTrackCombo.SelectedItem = _subtitleDisplayMode is { } displayMode
+                ? options.FirstOrDefault(option => option.DisplayMode == displayMode)
+                : _selectedNativeSubtitleTrackId is { } trackId
+                    ? options.FirstOrDefault(option => option.TrackId == trackId)
+                    : options.FirstOrDefault(option => option.TrackId is not null && _playback.Tracks.Any(track => track.Id == option.TrackId && track.IsSelected));
+        }
+        finally { _updatingSubtitleTrackSelector = false; }
+    }
+
+    private void SetSubtitleDisplayMode(SubtitleDisplayMode displayMode, bool refreshOverlay)
+    {
+        _subtitleDisplayMode = displayMode;
+        _selectedNativeSubtitleTrackId = null;
+        RefreshSubtitleTrackSelector();
+        if (refreshOverlay && _document.ActiveTrack is { Cues.Count: > 0 }) ScheduleSubtitleOverlaySync(force: true);
+    }
+
     private void OnPlaybackError(object? sender, PlaybackError e)
     {
         _ = AppLog.WriteAsync("error", "playback", e.Code, e.Message, e.Exception);
@@ -1911,6 +1970,7 @@ public sealed partial class MainWindow : Window
         var document = new SubtitleDocument();
         var track = document.EnsureTrack("srt"); track.Name = "Qwen3-ASR";
         BindDocument(document);
+        SetSubtitleDisplayMode(TranslateMenuItem.IsChecked ? SubtitleDisplayMode.Translation : SubtitleDisplayMode.Original, refreshOverlay: false);
         // Clear the previous generated track immediately. Otherwise a seek that restarts
         // ASR keeps displaying the old overlay until the first new segment arrives.
         ScheduleSubtitleOverlaySync();
@@ -2110,6 +2170,7 @@ public sealed partial class MainWindow : Window
     {
         _settings.Llm.TranslateSubtitles = TranslateMenuItem.IsChecked;
         if (!TranslateMenuItem.IsChecked) return;
+        SetSubtitleDisplayMode(SubtitleDisplayMode.Translation, refreshOverlay: false);
         _translationCompletedForCurrentMedia = false;
         StartCheckedAiPipeline();
     }
@@ -2138,6 +2199,7 @@ public sealed partial class MainWindow : Window
             return true;
         }
 
+        SetSubtitleDisplayMode(SubtitleDisplayMode.Translation, refreshOverlay: false);
         EnableGeneratedSubtitleOverlay();
         StatusText.Text = F("StatusTranslating", 0, cues.Length);
         var provider = CreateLlmProvider();
@@ -2175,7 +2237,7 @@ public sealed partial class MainWindow : Window
             if (!ReferenceEquals(_document, targetDocument)) return;
             var commands = batch.Items
                 .Where(item => cuesById.ContainsKey(item.Key))
-                .Select(item => (IUndoableSubtitleCommand)new EditSubtitleTextCommand(targetDocument, cuesById[item.Key], item.Value))
+                .Select(item => (IUndoableSubtitleCommand)new SetSubtitleTranslationCommand(targetDocument, cuesById[item.Key], item.Value))
                 .ToArray();
             if (commands.Length > 0) _history.Execute(new CompositeSubtitleCommand("Translate subtitle batch", commands));
             ScheduleGeneratedSubtitleUiRefresh();
@@ -3178,7 +3240,7 @@ public sealed partial class MainWindow : Window
 
     private void ScheduleSubtitleOverlaySync(bool force = false)
     {
-        if (!_playback.IsAvailable || _playback.CurrentSource is null || _document.ActiveTrack is null) return;
+        if (_subtitleDisplayMode is null || !_playback.IsAvailable || _playback.CurrentSource is null || _document.ActiveTrack is null) return;
         _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = new CancellationTokenSource();
         var token = _overlaySyncCancellation.Token;
         _ = SyncSubtitleOverlayAsync(token, force);
@@ -3227,8 +3289,9 @@ public sealed partial class MainWindow : Window
             var track = document.ActiveTrack;
             if (track is null) return;
             var fontFamily = _settings.Subtitle.FontFamily;
+            var displayMode = _subtitleDisplayMode ?? SubtitleDisplayMode.Original;
             var cues = track.Cues
-                .Select(cue => new AssCueSnapshot(cue.Id, cue.StartMicroseconds, cue.EndMicroseconds, cue.Text, cue.Style, cue.Speaker))
+                .Select(cue => new AssCueSnapshot(cue.Id, cue.StartMicroseconds, cue.EndMicroseconds, cue.GetDisplayText(displayMode), cue.Style, cue.Speaker))
                 .OrderBy(cue => cue.StartMicroseconds)
                 .ToArray();
             var nativeHeader = track.NativeHeader;
@@ -3236,7 +3299,8 @@ public sealed partial class MainWindow : Window
             if (!ReferenceEquals(_document, document)) return;
             var contentChanged = !string.Equals(content, _renderedOverlayContent, StringComparison.Ordinal);
             var fontChanged = !string.Equals(fontFamily, _renderedOverlayFontFamily, StringComparison.OrdinalIgnoreCase);
-            if (!force && !contentChanged && !fontChanged) return;
+            var displayModeChanged = displayMode != _renderedOverlayDisplayMode;
+            if (!force && !contentChanged && !fontChanged && !displayModeChanged) return;
 
             if (!ReferenceEquals(_document, document)) return;
             await _overlayWriteLock.WaitAsync(cancellationToken);
@@ -3250,6 +3314,7 @@ public sealed partial class MainWindow : Window
                 _playback.UpdateEditorSubtitle(_editorOverlayPath);
                 _renderedOverlayContent = content;
                 _renderedOverlayFontFamily = fontFamily;
+                _renderedOverlayDisplayMode = displayMode;
             }
             finally { _overlayWriteLock.Release(); }
         }

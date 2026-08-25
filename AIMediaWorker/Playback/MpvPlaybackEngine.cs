@@ -360,6 +360,22 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         }
     }
 
+    public bool RestoreEditorSubtitleAfterSeek()
+    {
+        string? path;
+        lock (_subtitleCommandSync) path = _editorSubtitlePath;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
+        lock (_subtitleCommandSync)
+        {
+            var trackId = FindExternalSubtitleTrackIds(path).FirstOrDefault();
+            if (trackId == 0) return false;
+            SetProperty("secondary-sid", "no");
+            SetProperty("sid", trackId.ToString(CultureInfo.InvariantCulture));
+            RestoreSubtitleVisibility();
+            return true;
+        }
+    }
+
     public void ConfigureNetwork(TimeSpan timeout, string? proxy)
     {
         TrySetProperty("network-timeout", Math.Clamp(timeout.TotalSeconds, 1, 600).ToString("0", CultureInfo.InvariantCulture));

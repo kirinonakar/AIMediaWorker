@@ -10,6 +10,14 @@ public sealed class EditSubtitleTextCommand(SubtitleDocument document, SubtitleC
     public void Undo() { cue.Text = _oldText; document.MarkDirty(); }
 }
 
+public sealed class SetSubtitleTranslationCommand(SubtitleDocument document, SubtitleCue cue, string newTranslation) : IUndoableSubtitleCommand
+{
+    private readonly string? _oldTranslation = cue.TranslatedText;
+    public string Description => "Translate subtitle";
+    public void Execute() { cue.TranslatedText = newTranslation; document.MarkDirty(); }
+    public void Undo() { cue.TranslatedText = _oldTranslation; document.MarkDirty(); }
+}
+
 public sealed class AddSubtitleCommand(SubtitleDocument document, ObservableCollection<SubtitleCue> cues, SubtitleCue cue, int index = -1) : IUndoableSubtitleCommand
 {
     private int _actualIndex;

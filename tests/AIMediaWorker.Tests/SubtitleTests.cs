@@ -198,4 +198,22 @@ public sealed class SubtitleTests
 
         Assert.Equal([(1_000_000L, 2_000_000L), (4_000_000L, 5_000_000L)], track.Cues.Select(cue => (cue.StartMicroseconds, cue.EndMicroseconds)));
     }
+
+    [Fact]
+    public void DisplayModesKeepOriginalTextAndSelectTranslationIndependently()
+    {
+        var cue = new SubtitleCue { Text = "おはよう", TranslatedText = "좋은 아침" };
+
+        Assert.Equal("おはよう", cue.GetDisplayText(SubtitleDisplayMode.Original));
+        Assert.Equal("좋은 아침", cue.GetDisplayText(SubtitleDisplayMode.Translation));
+        Assert.Equal("おはよう\n좋은 아침", cue.GetDisplayText(SubtitleDisplayMode.OriginalAndTranslation));
+
+        var document = new SubtitleDocument();
+        var command = new SetSubtitleTranslationCommand(document, cue, "안녕하세요");
+        command.Execute();
+        Assert.Equal("おはよう", cue.Text);
+        Assert.Equal("안녕하세요", cue.TranslatedText);
+        command.Undo();
+        Assert.Equal("좋은 아침", cue.TranslatedText);
+    }
 }
