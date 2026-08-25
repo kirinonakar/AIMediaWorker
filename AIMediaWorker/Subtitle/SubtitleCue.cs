@@ -25,8 +25,34 @@ public sealed class SubtitleCue : INotifyPropertyChanged
     public Guid Id { get; init; } = Guid.NewGuid();
     public long StartMicroseconds { get => _startMicroseconds; set => SetTime(ref _startMicroseconds, value); }
     public long EndMicroseconds { get => _endMicroseconds; set => SetTime(ref _endMicroseconds, value); }
-    public string Text { get => _text; set => Set(ref _text, value ?? string.Empty); }
-    public string? TranslatedText { get => _translatedText; set => Set(ref _translatedText, string.IsNullOrWhiteSpace(value) ? null : value); }
+    public string Text
+    {
+        get => _text;
+        set
+        {
+            var normalized = value ?? string.Empty;
+            if (_text == normalized) return;
+            _text = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasDistinctTranslation));
+        }
+    }
+
+    public string? TranslatedText
+    {
+        get => _translatedText;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? null : value;
+            if (string.Equals(_translatedText, normalized, StringComparison.Ordinal)) return;
+            _translatedText = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasDistinctTranslation));
+        }
+    }
+
+    public bool HasDistinctTranslation => !string.IsNullOrWhiteSpace(TranslatedText) &&
+        !string.Equals(Text, TranslatedText, StringComparison.Ordinal);
     public string? Style { get => _style; set => Set(ref _style, value); }
     public string? Speaker { get => _speaker; set => Set(ref _speaker, value); }
     public double? Confidence { get => _confidence; set => Set(ref _confidence, value); }

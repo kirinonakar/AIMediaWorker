@@ -204,9 +204,13 @@ public sealed class SubtitleTests
     {
         var cue = new SubtitleCue { Text = "おはよう", TranslatedText = "좋은 아침" };
 
+        Assert.True(cue.HasDistinctTranslation);
         Assert.Equal("おはよう", cue.GetDisplayText(SubtitleDisplayMode.Original));
         Assert.Equal("좋은 아침", cue.GetDisplayText(SubtitleDisplayMode.Translation));
         Assert.Equal("おはよう\n좋은 아침", cue.GetDisplayText(SubtitleDisplayMode.OriginalAndTranslation));
+
+        var duplicateCue = new SubtitleCue { Text = "おはよう", TranslatedText = "おはよう" };
+        Assert.False(duplicateCue.HasDistinctTranslation);
 
         var document = new SubtitleDocument();
         var command = new SetSubtitleTranslationCommand(document, cue, "안녕하세요");

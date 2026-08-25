@@ -65,7 +65,13 @@ When RTX Video Super Resolution is set to Auto or On, AIMediaWorker adds mpv's `
 
 ## FFmpeg setup
 
-Install `ffmpeg.exe` and `ffprobe.exe` and add their directory to `PATH`. Verify:
+Open **Settings → Automatic speech recognition** and choose **Install**. If
+FFmpeg is missing from `asr-worker\ffmpeg`, the installer downloads the Windows
+Essentials ZIP and places `ffmpeg.exe` and `ffprobe.exe` there. Existing files
+are skipped. A system `PATH` installation remains a valid fallback for ASR
+when the local executable is not present.
+
+For a manual installation, verify:
 
 ```powershell
 ffmpeg -version
@@ -120,8 +126,9 @@ asr-worker/
 ```
 
 Open **Settings → Automatic speech recognition** and choose **Install**. The
-installer checks the native runtime and downloads these exact files to
-`asr-worker\models` beside the executable:
+installer downloads CrispASR into `asr-worker\crispasr` only when
+`crispasr.dll` is missing, then downloads these exact model files to
+`asr-worker\models` beside the executable. Existing components are skipped:
 
 - `Qwen3-ASR-1.7B-Q8_0.gguf` (CrispASR single-file `qwen3asr` Q8_0 model)
 - `qwen3-forced-aligner-0.6b-q8_0.gguf`

@@ -117,14 +117,14 @@
   <data name="FileAssociationsSelectionRequiredMessage"><value>Select at least one extension.</value></data>
   <data name="DefaultAppsOpenFailedMessage"><value>Windows Default apps settings could not be opened.</value></data>
   <data name="AsrInstallationHeading.Text"><value>ASR installation</value></data>
-  <data name="AsrInstallationDescription.Text"><value>Checks the bundled CrispASR native runtime and downloads the Qwen3 GGUF models to asr-worker\models below the executable. Existing components are skipped.</value></data>
+  <data name="AsrInstallationDescription.Text"><value>Installs FFmpeg and the CrispASR native runtime under asr-worker, then downloads the Qwen3 GGUF models to asr-worker\models. Existing components are skipped.</value></data>
   <data name="InstallAsrButton.Content"><value>Install</value></data>
   <data name="AsrInstallStartingMessage"><value>Checking the ASR installation…</value></data>
   <data name="AsrInstallRuntimeMessage"><value>Checking the CrispASR runtime: {0}</value></data>
   <data name="AsrInstallRuntimeSkippedMessage"><value>CrispASR runtime already available — skipped</value></data>
   <data name="AsrInstallRuntimeCompleteMessage"><value>CrispASR runtime is ready</value></data>
   <data name="AsrInstallRequirementsMessage"><value>Installing requirements: {0}</value></data>
-  <data name="AsrInstallRequirementsSkippedMessage"><value>Requirements already installed — skipped</value></data>
+  <data name="AsrInstallRequirementsSkippedMessage"><value>{0} already installed — skipped</value></data>
   <data name="AsrInstallRequirementsCompleteMessage"><value>Requirements installed</value></data>
   <data name="AsrInstallModelMessage"><value>Downloading {0}: {1}</value></data><data name="AsrInstallModelSkippedMessage"><value>Already downloaded — skipped: {0}</value></data>
   <data name="AsrInstallCompleteMessage"><value>ASR installation complete</value></data>

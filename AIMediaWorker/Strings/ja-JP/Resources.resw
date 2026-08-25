@@ -117,14 +117,14 @@
   <data name="FileAssociationsSelectionRequiredMessage"><value>拡張子を1つ以上選択してください。</value></data>
   <data name="DefaultAppsOpenFailedMessage"><value>Windowsの既定のアプリ設定を開けませんでした。</value></data>
   <data name="AsrInstallationHeading.Text"><value>音声認識のインストール</value></data>
-  <data name="AsrInstallationDescription.Text"><value>内蔵CrispASRランタイムを確認し、実行ファイル下のasr-worker\modelsにQwen3 GGUFモデルをダウンロードします。インストール済みの項目はスキップします。</value></data>
+  <data name="AsrInstallationDescription.Text"><value>実行ファイル下のasr-workerにFFmpegとCrispASRランタイムをインストールし、asr-worker\modelsにQwen3 GGUFモデルをダウンロードします。インストール済みの項目はスキップします。</value></data>
   <data name="InstallAsrButton.Content"><value>インストール</value></data>
   <data name="AsrInstallStartingMessage"><value>音声認識のインストール状態を確認中…</value></data>
   <data name="AsrInstallRuntimeMessage"><value>CrispASRランタイムを確認中: {0}</value></data>
   <data name="AsrInstallRuntimeSkippedMessage"><value>CrispASRランタイムは準備済みのためスキップ</value></data>
   <data name="AsrInstallRuntimeCompleteMessage"><value>CrispASRランタイムの準備が完了しました</value></data>
   <data name="AsrInstallRequirementsMessage"><value>必須パッケージをインストール中: {0}</value></data>
-  <data name="AsrInstallRequirementsSkippedMessage"><value>必須パッケージはインストール済みのためスキップ</value></data>
+  <data name="AsrInstallRequirementsSkippedMessage"><value>{0}はインストール済みのためスキップ</value></data>
   <data name="AsrInstallRequirementsCompleteMessage"><value>必須パッケージをインストールしました</value></data>
   <data name="AsrInstallModelMessage"><value>{0}をダウンロード中: {1}</value></data><data name="AsrInstallModelSkippedMessage"><value>ダウンロード済みのためスキップ: {0}</value></data>
   <data name="AsrInstallCompleteMessage"><value>音声認識のインストールが完了しました</value></data>

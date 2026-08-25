@@ -1233,10 +1233,10 @@ public sealed partial class MainWindow : Window
                     Background = ThemeBrush("AccentFillColorDefaultBrush", Windows.UI.Color.FromArgb(255, 40, 130, 220)), CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 2, 4, 2),
                     Child = new TextBlock
                     {
-                        Text = cue.Text,
+                        Text = cue.GetDisplayText(SubtitleDisplayMode.OriginalAndTranslation),
                         TextWrapping = TextWrapping.Wrap,
                         TextTrimming = TextTrimming.CharacterEllipsis,
-                        MaxLines = 2,
+                        MaxLines = 4,
                         FontSize = 13,
                         LineHeight = 17,
                         Foreground = ThemeBrush("TextOnAccentFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255))

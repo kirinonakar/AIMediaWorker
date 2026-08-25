@@ -508,7 +508,7 @@ public sealed class AsrWorkerClient : IAsrEngine
         }).ToArray();
     }
 
-    private static async Task<float[]> DecodeMediaAsync(string input, long startMicroseconds, CancellationToken cancellationToken)
+    private async Task<float[]> DecodeMediaAsync(string input, long startMicroseconds, CancellationToken cancellationToken)
     {
         for (var attempt = 0; ; attempt++)
         {
@@ -531,7 +531,7 @@ public sealed class AsrWorkerClient : IAsrEngine
         return [];
     }
 
-    private static async Task<float[]> DecodeMediaOnceAsync(
+    private async Task<float[]> DecodeMediaOnceAsync(
         string input,
         long startMicroseconds,
         bool probeMore,
@@ -541,7 +541,7 @@ public sealed class AsrWorkerClient : IAsrEngine
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "ffmpeg",
+                FileName = AsrRuntimePaths.TryGetFfmpegPath(_runtimeDirectory) ?? "ffmpeg",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,

@@ -15,6 +15,8 @@ public sealed class AsrTests
         {
             Assert.Equal(Path.Combine(root, "build", "asr-worker"), AsrRuntimePaths.GetWorkerDirectory(runtime));
             Assert.Equal(Path.GetFullPath(runtime), AsrRuntimePaths.GetCrispAsrRuntimeDirectory(runtime));
+            Assert.Equal(Path.Combine(root, "build", "asr-worker", "ffmpeg"), AsrRuntimePaths.GetFfmpegDirectory(runtime));
+            Assert.Equal(Path.Combine(root, "build", "asr-worker", "ffmpeg", "ffmpeg.exe"), AsrRuntimePaths.GetFfmpegPath(runtime));
             Assert.Equal(Path.Combine(root, "build", "asr-worker", "models"), AsrRuntimePaths.GetModelsDirectory(runtime));
             Assert.Equal(Path.Combine(root, "build", "asr-worker", "crispasr", "crispasr.dll"), AsrRuntimePaths.CrispAsrDllPath.Replace(AsrRuntimePaths.CrispAsrRuntimeDirectory, runtime, StringComparison.OrdinalIgnoreCase));
         }
