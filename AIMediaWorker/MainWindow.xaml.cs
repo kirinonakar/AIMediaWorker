@@ -1917,13 +1917,16 @@ public sealed partial class MainWindow : Window
         }
         if (inside)
         {
-            if (cursor.Y <= top + 16 || MainMenuBar.Visibility == Visibility.Visible && cursor.Y <= top + 70) _showFullscreenMenuUntil = now.AddSeconds(1.5);
+            // Keep the top chrome discoverable across the full custom title-bar height.
+            if (cursor.Y <= top + 32 || MainMenuBar.Visibility == Visibility.Visible && cursor.Y <= top + 70) _showFullscreenMenuUntil = now.AddSeconds(1.5);
             if (cursor.Y >= bottom - 32 || PlaybackControls.Visibility == Visibility.Visible && cursor.Y >= bottom - 150) _showFullscreenControlsUntil = now.AddSeconds(1.5);
         }
         var verticallyAligned = cursor.Y >= top && cursor.Y < bottom;
         if (verticallyAligned && (cursor.X >= right - 64 && cursor.X <= right + 24 || SubtitlePanel.Visibility == Visibility.Visible && cursor.X >= right - _rightPanelWidth - 40 && cursor.X < right))
             _showFullscreenRightPanelUntil = now.AddSeconds(1.5);
-        MainMenuBar.Visibility = now < _showFullscreenMenuUntil ? Visibility.Visible : Visibility.Collapsed;
+        var showTopChrome = now < _showFullscreenMenuUntil;
+        AppTitleBarArea.Visibility = showTopChrome ? Visibility.Visible : Visibility.Collapsed;
+        MainMenuBar.Visibility = showTopChrome ? Visibility.Visible : Visibility.Collapsed;
         var showControls = now < _showFullscreenControlsUntil;
         PlaybackControls.Visibility = showControls ? Visibility.Visible : Visibility.Collapsed;
         StatusPanel.Visibility = showControls ? Visibility.Visible : Visibility.Collapsed;
