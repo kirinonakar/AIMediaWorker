@@ -41,6 +41,7 @@ namespace AIMediaWorker;
 public sealed partial class MainWindow : Window
 {
     private readonly MpvPlaybackEngine _playback = new();
+    private readonly WindowsPowerManagement _windowsPowerManagement = new();
     private readonly SubtitleCommandHistory _history = new();
     private readonly TimelineTransform _timelineTransform = new();
     private readonly Dictionary<Guid, string> _textBeforeEdit = [];
@@ -102,6 +103,8 @@ public sealed partial class MainWindow : Window
     private bool _allowClose;
     private bool _closeInProgress;
     private bool _restartRequested;
+    private bool _playbackPowerRequirementActive;
+    private bool _playbackPowerManagementDisabled;
     private Task? _shutdownTask;
     private TimeSpan? _abStart;
     private CancellationTokenSource? _overlaySyncCancellation;
@@ -1320,8 +1323,10 @@ public sealed partial class MainWindow : Window
 
     private void OnPlaybackStateChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
-        PlayPauseIcon.Source = PlaybackIconSource(_playback.State == PlaybackState.Playing ? "pause" : "play");
-        StatusText.Text = L(_playback.State switch
+        var state = _playback.State;
+        UpdatePlaybackPowerRequirement(state);
+        PlayPauseIcon.Source = PlaybackIconSource(state == PlaybackState.Playing ? "pause" : "play");
+        StatusText.Text = L(state switch
         {
             PlaybackState.Playing => "PlaybackStatePlaying",
             PlaybackState.Paused => "PlaybackStatePaused",
@@ -1330,7 +1335,7 @@ public sealed partial class MainWindow : Window
             PlaybackState.Failed => "PlaybackStateFailed",
             _ => "PlaybackStateUninitialized"
         });
-        if (_playback.State == PlaybackState.Playing)
+        if (state == PlaybackState.Playing)
         {
             // show-text has a finite lifetime. Re-arm the current cue after a
             // pause/resume so a long pause cannot make it disappear permanently.
@@ -1339,6 +1344,33 @@ public sealed partial class MainWindow : Window
         }
         RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
     });
+
+    private void UpdatePlaybackPowerRequirement(PlaybackState state)
+    {
+        if (_playbackPowerManagementDisabled) return;
+        var shouldKeepAwake = state == PlaybackState.Playing;
+        if (shouldKeepAwake == _playbackPowerRequirementActive) return;
+        if (!_windowsPowerManagement.TrySetPlaybackActive(shouldKeepAwake))
+        {
+            _ = AppLog.WriteAsync("warning", "playback", "PLAYBACK_POWER_REQUEST_ERROR",
+                shouldKeepAwake
+                    ? "Windows could not keep the display and system awake during playback."
+                    : "Windows could not release the playback power request.");
+            return;
+        }
+
+        _playbackPowerRequirementActive = shouldKeepAwake;
+    }
+
+    private void ReleasePlaybackPowerRequirement()
+    {
+        _playbackPowerManagementDisabled = true;
+        if (!_playbackPowerRequirementActive) return;
+        if (!_windowsPowerManagement.TrySetPlaybackActive(false))
+            _ = AppLog.WriteAsync("warning", "playback", "PLAYBACK_POWER_REQUEST_ERROR", "Windows could not release the playback power request.");
+        _playbackPowerRequirementActive = false;
+    }
+
     private void OnFirstFrameReady(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
         if (string.Equals(_firstFrameWaitSource, _playback.CurrentSource, StringComparison.OrdinalIgnoreCase))
@@ -4007,6 +4039,9 @@ public sealed partial class MainWindow : Window
     }
     private async Task ShutdownAsync()
     {
+        _playback.StateChanged -= OnPlaybackStateChanged;
+        ReleasePlaybackPowerRequirement();
+        _windowsPowerManagement.Dispose();
         _fullscreenHoverTimer?.Stop();
         SetFullscreenCursorHidden(false);
         if (_appWindow is not null)
@@ -4070,6 +4105,8 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        ReleasePlaybackPowerRequirement();
+        _windowsPowerManagement.Dispose();
         if (_appWindow is not null)
         {
             _appWindow.Closing -= OnAppWindowClosing;
