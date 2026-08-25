@@ -740,9 +740,8 @@ public sealed partial class MainWindow : Window
     private void OnToggleSubtitleVisibilityClick(object sender, RoutedEventArgs e)
     {
         var visible = SubtitleVisibilityMenuItem.IsChecked;
-        TryPlayback(() => _playback.SetSubtitleVisibility(visible));
-        SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
-        _settings.Playback.ShowSubtitles = SubtitleVisibilityMenuItem.IsChecked;
+        _settings.Playback.ShowSubtitles = visible;
+        ApplySubtitleVisibilityPreference();
     }
     private void OnRateChanged(object sender, SelectionChangedEventArgs e) { if (RateCombo.SelectedItem is double rate && _playback.IsAvailable) TryPlayback(() => _playback.SetRate(rate)); }
     private void OnRepeatClick(object sender, RoutedEventArgs e)
@@ -2050,7 +2049,7 @@ public sealed partial class MainWindow : Window
 
     private async Task<int> TranslateGeneratedCuesRealtimeAsync(ChannelReader<SubtitleCue> reader, SubtitleDocument targetDocument, SubtitleTrack track, CancellationToken cancellationToken)
     {
-        const int realtimeBatchSize = 4;
+        const int realtimeBatchSize = 6;
         var pending = new List<SubtitleCue>(realtimeBatchSize);
         DateTimeOffset? firstPendingAt = null;
         ILlmProvider? provider = null;
@@ -3276,7 +3275,15 @@ public sealed partial class MainWindow : Window
     private void ApplySubtitleVisibilityPreference()
     {
         var visible = _settings.Playback.ShowSubtitles;
-        TryPlayback(() => _playback.SetSubtitleVisibility(visible));
+        TryPlayback(() =>
+        {
+            _playback.SetSubtitleVisibility(visible);
+            // mpv keeps subtitle visibility and subtitle track selection as
+            // separate states. A seek or file reconfiguration can leave the
+            // menu checked while sid is still "no", so restore both states
+            // whenever subtitles are meant to be visible.
+            if (visible) _playback.RestoreSubtitleSelection(_selectedNativeSubtitleTrackId, _subtitleDisplayMode is not null);
+        });
         SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
     }
 

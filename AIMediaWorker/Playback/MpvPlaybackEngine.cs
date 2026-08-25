@@ -376,6 +376,32 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         }
     }
 
+    public bool RestoreSubtitleSelection(int? preferredTrackId = null, bool preferEditor = true)
+    {
+        lock (_subtitleCommandSync)
+        {
+            EnsureAvailable();
+            if (preferEditor && !string.IsNullOrWhiteSpace(_editorSubtitlePath) && File.Exists(_editorSubtitlePath))
+            {
+                var editorTrackId = FindExternalSubtitleTrackIds(_editorSubtitlePath).FirstOrDefault();
+                if (editorTrackId != 0)
+                {
+                    SetProperty("secondary-sid", "no");
+                    SetProperty("sid", editorTrackId.ToString(CultureInfo.InvariantCulture));
+                    RestoreSubtitleVisibility();
+                    return true;
+                }
+            }
+
+            var trackId = FindSubtitleTrackId(preferredTrackId);
+            if (trackId is not { } selectedTrackId) return false;
+            SetProperty("secondary-sid", "no");
+            SetProperty("sid", selectedTrackId.ToString(CultureInfo.InvariantCulture));
+            RestoreSubtitleVisibility();
+            return true;
+        }
+    }
+
     public void ConfigureNetwork(TimeSpan timeout, string? proxy)
     {
         TrySetProperty("network-timeout", Math.Clamp(timeout.TotalSeconds, 1, 600).ToString("0", CultureInfo.InvariantCulture));
@@ -634,6 +660,22 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 result.Add(id);
         }
         return result;
+    }
+
+    private int? FindSubtitleTrackId(int? preferredTrackId)
+    {
+        var count = GetInt("track-list/count") ?? 0;
+        var ids = new List<int>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var prefix = $"track-list/{i}/";
+            if (string.Equals(GetString(prefix + "type"), "sub", StringComparison.OrdinalIgnoreCase) && GetInt(prefix + "id") is { } id)
+                ids.Add(id);
+        }
+
+        if (preferredTrackId is { } preferred && ids.Contains(preferred)) return preferred;
+        if (GetInt("sid") is { } current && ids.Contains(current)) return current;
+        return ids.Count > 0 ? ids[0] : null;
     }
 
     private static bool PathsEqual(string first, string second)

@@ -51,8 +51,8 @@ public sealed class LlmTests
         });
 
         Assert.Equal(3, calls);
-        Assert.Equal([8, 8, 2], batchSizes);
-        Assert.Equal([8, 16, 18], completed);
+        Assert.Equal([6, 6, 6], batchSizes);
+        Assert.Equal([6, 12, 18], completed);
         Assert.Equal(18, result.Count);
     }
 
@@ -72,6 +72,32 @@ public sealed class LlmTests
         Assert.Contains("あれからここに来て良かった", capturedPrompt);
         Assert.DoesNotContain("\\u3042", capturedPrompt, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("여기에 오길 잘했다", translated[cue.Id]);
+    }
+
+    [Fact]
+    public async Task TranslationFallsBackToResponseOrderWhenCueIdsAreMissing()
+    {
+        var first = new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "おはよう" };
+        var second = new SubtitleCue { StartMicroseconds = 1_000_000, EndMicroseconds = 2_000_000, Text = "元気？" };
+        var provider = new FakeProvider(_ => "Here is the JSON:\n{\"items\":[{\"translation\":\"좋은 아침\"},{\"translation\":\"잘 지내？\"}]}\n");
+
+        var translated = await new LlmService(provider, "fake").TranslateAsync([first, second], "Korean");
+
+        Assert.Equal("좋은 아침", translated[first.Id]);
+        Assert.Equal("잘 지내？", translated[second.Id]);
+    }
+
+    [Fact]
+    public async Task TranslationKeepsUsableItemsWhenProviderOmitsOneCue()
+    {
+        var first = new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "One" };
+        var second = new SubtitleCue { StartMicroseconds = 1_000_000, EndMicroseconds = 2_000_000, Text = "Two" };
+        var provider = new FakeProvider(_ => $"{{\"items\":[{{\"id\":\"{second.Id}\",\"text\":\"둘\"}}]}}");
+
+        var translated = await new LlmService(provider, "fake").TranslateAsync([first, second], "Korean");
+
+        Assert.Single(translated);
+        Assert.Equal("둘", translated[second.Id]);
     }
 
     [Fact]
