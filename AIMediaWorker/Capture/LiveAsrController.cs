@@ -42,6 +42,21 @@ public sealed class LiveAsrController : IAsyncDisposable
         catch { await StopAsync(CancellationToken.None).ConfigureAwait(false); throw; }
     }
 
+    /// <summary>
+    /// Starts live captions fed by the system's output audio (loopback) instead
+    /// of a microphone.
+    /// </summary>
+    public async Task StartLoopbackAsync(string? renderDeviceId, string language, CancellationToken cancellationToken = default)
+    {
+        if (_streamId is not null) return;
+        while (_audioQueue.Reader.TryRead(out _)) { }
+        _streamId = await _asr.StartStreamingAsync(language, cancellationToken).ConfigureAwait(false);
+        _cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _pump = Task.Run(() => PumpAsync(_streamId, _cancellation.Token), CancellationToken.None);
+        try { await _audioCapture.StartLoopbackAsync(renderDeviceId, cancellationToken).ConfigureAwait(false); }
+        catch { await StopAsync(CancellationToken.None).ConfigureAwait(false); throw; }
+    }
+
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         await _audioCapture.StopAsync().ConfigureAwait(false);

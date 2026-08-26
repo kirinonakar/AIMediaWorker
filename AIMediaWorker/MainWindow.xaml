@@ -105,6 +105,7 @@
             </MenuBarItem>
             <MenuBarItem x:Uid="ToolsMenu" Title="Tools">
                 <MenuFlyoutItem x:Uid="CameraCaptions" Text="Camera and live captions…" Click="OnCameraClick" />
+                <MenuFlyoutItem x:Uid="WindowsCaptions" Text="Windows captions…" Click="OnWindowsCaptionsClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SettingsMenu" Title="Settings"><MenuFlyoutItem x:Uid="Preferences" Text="Preferences…" Click="OnSettingsClick" /></MenuBarItem>
             <MenuBarItem x:Uid="HelpMenu" Title="Help"><MenuFlyoutItem x:Uid="About" Text="About" Click="OnAboutClick" /></MenuBarItem>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="AIMediaWorker.Views.WindowsCaptionWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Windows captions">
+    <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
+    <Grid x:Name="Root" Loaded="OnLoaded" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions><RowDefinition Height="32" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <Grid x:Name="AppTitleBarArea" Height="32" Background="Transparent" SizeChanged="OnTitleBarSizeChanged">
+            <Grid ColumnSpacing="8" VerticalAlignment="Center" Margin="12,0,140,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Image Width="18" Height="18">
+                    <Image.Source><BitmapImage UriSource="ms-appx:///Assets/app.png" /></Image.Source>
+                </Image>
+                <TextBlock x:Name="AppTitleText" Grid.Column="1" Text="Windows captions" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            </Grid>
+        </Grid>
+        <Border x:Name="CaptionBackground" Grid.Row="1" Background="#A0000000" CornerRadius="8" Margin="12,8,12,8" Padding="16,10" SizeChanged="OnCaptionAreaSizeChanged">
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock x:Name="CaptionText" Foreground="White" FontSize="28" TextAlignment="Center" TextWrapping="Wrap" MaxLines="3" />
+                <TextBlock x:Name="TranslationText" Foreground="#FFE0B0" FontSize="24" TextAlignment="Center" TextWrapping="Wrap" MaxLines="3" Margin="0,8,0,0" Visibility="Collapsed" />
+            </StackPanel>
+        </Border>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,0,0,10">
+            <Button x:Name="CaptionButton" MinWidth="110" Click="OnCaptionClick" />
+            <ToggleButton x:Name="TranslateButton" MinWidth="110" IsEnabled="False" Click="OnTranslateClick" />
+            <Button x:Name="CloseCaptionButton" MinWidth="90" Click="OnCloseClick" />
+        </StackPanel>
+        <InfoBar x:Name="StatusBar" Grid.Row="3" IsOpen="False" Severity="Informational" Margin="12,0,12,10" />
+    </Grid>
+</Window>

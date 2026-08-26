@@ -11,6 +11,8 @@ using Microsoft.UI.Xaml.Media;
 using Windows.UI;
 using AIMediaWorker.Localization;
 using AIMediaWorker.Diagnostics;
+using Microsoft.UI.Dispatching;
+using System.Diagnostics;
 
 namespace AIMediaWorker.Views;
 
@@ -21,6 +23,10 @@ public sealed partial class CameraWindow : Window
     private readonly AsrWorkerClient _asr = new();
     private readonly AudioCaptureService _audio = new();
     private readonly LiveAsrController _liveAsr;
+    private readonly DispatcherQueueTimer _recordingTimer;
+    private readonly Stopwatch _recordingStopwatch = new();
+    private TimeSpan _recordingPausedDuration;
+    private DateTime? _recordingPausedAt;
     private AppSettings _settings = new();
     private AppWindow? _appWindow;
     private Task? _shutdownTask;
@@ -36,6 +42,9 @@ public sealed partial class CameraWindow : Window
         _liveAsr = new LiveAsrController(_audio, _asr);
         _liveAsr.CaptionReceived += OnCaptionReceived;
         _liveAsr.Failed += OnLiveFailed;
+        _recordingTimer = DispatcherQueue.CreateTimer();
+        _recordingTimer.Interval = TimeSpan.FromMilliseconds(500);
+        _recordingTimer.Tick += OnRecordingTimerTick;
         Closed += OnClosed;
         var handle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
@@ -135,7 +144,7 @@ public sealed partial class CameraWindow : Window
         {
             if (_camera.IsRunning)
             {
-                if (_camera.IsRecording) await _camera.StopRecordingAsync();
+                if (_camera.IsRecording) { await _camera.StopRecordingAsync(); StopRecordingIndicator(); UpdateRecordingControls(); }
                 Preview.SetMediaPlayer(null); await _camera.StopAsync(); PreviewButton.Content = L("StartPreviewText"); return;
             }
             var device = CameraCombo.SelectedItem as CaptureDevice;
@@ -156,7 +165,17 @@ public sealed partial class CameraWindow : Window
         {
             if (_camera.IsRecording)
             {
-                await _camera.StopRecordingAsync(); RecordButton.Content = L("StartRecordingText"); SetStatus(L("CaptureSavedTitle"), L("CaptureSavedMessage"), InfoBarSeverity.Success); return;
+                try
+                {
+                    await _camera.StopRecordingAsync();
+                    SetStatus(L("CaptureSavedTitle"), L("CaptureSavedMessage"), InfoBarSeverity.Success);
+                }
+                finally
+                {
+                    StopRecordingIndicator();
+                    UpdateRecordingControls();
+                }
+                return;
             }
             if (!_camera.IsRunning)
             {
@@ -171,7 +190,8 @@ public sealed partial class CameraWindow : Window
             var file = await picker.PickSaveFileAsync();
             if (file is null) return;
             await _camera.StartRecordingAsync(file);
-            RecordButton.Content = L("StopRecordingText"); SetStatus(L("RecordingTitle"), file.Name, InfoBarSeverity.Warning);
+            StartRecordingIndicator();
+            UpdateRecordingControls(); SetStatus(L("RecordingTitle"), file.Name, InfoBarSeverity.Warning);
         }
         catch (Exception exception) { SetStatus(L("CaptureErrorTitle"), exception.Message, InfoBarSeverity.Error); }
     }
@@ -181,6 +201,44 @@ public sealed partial class CameraWindow : Window
         if (!_camera.IsRunning || FormatCombo.SelectedItem is not CameraSession.CameraFormat format) return;
         try { await _camera.ApplyFormatAsync(format); SetStatus(L("CameraFormatTitle"), format.DisplayName, InfoBarSeverity.Success); }
         catch (Exception exception) { SetStatus(L("CameraFormatErrorTitle"), exception.Message, InfoBarSeverity.Error); }
+    }
+
+    private async void OnPauseClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (!_camera.IsRecording) return;
+            if (_camera.IsPaused)
+            {
+                await _camera.ResumeRecordingAsync();
+                if (_recordingPausedAt is { } pausedAt)
+                {
+                    _recordingPausedDuration += DateTime.UtcNow - pausedAt;
+                    _recordingPausedAt = null;
+                }
+                _recordingTimer.Start();
+                UpdateRecordingControls();
+                SetStatus(L("RecordingResumedTitle"), L("RecordingResumedMessage"), InfoBarSeverity.Warning);
+            }
+            else
+            {
+                await _camera.PauseRecordingAsync();
+                _recordingPausedAt = DateTime.UtcNow;
+                _recordingTimer.Stop();
+                OnRecordingTimerTick(_recordingTimer, EventArgs.Empty);
+                UpdateRecordingControls();
+                SetStatus(L("RecordingPausedTitle"), L("RecordingPausedMessage"), InfoBarSeverity.Warning);
+            }
+        }
+        catch (Exception exception) { SetStatus(L("CaptureErrorTitle"), exception.Message, InfoBarSeverity.Error); }
+    }
+
+    private void UpdateRecordingControls()
+    {
+        var recording = _camera.IsRecording;
+        RecordButton.Content = recording ? L("StopRecordingText") : L("StartRecordingText");
+        PauseButton.IsEnabled = recording;
+        PauseButton.Content = _camera.IsPaused ? L("ResumeRecordingText") : L("PauseRecordingText");
     }
 
     private async void OnCaptionClick(object sender, RoutedEventArgs e)
@@ -266,6 +324,37 @@ public sealed partial class CameraWindow : Window
     }
 
     private void OnLiveFailed(object? sender, Exception exception) => DispatcherQueue.TryEnqueue(() => SetStatus(L("LiveAsrErrorTitle"), exception.Message, InfoBarSeverity.Error));
+    private void OnRecordingTimerTick(DispatcherQueueTimer sender, object args)
+    {
+        var elapsed = GetRecordingElapsed();
+        RecordingTimeText.Text = $"{L("RecordingIndicatorText")} {elapsed.Hours:00}:{elapsed.Minutes:00}:{elapsed.Seconds:00}";
+        RecordingDot.Opacity = RecordingDot.Opacity > 0.5 ? 0.25 : 1;
+    }
+
+    private TimeSpan GetRecordingElapsed()
+    {
+        var pausedDuration = _recordingPausedDuration;
+        if (_recordingPausedAt is { } pausedAt) pausedDuration += DateTime.UtcNow - pausedAt;
+        return (_recordingStopwatch.Elapsed - pausedDuration).Duration();
+    }
+
+    private void StartRecordingIndicator()
+    {
+        _recordingStopwatch.Restart();
+        _recordingPausedDuration = TimeSpan.Zero;
+        _recordingPausedAt = null;
+        RecordingDot.Opacity = 1;
+        RecordingTimeText.Text = $"{L("RecordingIndicatorText")} 00:00:00";
+        RecordingIndicator.Visibility = Visibility.Visible;
+        _recordingTimer.Start();
+    }
+
+    private void StopRecordingIndicator()
+    {
+        _recordingTimer.Stop();
+        RecordingIndicator.Visibility = Visibility.Collapsed;
+    }
+
     private void SetStatus(string title, string message, InfoBarSeverity severity) { StatusBar.Title = title; StatusBar.Message = message; StatusBar.Severity = severity; StatusBar.IsOpen = true; }
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
@@ -291,7 +380,7 @@ public sealed partial class CameraWindow : Window
         Preview.SetMediaPlayer(null);
         try
         {
-            if (_camera.IsRecording) await _camera.StopRecordingAsync();
+            if (_camera.IsRecording) { await _camera.StopRecordingAsync(); StopRecordingIndicator(); }
         }
         catch (Exception exception) { await AppLog.WriteAsync("error", "camera", "CAMERA_SHUTDOWN_ERROR", exception.Message, exception); }
         try { await _liveAsr.DisposeAsync(); }
@@ -310,6 +399,7 @@ public sealed partial class CameraWindow : Window
             _appWindow.Changed -= OnAppWindowChanged;
         }
         Root.ActualThemeChanged -= OnRootActualThemeChanged;
+        _recordingTimer.Stop();
         Closed -= OnClosed;
     }
 }

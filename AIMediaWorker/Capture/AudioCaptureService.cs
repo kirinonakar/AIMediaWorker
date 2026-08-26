@@ -24,6 +24,16 @@ public sealed class AudioCaptureService : IAsyncDisposable
     public event EventHandler<Exception>? CaptureFailed;
 
     public Task StartAsync(string? deviceId, CancellationToken cancellationToken = default)
+        => StartCoreAsync(deviceId, loopback: false, cancellationToken);
+
+    /// <summary>
+    /// Captures the system's output audio (loopback) instead of a microphone, so
+    /// captions follow whatever the computer is currently playing.
+    /// </summary>
+    public Task StartLoopbackAsync(string? deviceId, CancellationToken cancellationToken = default)
+        => StartCoreAsync(deviceId, loopback: true, cancellationToken);
+
+    private Task StartCoreAsync(string? deviceId, bool loopback, CancellationToken cancellationToken)
     {
         if (_capture is not null) return Task.CompletedTask;
         cancellationToken.ThrowIfCancellationRequested();
@@ -36,8 +46,8 @@ public sealed class AudioCaptureService : IAsyncDisposable
         try
         {
             enumerator = new MMDeviceEnumerator();
-            device = ResolveDevice(enumerator, deviceId);
-            capture = new WasapiCapture(device);
+            device = loopback ? ResolveLoopbackDevice(enumerator, deviceId) : ResolveDevice(enumerator, deviceId);
+            capture = loopback ? new WasapiLoopbackCapture(device) : new WasapiCapture(device);
             capture.DataAvailable += OnDataAvailable;
             capture.RecordingStopped += OnRecordingStopped;
 
@@ -111,6 +121,13 @@ public sealed class AudioCaptureService : IAsyncDisposable
         // {0.0.1.00000000}.{...}. Passing the former directly produces the
         // unhelpful E_INVALIDARG message "Value does not fall within the
         // expected range.".
+        var endpointId = ExtractCoreAudioEndpointId(deviceId) ?? deviceId.Trim();
+        return enumerator.GetDevice(endpointId);
+    }
+
+    private static MMDevice ResolveLoopbackDevice(MMDeviceEnumerator enumerator, string? deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId)) return enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         var endpointId = ExtractCoreAudioEndpointId(deviceId) ?? deviceId.Trim();
         return enumerator.GetDevice(endpointId);
     }

@@ -45,6 +45,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private bool _positionSliderDragging;
     private bool _initialized;
     private CameraWindow? _cameraWindow;
+    private WindowsCaptionWindow? _windowsCaptionWindow;
     private SettingsWindow? _settingsWindow;
     private AppSettings _settings = new();
     private readonly WindowsCredentialService _windowsCredentials = new();
@@ -1584,6 +1585,31 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             await ShowMessageAsync(L("CameraErrorTitle"), exception.Message);
         }
     }
+
+    private async void OnWindowsCaptionsClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (_windowsCaptionWindow is not null) { _windowsCaptionWindow.Activate(); return; }
+            _appWindow?.Hide();
+            _windowsCaptionWindow = new WindowsCaptionWindow(this);
+            _windowsCaptionWindow.Closed += (_, _) =>
+            {
+                _windowsCaptionWindow = null;
+                if (_closeInProgress || _allowClose) return;
+                _appWindow?.Show();
+                Activate();
+            };
+            _windowsCaptionWindow.Activate();
+        }
+        catch (Exception exception)
+        {
+            _windowsCaptionWindow = null;
+            _appWindow?.Show();
+            await AppLog.WriteAsync("error", "captions", "WINDOWS_CAPTION_WINDOW_ERROR", exception.Message, exception);
+            await ShowMessageAsync(L("WindowsCaptionErrorTitle"), exception.Message);
+        }
+    }
     private async void OnSettingsClick(object sender, RoutedEventArgs e)
     {
         try
@@ -2232,6 +2258,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
 
         _settingsWindow?.Close();
         if (_cameraWindow is { } cameraWindow) await cameraWindow.CloseAsync();
+        if (_windowsCaptionWindow is { } captionWindow) await captionWindow.CloseAsync();
 
         try { await _aiWorkflow.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "ASR_DISPOSE_ERROR", exception.Message, exception); }

@@ -27,6 +27,12 @@
             </Grid>
             <Grid Grid.Row="1" Background="Black">
                 <MediaPlayerElement x:Name="Preview" AreTransportControlsEnabled="False" Stretch="Uniform" />
+                <Border x:Name="RecordingIndicator" Background="#CC000000" CornerRadius="4" Padding="10,4" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Ellipse x:Name="RecordingDot" Width="10" Height="10" Fill="#FF3B30" VerticalAlignment="Center" />
+                        <TextBlock x:Name="RecordingTimeText" Foreground="White" FontSize="16" FontWeight="SemiBold" Text="REC 00:00:00" />
+                    </StackPanel>
+                </Border>
                 <Border x:Name="CaptionBackground" Background="#A0000000" Padding="16,8" CornerRadius="6" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="28" MaxWidth="900" Visibility="Collapsed">
                     <TextBlock x:Name="CaptionText" Foreground="White" FontSize="32" TextAlignment="Center" TextWrapping="Wrap" MaxLines="2" />
                 </Border>
@@ -34,6 +40,7 @@
             <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
                 <Button x:Uid="StartPreview" x:Name="PreviewButton" Content="Start preview" Click="OnPreviewClick" />
                 <Button x:Uid="StartRecording" x:Name="RecordButton" Content="Start recording" Click="OnRecordClick" />
+                <Button x:Uid="PauseRecording" x:Name="PauseButton" Content="Pause" IsEnabled="False" Click="OnPauseClick" />
                 <Button x:Uid="StartCaptions" x:Name="CaptionButton" Content="Start live captions" Click="OnCaptionClick" />
                 <ComboBox x:Name="LanguageCombo" SelectedIndex="0" Width="140"><ComboBoxItem Content="Auto" Tag="auto" /><ComboBoxItem Content="한국어" Tag="ko" /><ComboBoxItem Content="English" Tag="en" /><ComboBoxItem Content="日本語" Tag="ja" /></ComboBox>
             </StackPanel>
