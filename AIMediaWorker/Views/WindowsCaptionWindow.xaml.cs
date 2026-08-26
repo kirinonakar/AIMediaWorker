@@ -29,7 +29,8 @@ public sealed partial class WindowsCaptionWindow : Window
     private readonly AudioCaptureService _audio = new();
     private readonly LiveAsrController _liveAsr;
     private readonly Channel<string> _translationQueue = Channel.CreateUnbounded<string>();
-    private readonly List<string> _pendingSegments = [];
+    private readonly DispatcherQueueTimer _pendingFlushTimer;
+    private int _pendingTranslationUpdates;
     private AppSettings _settings = new();
     private AppWindow? _appWindow;
     private Task? _shutdownTask;
@@ -53,6 +54,9 @@ public sealed partial class WindowsCaptionWindow : Window
         CaptionButton.Content = L("WindowsCaptionStart.Content");
         TranslateButton.Content = L("WindowsCaptionTranslate.Content");
         CloseCaptionButton.Content = L("CloseButton");
+        _pendingFlushTimer = DispatcherQueue.CreateTimer();
+        _pendingFlushTimer.Interval = TimeSpan.FromSeconds(4);
+        _pendingFlushTimer.Tick += OnPendingFlushTick;
         Closed += OnClosed;
         var handle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
@@ -199,15 +203,28 @@ public sealed partial class WindowsCaptionWindow : Window
         _lastCaption = text;
         CaptionText.Text = text;
         CaptionText.Opacity = result.Event == "partial" ? 0.72 : 1;
-        if (!_translating || result.Event == "partial") return;
-        _pendingSegments.Add(text);
-        if (_pendingSegments.Count < 2) return;
-        var combined = string.Join('\n', _pendingSegments);
-        _pendingSegments.Clear();
-        CaptionText.Text = combined;
-        CaptionText.Opacity = 1;
-        _translationQueue.Writer.TryWrite(combined);
+        if (!_translating) return;
+        // The live ASR emits rolling "partial" updates and a "final" only when
+        // the stream stops, so batch every two updates into one request.
+        _pendingTranslationUpdates++;
+        if (result.Event != "partial" || _pendingTranslationUpdates >= 2)
+        {
+            _pendingTranslationUpdates = 0;
+            _pendingFlushTimer.Stop();
+            _translationQueue.Writer.TryWrite(text);
+        }
+        else
+        {
+            _pendingFlushTimer.Start();
+        }
     });
+
+    private void OnPendingFlushTick(DispatcherQueueTimer sender, object args)
+    {
+        if (!_translating || _pendingTranslationUpdates == 0) return;
+        _pendingTranslationUpdates = 0;
+        if (!string.IsNullOrWhiteSpace(_lastCaption)) _translationQueue.Writer.TryWrite(_lastCaption);
+    }
 
     private void OnTranslateClick(object sender, RoutedEventArgs e)
     {
@@ -234,20 +251,13 @@ public sealed partial class WindowsCaptionWindow : Window
             TranslationText.Visibility = Visibility.Visible;
             var cancellation = _translationCancellation ??= new CancellationTokenSource();
             _translationTask ??= Task.Run(() => TranslationLoopAsync(cancellation.Token));
-            if (_pendingSegments.Count > 0)
-            {
-                _translationQueue.Writer.TryWrite(string.Join('\n', _pendingSegments));
-                _pendingSegments.Clear();
-            }
-            else if (!string.IsNullOrWhiteSpace(_lastCaption))
-            {
-                _translationQueue.Writer.TryWrite(_lastCaption);
-            }
+            if (!string.IsNullOrWhiteSpace(_lastCaption)) _translationQueue.Writer.TryWrite(_lastCaption);
         }
         else
         {
             _translating = false;
-            _pendingSegments.Clear();
+            _pendingTranslationUpdates = 0;
+            _pendingFlushTimer.Stop();
             TranslateButton.Content = L("WindowsCaptionTranslate.Content");
             TranslationText.Text = string.Empty;
             TranslationText.Visibility = Visibility.Collapsed;
@@ -258,11 +268,11 @@ public sealed partial class WindowsCaptionWindow : Window
     {
         try
         {
-            await foreach (var _ in _translationQueue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            await foreach (var firstItem in _translationQueue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
                 // Drain to the newest caption so translation stays real-time.
-                var latest = string.Empty;
-                while (_translationQueue.Reader.TryRead(out var item)) latest = item;
+                var latest = firstItem;
+                while (_translationQueue.Reader.TryRead(out var queuedItem)) latest = queuedItem;
                 if (!_translating || string.IsNullOrWhiteSpace(latest)) continue;
                 await TranslateAsync(latest, cancellationToken).ConfigureAwait(false);
             }
@@ -283,7 +293,11 @@ public sealed partial class WindowsCaptionWindow : Window
                 DispatcherQueue.TryEnqueue(() => { if (_translating) TranslationText.Text = translated; });
         }
         catch (OperationCanceledException) { }
-        catch (Exception exception) { await AppLog.WriteAsync("error", "captions", "CAPTION_TRANSLATION_ERROR", exception.Message, exception); }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync("error", "captions", "CAPTION_TRANSLATION_ERROR", exception.Message, exception);
+            DispatcherQueue.TryEnqueue(() => SetStatus(L("WindowsCaptionErrorTitle"), exception.Message, InfoBarSeverity.Error));
+        }
     }
 
     private void ApplyCaptionAppearance()
@@ -356,6 +370,7 @@ public sealed partial class WindowsCaptionWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _pendingFlushTimer.Stop();
         if (_appWindow is not null)
         {
             _appWindow.Closing -= OnAppWindowClosing;
