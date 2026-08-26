@@ -166,7 +166,7 @@ Microphone audio is captured through WASAPI, resampled to 16 kHz mono PCM, and p
 
 Supported provider profiles:
 
-- **Local**: Unsloth Studio, Ollama, and LM Studio
+- **Local**: Unsloth Desktop, Ollama, and LM Studio
 - **Cloud**: Google Gemini, Ollama Cloud, OpenCode Go, and OpenCode Zen
 
 API keys are stored in Windows Credential Manager.
