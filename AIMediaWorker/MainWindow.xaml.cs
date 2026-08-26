@@ -1,12 +1,10 @@
 using AIMediaWorker.Playback;
+using AIMediaWorker.Controllers;
 using AIMediaWorker.Subtitle;
 using AIMediaWorker.Subtitle.Editing;
-using AIMediaWorker.Subtitle.Parsing;
 using AIMediaWorker.Views;
 using AIMediaWorker.Settings;
 using AIMediaWorker.Asr;
-using AIMediaWorker.Network;
-using AIMediaWorker.History;
 using AIMediaWorker.Media;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Localization;
@@ -18,16 +16,12 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
-using Windows.Graphics;
 using Windows.Storage.Pickers;
 using Windows.Storage;
 using WinRT.Interop;
 using Windows.ApplicationModel.DataTransfer;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
-using Microsoft.UI.Text;
-using System.Collections.ObjectModel;
 
 namespace AIMediaWorker;
 
@@ -44,24 +38,14 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private bool _updatingPosition;
     private bool _positionSliderDragging;
     private bool _initialized;
-    private CameraWindow? _cameraWindow;
-    private WindowsCaptionWindow? _windowsCaptionWindow;
-    private SettingsWindow? _settingsWindow;
     private AppSettings _settings = new();
-    private readonly WindowsCredentialService _windowsCredentials = new();
-    private readonly WebDavCredentialStore _webDavCredentials;
-    private readonly WebDavClient _webDavClient;
     private readonly AiWorkflowController _aiWorkflow;
     private int _generatedSubtitleUiRefreshQueued;
     private int _playbackPositionUiRefreshQueued;
-    private readonly SemaphoreSlim _dialogLock = new(1, 1);
-    private readonly MediaHistoryService _historyService = MediaHistoryService.CreateDefault();
-    private readonly ObservableCollection<FavoriteListEntry> _favoriteEntries = [];
     private IMediaSource? _currentMediaSource;
     private IReadOnlyDictionary<string, string>? _currentHttpHeaders;
     private bool _allowClose;
     private bool _closeInProgress;
-    private bool _restartRequested;
     private bool _playbackPowerRequirementActive;
     private bool _playbackPowerManagementDisabled;
     private Task? _shutdownTask;
@@ -69,8 +53,6 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private SubtitleDisplayMode? _subtitleDisplayMode;
     private int? _selectedNativeSubtitleTrackId;
     private bool _updatingSubtitleTrackSelector;
-    private readonly List<PlaylistEntry> _playlist = [];
-    private int _playlistIndex = -1;
     private RepeatMode _repeatMode;
     private bool _mediaOpenReady;
     private bool _firstFrameUiReadyForMedia;
@@ -80,12 +62,16 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private string? _pendingLaunchSource;
     private string[]? _pendingDroppedFiles;
     private string? _audioTagStatusText;
-    private PendingPostOpenWork? _pendingPostOpenWork;
-    private CancellationTokenSource? _postOpenCancellation;
     private readonly TaskCompletionSource _firstUiFrameReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _playbackInitializationTask;
     private readonly PanelLayoutController _panels;
     private readonly FullscreenPresentationController _fullscreen;
+    private readonly RightPanelController _rightPanel;
+    private readonly MediaNavigationController _mediaNavigation;
+    private readonly WindowChromeController _chrome;
+    private readonly WindowDialogService _dialogs;
+    private readonly AboutDialogService _aboutDialog;
+    private readonly AuxiliaryWindowController _auxiliaryWindows;
 
     private sealed record SubtitleSelectionOption(string DisplayName, SubtitleDisplayMode? DisplayMode, int? TrackId);
 
@@ -96,11 +82,11 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     public MainWindow(string? initialSource, AppSettings settings)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        _webDavCredentials = new WebDavCredentialStore(_windowsCredentials);
-        _webDavClient = new WebDavClient(_windowsCredentials, timeout: TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds));
         StartupProfiler.Mark("xaml-start");
         InitializeComponent();
         StartupProfiler.Mark("xaml-ready");
+        _dialogs = new WindowDialogService(RootGrid, () => _videoHost);
+        _aboutDialog = new AboutDialogService(_dialogs);
         _subtitleEditor = new SubtitleEditorController(
             SubtitleList,
             TimelineCanvas,
@@ -153,24 +139,66 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _playbackInitializationTask = InitializePlaybackAfterFirstUiFrameAsync(_videoHost.Create());
         _pendingLaunchSource = initialSource;
         ExtendsContentIntoTitleBar = true;
-        RightPanelSectionList.SelectionChanged += OnRightPanelSectionChanged;
-        MediaBrowser.DefaultDirectory = _settings.General.DefaultFolder;
-        MediaBrowser.ChooseFolderRequested += OnBrowserChooseFolderRequested;
-        MediaBrowser.MediaRequested += OnBrowserMediaRequested;
-        MediaBrowser.FavoriteRequested += OnBrowserFavoriteRequested;
-        MediaBrowser.ErrorOccurred += OnBrowserErrorOccurred;
-        WebDavBrowser.Configure(_webDavClient, _webDavCredentials);
-        WebDavBrowser.AddServerRequested += OnAddWebDavServerRequested;
-        WebDavBrowser.DeleteServerRequested += OnDeleteWebDavServerRequested;
-        WebDavBrowser.EntryRequested += OnWebDavEntryRequested;
-        WebDavBrowser.FavoriteRequested += OnWebDavFavoriteRequested;
-        RefreshRightPanelSections();
+        _rightPanel = new RightPanelController(
+            new RightPanelViewElements(
+                RightPanelSectionList, ExplorerSection, PlaylistSection, WebDavSection, FavoritesSection,
+                SubtitlesSection, PlaylistTitleText, FavoritesTitleText, SubtitlesTitleText),
+            () =>
+            {
+                _panels.IsRightVisible = true;
+                ApplyPanelVisibility();
+            });
+        _mediaNavigation = new MediaNavigationController(
+            new MediaNavigationViewElements(
+                this, MediaBrowser, WebDavBrowser, PlaylistList, FavoriteList, FavoritesEmptyText,
+                RecentMenu, PreviousButton, NextButton),
+            new MediaNavigationHost(
+                () => _settings,
+                () => _currentMediaSource,
+                () => _playback.CurrentSource,
+                () => CurrentPlaybackPositionMicroseconds,
+                request => OpenMediaAsync(request.Source, request.HttpHeaders, request.MediaSource, request.PreservePlaylist),
+                LoadSubtitleFromPathAsync,
+                PrepareForRemoteSubtitleLoadAsync,
+                ApplyDownloadedWebDavSubtitleAsync,
+                WaitForFirstFrameAsync,
+                position => SeekAndRestartAi(position, () => _playback.Seek(position, true)),
+                _rightPanel.Show,
+                message => StatusText.Text = message,
+                ShowMessageAsync,
+                dialog =>
+                {
+                    dialog.XamlRoot ??= RootGrid.XamlRoot;
+                    dialog.RequestedTheme = RootGrid.ActualTheme;
+                    return ShowDialogAsync(dialog);
+                }));
+        _rightPanel.SectionChanged += (_, section) =>
+        {
+            if (_initialized && section == RightPanelSection.Favorites) _ = _mediaNavigation.LoadFavoritesAsync();
+        };
         GenerateSubtitlesMenuItem.IsChecked = _settings.Asr.GenerateSubtitles;
         TranslateMenuItem.IsChecked = _settings.Llm.TranslateSubtitles;
         _aiWorkflow.UpdateModes(GenerateSubtitlesMenuItem.IsChecked, TranslateMenuItem.IsChecked);
         var handle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
-        ResizeToAvailableWorkArea(1280, 820);
+        _chrome = new WindowChromeController(
+            _appWindow,
+            new WindowChromeViewElements(
+                RootGrid, AppTitleBarArea, BeginningIcon, PreviousIcon, SeekBackIcon, PlayPauseIcon,
+                StopIcon, SeekForwardIcon, NextIcon, MuteIcon, RepeatIcon, BottomPanelToggleIcon, RightPanelToggleIcon),
+            () => _playback.State,
+            () => _playback.IsMuted,
+            () => _repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.AutoAdvance => "repeat-auto", _ => "repeat" },
+            () => _panels.IsRightVisible,
+            () => _panels.IsBottomVisible);
+        _chrome.ResizeToAvailableWorkArea(1280, 820);
+        _auxiliaryWindows = new AuxiliaryWindowController(
+            this,
+            _appWindow,
+            () => _closeInProgress || _allowClose,
+            ApplySettings,
+            _ => Close(),
+            _dialogs);
         if (_appWindow is not null)
         {
             var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
@@ -191,7 +219,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         if (_appWindow is not null) { _appWindow.Closing += OnAppWindowClosing; _appWindow.Changed += OnAppWindowChanged; }
         Closed += OnWindowClosed;
         RootGrid.ActualThemeChanged += OnRootActualThemeChanged;
-        ApplyTheme(_settings.General.Theme);
+        _chrome.ApplyTheme(_settings.General.Theme);
         RootGrid.AddHandler(UIElement.PreviewKeyDownEvent, new KeyEventHandler(OnRootPreviewKeyDown), true);
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnRootKeyDown), true);
         PositionSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPositionSliderPointerPressed), true);
@@ -253,66 +281,33 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         ArgumentNullException.ThrowIfNull(layout);
         _panels.Load(layout);
         ApplyPanelVisibility();
-        if (_appWindow is null || !layout.HasPlacement) return;
-        var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
-        var workArea = display.WorkArea;
-        var maxWidth = Math.Max(1, workArea.Width - 32);
-        var maxHeight = Math.Max(1, workArea.Height - 32);
-        var minWidth = Math.Min(640, maxWidth);
-        var minHeight = Math.Min(420, maxHeight);
-        var width = Math.Clamp(layout.Width, minWidth, maxWidth);
-        var height = Math.Clamp(layout.Height, minHeight, maxHeight);
-        var x = Math.Clamp(layout.X, workArea.X, workArea.X + workArea.Width - width);
-        var y = Math.Clamp(layout.Y, workArea.Y, workArea.Y + workArea.Height - height);
-        _appWindow.MoveAndResize(new RectInt32(x, y, width, height));
-        if (layout.IsMaximized && _appWindow.Presenter is OverlappedPresenter presenter) presenter.Maximize();
-    }
-
-    private void ResizeToAvailableWorkArea(int preferredWidth, int preferredHeight)
-    {
-        if (_appWindow is null) return;
-        var workArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary).WorkArea;
-        var width = Math.Min(preferredWidth, Math.Max(1, workArea.Width - 32));
-        var height = Math.Min(preferredHeight, Math.Max(1, workArea.Height - 32));
-        _appWindow.Resize(new SizeInt32(width, height));
+        _chrome.ApplySavedWindowPlacement(layout);
     }
 
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {
         if (!_initialized || _fullscreen.HandleAppWindowChanged()) return;
         if (sender.Presenter is not OverlappedPresenter presenter || presenter.State == OverlappedPresenterState.Minimized) return;
-        CaptureWindowPlacement(sender, presenter);
-        UpdateTitleBarDragRegion();
-    }
-
-    private void CaptureWindowPlacement(AppWindow window, OverlappedPresenter presenter)
-    {
-        _settings.Window.IsMaximized = presenter.State == OverlappedPresenterState.Maximized;
-        if (presenter.State != OverlappedPresenterState.Restored) return;
-        _settings.Window.HasPlacement = true;
-        _settings.Window.X = window.Position.X;
-        _settings.Window.Y = window.Position.Y;
-        _settings.Window.Width = window.Size.Width;
-        _settings.Window.Height = window.Size.Height;
+        WindowChromeController.CaptureWindowPlacement(sender, presenter, _settings.Window);
+        _chrome.UpdateTitleBarDragRegion();
     }
 
     private async void OnRootLoaded(object sender, RoutedEventArgs e)
     {
         if (_initialized) return;
         _initialized = true;
-        UpdateTitleBarDragRegion();
+        _chrome.UpdateTitleBarDragRegion();
         try
         {
             _panels.Load(_settings.Window);
             ClampPanelSizesToAvailable();
             ApplyPanelVisibility();
-            var recentLoad = _historyService.LoadRecentAsync();
-            _ = MediaBrowser.InitializeAsync();
+            var recentLoad = _mediaNavigation.LoadRecentAsync();
+            _ = _mediaNavigation.InitializeBrowserAsync();
             SubtitleVisibilityMenuItem.IsChecked = _settings.Playback.ShowSubtitles;
             RateCombo.ItemsSource = new[] { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0 };
             RateCombo.SelectedItem = RateCombo.Items.Cast<double>().OrderBy(value => Math.Abs(value - _settings.Playback.PlaybackRate)).First();
             UpdateShortcutHints();
-            UpdatePlaylistButtons();
             // Shell activation previously issued loadfile from the constructor, before WinUI
             // had presented its first frame. Let one complete composition pass finish first so
             // decoder/GPU startup cannot delay painting the window chrome and controls.
@@ -323,13 +318,11 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             {
                 _pendingDroppedFiles = null;
                 _pendingLaunchSource = null;
-                await OpenFilesAsPlaylistAsync(droppedFiles);
+                await _mediaNavigation.OpenFilesAsync(droppedFiles);
             }
             if (_pendingLaunchSource is { Length: > 0 }) await OpenInitialLaunchSourceAsync();
             await recentLoad;
-            RebuildRecentMenu();
-            RefreshWebDavServerList();
-            ApplyTheme(_settings.General.Theme);
+            _chrome.ApplyTheme(_settings.General.Theme);
         }
         catch (Exception exception) { StatusText.Text = exception.Message; }
     }
@@ -469,7 +462,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             StatusText.Text = L("StatusPreparingDroppedMedia");
             return;
         }
-        await OpenFilesAsPlaylistAsync(files);
+        await _mediaNavigation.OpenFilesAsync(files);
     }
 
     /// <summary>
@@ -517,8 +510,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             await _firstUiFrameReady.Task;
             await _playbackInitializationTask;
             if (!_playback.IsAvailable) throw new InvalidOperationException(L("StatusPlaybackUnavailable"));
-            await _historyService.LoadRecentAsync();
-            RememberCurrentPosition();
+            await _mediaNavigation.PrepareForMediaOpenAsync();
             BeginMediaOpen(source);
             await _playback.OpenAsync(source, httpHeaders);
             await aiPipelineCancellation;
@@ -540,25 +532,17 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void CompleteMediaOpen(string source, IReadOnlyDictionary<string, string>? httpHeaders, IMediaSource? mediaSource, bool preservePlaylist, bool showInExplorer)
     {
         _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
-        if (!preservePlaylist)
-        {
-            _playlist.Clear();
-            if (_currentMediaSource is LocalMediaSource localSource) { _playlist.Add(PlaylistEntry.FromLocal(localSource.Path)); _playlistIndex = 0; }
-            else _playlistIndex = -1;
-        }
         _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
         ApplyRepeatModeToPlayback();
         UpdateWindowTitle(_currentMediaSource.DisplayName);
-        if (_currentMediaSource is WebDavMediaSource webDavSource) WebDavBrowser.SelectEntry(webDavSource.ServerId, webDavSource.Uri);
-        _ = SaveHistoryAfterOpenAsync(_currentMediaSource);
+        _mediaNavigation.MediaOpened(_currentMediaSource, preservePlaylist, showInExplorer);
+        if (_playback.IsFirstFrameReady) _mediaNavigation.NotifyFirstFrameReady();
         _subtitleEditor.ResetTimeline();
         var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
         _aiWorkflow.ResetForMedia();
         _audioTagStatusText = null;
         StatusText.Text = source;
         UpdateAudioTagStatus();
-        QueuePostOpenWork(source, _currentMediaSource as LocalMediaSource, !preservePlaylist, showInExplorer);
-        UpdatePlaylistButtons();
         FocusPlaybackSurface();
         _mediaOpenReady = true;
         _pendingMediaOpenSource = null;
@@ -595,109 +579,12 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _firstFrameWaiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private async Task SaveHistoryAfterOpenAsync(IMediaSource source)
-    {
-        try
-        {
-            await _historyService.LoadRecentAsync();
-            _historyService.AddRecent(source, 0, _settings.General.RecentMediaCount);
-            await _historyService.SaveRecentAsync();
-            RebuildRecentMenu();
-        }
-        catch (Exception exception) { await AppLog.WriteAsync("error", "history", "HISTORY_SAVE_AFTER_OPEN_ERROR", exception.Message, exception); }
-    }
-
     private void UpdateWindowTitle(string displayName)
     {
         var title = string.IsNullOrWhiteSpace(displayName) ? "AIMediaWorker" : $"{displayName} - AIMediaWorker";
         Title = title;
         if (_appWindow is not null) _appWindow.Title = title;
         AppTitleText.Text = title;
-    }
-
-    private void QueuePostOpenWork(string source, LocalMediaSource? localSource, bool populateSiblingPlaylist, bool showInExplorer)
-    {
-        _postOpenCancellation?.Cancel();
-        _postOpenCancellation?.Dispose();
-        _postOpenCancellation = new CancellationTokenSource();
-        var localPath = localSource is null ? null : Path.GetFullPath(localSource.Path);
-        if (localPath is not null) PrepareBrowserForOpenedFile(localPath, showInExplorer);
-        _pendingPostOpenWork = new PendingPostOpenWork(source, localPath, populateSiblingPlaylist, _postOpenCancellation.Token);
-        if (_playback.IsFirstFrameReady) StartPostOpenWorkIfReady();
-    }
-
-    private void StartPostOpenWorkIfReady()
-    {
-        if (_pendingPostOpenWork is not { } work ||
-            !string.Equals(_playback.CurrentSource, work.Source, StringComparison.OrdinalIgnoreCase)) return;
-        _pendingPostOpenWork = null;
-        _ = RunPostOpenWorkAsync(work);
-    }
-
-    private async Task RunPostOpenWorkAsync(PendingPostOpenWork work)
-    {
-        try
-        {
-            // The browser location is already visible. Defer only directory enumeration so
-            // media decoding gets the first slice of disk and CPU time.
-            await Task.Delay(250, work.CancellationToken);
-            if (!string.Equals(_playback.CurrentSource, work.Source, StringComparison.OrdinalIgnoreCase)) return;
-            if (work.LocalPath is { } fullPath)
-            {
-                await RefreshBrowserForOpenedFileAsync(fullPath);
-                if (work.PopulateSiblingPlaylist) await PopulateSiblingPlaylistAsync(fullPath);
-            }
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "post-open", "POST_OPEN_WORK_ERROR", exception.Message, exception);
-        }
-    }
-
-    private void PrepareBrowserForOpenedFile(string fullPath, bool showInExplorer)
-    {
-        if (showInExplorer) ShowRightPanelSection(RightPanelSection.Explorer);
-        MediaBrowser.PrepareForOpenedFile(fullPath);
-    }
-
-    private async Task RefreshBrowserForOpenedFileAsync(string fullPath)
-    {
-        try
-        {
-            await MediaBrowser.SynchronizeOpenedFileAsync(fullPath);
-        }
-        catch (Exception exception) { await AppLog.WriteAsync("error", "browser", "BROWSER_SYNC_AFTER_OPEN_ERROR", exception.Message, exception); }
-    }
-
-    private async Task OpenFilesAsPlaylistAsync(IEnumerable<string> paths)
-    {
-        // Entry points normalize and validate paths on a worker thread before reaching here.
-        var files = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (files.Length == 0) return;
-        if (files.Length == 1 && MediaFileClassifier.IsSubtitle(files[0])) { await LoadSubtitleFromPathAsync(files[0]); return; }
-        _playlist.Clear();
-        _playlist.AddRange(files.Where(path => !MediaFileClassifier.IsSubtitle(path)).Select(PlaylistEntry.FromLocal));
-        if (_playlist.Count == 0) return;
-        _playlistIndex = 0;
-        await OpenPlaylistEntryAsync(_playlist[0]);
-    }
-
-    private async Task PopulateSiblingPlaylistAsync(string currentPath)
-    {
-        try
-        {
-            var fullPath = Path.GetFullPath(currentPath);
-            var directory = Path.GetDirectoryName(fullPath);
-            if (directory is null) return;
-            var siblings = MediaBrowser.GetLoadedMediaPaths(directory)?.ToArray()
-                ?? await Task.Run(() => Directory.EnumerateFiles(directory).Where(MediaFileClassifier.IsPlayable).OrderBy(Path.GetFileName, WindowsFileNameComparer.Instance).Take(5000).Select(Path.GetFullPath).ToArray());
-            if (!string.Equals(_playback.CurrentSource, fullPath, StringComparison.OrdinalIgnoreCase)) return;
-            var index = Array.FindIndex(siblings, path => path.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
-            if (index < 0) return;
-            _playlist.Clear(); _playlist.AddRange(siblings.Select(PlaylistEntry.FromLocal)); _playlistIndex = index; UpdatePlaylistButtons();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
     }
 
     private void OnPlayPauseClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.TogglePause);
@@ -708,8 +595,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _playback.Seek(TimeSpan.Zero, true);
         _playback.Pause();
     });
-    private async void OnPreviousMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(-1);
-    private async void OnNextMediaClick(object sender, RoutedEventArgs e) => await OpenAdjacentMediaAsync(1);
+    private async void OnPreviousMediaClick(object sender, RoutedEventArgs e) => await _mediaNavigation.OpenPreviousAsync();
+    private async void OnNextMediaClick(object sender, RoutedEventArgs e) => await _mediaNavigation.OpenNextAsync();
     private void OnFrameStepClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.FrameStep());
     private async void OnSaveScreenshotClick(object sender, RoutedEventArgs e)
     {
@@ -755,7 +642,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void OnMuteClick(object sender, RoutedEventArgs e)
     {
         TryPlayback(() => _playback.SetMute(!_playback.IsMuted));
-        MuteIcon.Source = PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
+        MuteIcon.Source = _chrome.PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
         ShowMuteOverlay();
     }
     private void OnToggleSubtitleVisibilityClick(object sender, RoutedEventArgs e)
@@ -770,9 +657,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     {
         _repeatMode = _repeatMode switch { RepeatMode.Off => RepeatMode.One, RepeatMode.One => RepeatMode.AutoAdvance, _ => RepeatMode.Off };
         ApplyRepeatModeToPlayback();
-        RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.AutoAdvance => "repeat-auto", _ => "repeat" });
+        RepeatIcon.Source = _chrome.PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.AutoAdvance => "repeat-auto", _ => "repeat" });
         ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.AutoAdvance => "TooltipAutoAdvance", _ => "TooltipRepeatOff" }));
-        UpdatePlaylistButtons();
     }
 
     private void ApplyRepeatModeToPlayback()
@@ -780,33 +666,6 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         if (_playback.IsAvailable) TryPlayback(() => _playback.SetLoopFile(_repeatMode == RepeatMode.One));
     }
 
-    private async Task OpenAdjacentMediaAsync(int direction)
-    {
-        if (_playlist.Count == 0) return;
-        var next = _playlistIndex + Math.Sign(direction);
-        if (next < 0 || next >= _playlist.Count) return;
-        _playlistIndex = next;
-        await OpenPlaylistEntryAsync(_playlist[_playlistIndex]);
-    }
-
-    private async Task OpenPlaylistEntryAsync(PlaylistEntry entry)
-    {
-        await OpenMediaAsync(entry.Path, entry.HttpHeaders, entry.MediaSource, preservePlaylist: true);
-        if (entry.MediaSource is WebDavMediaSource webDavSource &&
-            _currentMediaSource is WebDavMediaSource currentSource &&
-            currentSource.ServerId == webDavSource.ServerId && WebDavUri.Equals(currentSource.Uri, webDavSource.Uri))
-        {
-            await TryLoadMatchingWebDavSmiAsync(webDavSource);
-        }
-    }
-
-    private void UpdatePlaylistButtons()
-    {
-        PreviousButton.IsEnabled = _playlist.Count > 1 && _playlistIndex > 0;
-        NextButton.IsEnabled = _playlist.Count > 1 && _playlistIndex >= 0 && _playlistIndex < _playlist.Count - 1;
-        PlaylistList.ItemsSource = _playlist.ToArray();
-        PlaylistList.SelectedIndex = _playlistIndex;
-    }
     private void OnSetAbStartClick(object sender, RoutedEventArgs e)
     {
         _abStart = _playback.Position;
@@ -1018,7 +877,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     {
         var state = _playback.State;
         UpdatePlaybackPowerRequirement(state);
-        PlayPauseIcon.Source = PlaybackIconSource(state == PlaybackState.Playing ? "pause" : "play");
+        PlayPauseIcon.Source = _chrome.PlaybackIconSource(state == PlaybackState.Playing ? "pause" : "play");
         StatusText.Text = _audioTagStatusText is { } audioTag && state != PlaybackState.Failed ? audioTag : L(state switch
         {
             PlaybackState.Playing => "PlaybackStatePlaying",
@@ -1071,7 +930,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             _firstFrameWaiter?.TrySetResult();
         }
         ApplySubtitleVisibilityPreference();
-        StartPostOpenWorkIfReady();
+        _mediaNavigation.NotifyFirstFrameReady();
         StartAutomaticSubtitleGenerationIfReady();
     });
 
@@ -1144,8 +1003,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     }
     private void OnMediaEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(async () =>
     {
-        if (_repeatMode == RepeatMode.AutoAdvance && _playlistIndex >= 0 && _playlistIndex < _playlist.Count - 1)
-            await OpenAdjacentMediaAsync(1);
+        if (_repeatMode == RepeatMode.AutoAdvance) await _mediaNavigation.AutoAdvanceAsync();
     });
     private void OnTracksChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
@@ -1362,64 +1220,10 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _panels.Apply(_initialized);
     }
 
-    private void RefreshRightPanelSections()
-    {
-        var selectedIndex = Math.Max(0, RightPanelSectionList.SelectedIndex);
-        RightPanelSectionList.ItemsSource = new[]
-        {
-            new RightPanelSectionEntry("\uE8B7", L("RightPanelExplorer")),
-            new RightPanelSectionEntry("\uE142", L("RightPanelPlaylist")),
-            new RightPanelSectionEntry("\uE774", L("RightPanelWebDav")),
-            new RightPanelSectionEntry("\uE734", L("RightPanelFavorites")),
-            new RightPanelSectionEntry("\uE8C1", L("RightPanelSubtitles"))
-        };
-        PlaylistTitleText.Text = L("RightPanelPlaylist");
-        FavoritesTitleText.Text = L("RightPanelFavorites");
-        SubtitlesTitleText.Text = L("RightPanelSubtitles");
-        RightPanelSectionList.SelectedIndex = Math.Clamp(selectedIndex, 0, 4);
-        ApplyRightPanelSection((RightPanelSection)RightPanelSectionList.SelectedIndex);
-    }
-
-    private void OnRightPanelSectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (RightPanelSectionList.SelectedIndex >= 0) ApplyRightPanelSection((RightPanelSection)RightPanelSectionList.SelectedIndex);
-    }
-
-    private void ShowRightPanelSection(RightPanelSection section)
-    {
-        _panels.IsRightVisible = true;
-        ApplyPanelVisibility();
-        RightPanelSectionList.SelectedIndex = (int)section;
-        ApplyRightPanelSection(section);
-    }
-
-    private void ApplyRightPanelSection(RightPanelSection section)
-    {
-        ExplorerSection.Visibility = section == RightPanelSection.Explorer ? Visibility.Visible : Visibility.Collapsed;
-        PlaylistSection.Visibility = section == RightPanelSection.Playlist ? Visibility.Visible : Visibility.Collapsed;
-        WebDavSection.Visibility = section == RightPanelSection.WebDav ? Visibility.Visible : Visibility.Collapsed;
-        FavoritesSection.Visibility = section == RightPanelSection.Favorites ? Visibility.Visible : Visibility.Collapsed;
-        SubtitlesSection.Visibility = section == RightPanelSection.Subtitles ? Visibility.Visible : Visibility.Collapsed;
-        if (_initialized && section == RightPanelSection.Favorites) _ = LoadFavoritesForDisplayAsync();
-    }
-
-    private async Task LoadFavoritesForDisplayAsync()
-    {
-        try
-        {
-            await _historyService.LoadFavoritesAsync();
-            RefreshFavoritesList();
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "favorites", "FAVORITES_LOAD_ERROR", exception.Message, exception);
-        }
-    }
-
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (_fullscreen.IsFullscreen) return;
-        UpdateTitleBarDragRegion();
+        _chrome.UpdateTitleBarDragRegion();
         if (_panels.Clamp(MainContentGrid.ActualWidth, RootGrid.ActualHeight)) ApplyPanelVisibility();
     }
 
@@ -1468,643 +1272,82 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
 
     private async void OnRetryAiClick(object sender, RoutedEventArgs e)
         => await _aiWorkflow.RetryAsync();
-    private async void OnAddWebDavServerRequested(object? sender, EventArgs e)
+    private async void OnCameraClick(object sender, RoutedEventArgs e) =>
+        await _auxiliaryWindows.ShowCameraAsync();
+
+    private async void OnWindowsCaptionsClick(object sender, RoutedEventArgs e) =>
+        await _auxiliaryWindows.ShowWindowsCaptionsAsync();
+
+    private async void OnSettingsClick(object sender, RoutedEventArgs e) =>
+        await _auxiliaryWindows.ShowSettingsAsync();
+
+    private void ApplySettings(AppSettings settings)
     {
-        try
+        _settings = settings;
+        _mediaNavigation.ApplySettings();
+        LocalizationService.Apply(settings.General.Language);
+        UiFontService.Apply(settings.General.UiFontFamily, RootGrid);
+        _chrome.ApplyTheme(settings.General.Theme);
+        _rightPanel.RefreshLabels();
+        UpdateShortcutHints();
+        if (!_playback.IsAvailable) return;
+        TryPlayback(() =>
         {
-            var name = CreateWebDavTextBox(L("NameHeader"), string.Empty);
-            var address = CreateWebDavTextBox(L("AddressHeader"), string.Empty, "https://server.example/dav/");
-            var port = new NumberBox
-            {
-                Header = L("PortHeader"),
-                Value = 443,
-                Minimum = 1,
-                Maximum = 65535,
-                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden
-            };
-            var username = CreateWebDavTextBox(L("UsernameHeader"), string.Empty);
-            var password = new PasswordBox { Header = L("PasswordHeader") };
-            var validation = new TextBlock
-            {
-                Foreground = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 196, 43, 28)),
-                TextWrapping = TextWrapping.Wrap,
-                Visibility = Visibility.Collapsed
-            };
-            var panel = new StackPanel { Spacing = 12, Width = 440, Children = { name, address, port, username, password, validation } };
-            var dialog = CreateDialog(L("AddWebDavServerTitle"), panel, L("SaveButtonText"));
-            Uri? parsedAddress = null;
-            dialog.PrimaryButtonClick += (_, args) =>
-            {
-                if (Uri.TryCreate(address.Text.Trim(), UriKind.Absolute, out parsedAddress) &&
-                    parsedAddress.Scheme is "http" or "https" &&
-                    !double.IsNaN(port.Value) && port.Value % 1 == 0 && port.Value is >= 1 and <= 65535) return;
-                args.Cancel = true;
-                validation.Text = L("InvalidWebDavAddressMessage");
-                validation.Visibility = Visibility.Visible;
-            };
-            if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary || parsedAddress is null) return;
-
-            var server = new WebDavServerSettings { Name = string.IsNullOrWhiteSpace(name.Text) ? parsedAddress.Host : name.Text.Trim() };
-            _webDavCredentials.Save(server.Id, new WebDavConnectionCredential(WebDavConnectionCredential.NormalizeAddress(parsedAddress), (int)port.Value, username.Text.Trim(), password.Password));
-            _settings.Network.WebDavServers.Add(server);
-            await SettingsService.CreateDefault().SaveAsync(_settings);
-            _panels.IsRightVisible = true;
-            ApplyPanelVisibility();
-            ShowRightPanelSection(RightPanelSection.WebDav);
-            RefreshWebDavServerList(server);
-            await WebDavBrowser.ConnectAsync(server);
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "webdav", "WEBDAV_ADD_ERROR", exception.Message, exception);
-            WebDavBrowser.SetStatus(exception.Message);
-        }
+            _playback.SetVolume(settings.Playback.DefaultVolume);
+            _playback.SetRate(settings.Playback.PlaybackRate);
+            _playback.ConfigureNetwork(TimeSpan.FromSeconds(settings.Network.TimeoutSeconds), settings.Network.Proxy);
+            _playback.ConfigurePreferredLanguages(settings.Playback.DefaultAudioLanguage, settings.Playback.DefaultSubtitleLanguage);
+            _playback.ConfigureSubtitleStyle(
+                settings.Subtitle.FontFamily,
+                settings.Subtitle.FontSize,
+                settings.Subtitle.Color,
+                settings.Subtitle.Background,
+                settings.Subtitle.Outline,
+                settings.Subtitle.BottomMargin);
+            _playback.ConfigureRtxVideoSuperResolution(settings.Playback.RtxVideoSuperResolution);
+        });
+        ScheduleSubtitleOverlaySync();
     }
 
-    private static TextBox CreateWebDavTextBox(string header, string text, string? placeholder = null) => new()
-    {
-        Header = header,
-        Text = text,
-        PlaceholderText = placeholder ?? string.Empty,
-        IsSpellCheckEnabled = false,
-        IsTextPredictionEnabled = false
-    };
+    private async void OnAboutClick(object sender, RoutedEventArgs e) =>
+        await _aboutDialog.ShowAsync();
 
-    private void RefreshWebDavServerList(WebDavServerSettings? selected = null)
+    private void UpdatePanelToggleIcons() => _chrome.UpdatePanelToggleIcons();
+
+    private void OnRootActualThemeChanged(FrameworkElement sender, object args) =>
+        _chrome.ActualThemeChanged(sender.ActualTheme);
+
+    private async void OnPlaylistItemClick(object sender, ItemClickEventArgs e) =>
+        await _mediaNavigation.OpenPlaylistItemAsync(e.ClickedItem);
+
+    private void OnClearPlaylistClick(object sender, RoutedEventArgs e) =>
+        _mediaNavigation.ClearPlaylist();
+
+    private async void OnFavoriteDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args) =>
+        await _mediaNavigation.ReorderFavoritesAsync();
+
+    private async void OnFavoriteItemClick(object sender, ItemClickEventArgs e) =>
+        await _mediaNavigation.OpenFavoriteItemAsync(e.ClickedItem);
+
+    private async void OnRemoveFavoriteItemClick(object sender, RoutedEventArgs e) =>
+        await _mediaNavigation.RemoveFavoriteAsync(sender);
+
+    private async Task<bool> PrepareForRemoteSubtitleLoadAsync()
     {
-        WebDavBrowser.SetServers(_settings.Network.WebDavServers, selected);
+        await CancelAiPipelineAsync();
+        return await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"));
     }
 
-    private async void OnDeleteWebDavServerRequested(object? sender, WebDavServerEventArgs e)
+    private Task ApplyDownloadedWebDavSubtitleAsync(DownloadedWebDavSubtitle subtitle)
     {
-        var server = e.Server;
-
-        var dialog = new ContentDialog
-        {
-            XamlRoot = RootGrid.XamlRoot,
-            RequestedTheme = RootGrid.ActualTheme,
-            Title = L("DeleteWebDavServerTitle"),
-            Content = new TextBlock { Text = F("DeleteWebDavServerMessage", server.Name), TextWrapping = TextWrapping.Wrap },
-            PrimaryButtonText = L("DeleteButtonText"),
-            CloseButtonText = L("CancelButtonText"),
-            DefaultButton = ContentDialogButton.Close
-        };
-        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
-
-        try
-        {
-            WebDavBrowser.Disconnect(server.Id);
-            _settings.Network.WebDavServers.RemoveAll(candidate => candidate.Id == server.Id);
-            _webDavCredentials.Delete(server.Id);
-            await SettingsService.CreateDefault().SaveAsync(_settings);
-            RefreshWebDavServerList();
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "webdav", "WEBDAV_DELETE_ERROR", exception.Message, exception);
-            WebDavBrowser.SetStatus(exception.Message);
-        }
-    }
-
-    private Task ConnectWebDavServerAsync(WebDavServerSettings server, Uri? directory = null) =>
-        WebDavBrowser.ConnectAsync(server, directory);
-
-    private async void OnCameraClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            if (_cameraWindow is not null) { _cameraWindow.Activate(); return; }
-            _cameraWindow = new CameraWindow(this);
-            _cameraWindow.Closed += (_, _) => _cameraWindow = null;
-            _cameraWindow.Activate();
-        }
-        catch (Exception exception)
-        {
-            _cameraWindow = null;
-            await AppLog.WriteAsync("error", "camera", "CAMERA_WINDOW_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("CameraErrorTitle"), exception.Message);
-        }
-    }
-
-    private async void OnWindowsCaptionsClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            if (_windowsCaptionWindow is not null) { _windowsCaptionWindow.Activate(); return; }
-            _appWindow?.Hide();
-            _windowsCaptionWindow = new WindowsCaptionWindow(this);
-            _windowsCaptionWindow.Closed += (_, _) =>
-            {
-                _windowsCaptionWindow = null;
-                if (_closeInProgress || _allowClose) return;
-                _appWindow?.Show();
-                Activate();
-            };
-            _windowsCaptionWindow.Activate();
-        }
-        catch (Exception exception)
-        {
-            _windowsCaptionWindow = null;
-            _appWindow?.Show();
-            await AppLog.WriteAsync("error", "captions", "WINDOWS_CAPTION_WINDOW_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("WindowsCaptionErrorTitle"), exception.Message);
-        }
-    }
-    private async void OnSettingsClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            if (_settingsWindow is not null) { _settingsWindow.Activate(); return; }
-            _settingsWindow = new SettingsWindow(this);
-            _settingsWindow.SettingsSaved += (_, settings) =>
-            {
-                _settings = settings;
-                MediaBrowser.DefaultDirectory = settings.General.DefaultFolder;
-                RefreshWebDavServerList();
-                LocalizationService.Apply(settings.General.Language);
-                UiFontService.Apply(settings.General.UiFontFamily, RootGrid);
-                ApplyTheme(settings.General.Theme);
-                RefreshFavoritesList();
-                RefreshRightPanelSections();
-                UpdateShortcutHints();
-                if (!_playback.IsAvailable) return;
-                TryPlayback(() =>
-                {
-                    _playback.SetVolume(settings.Playback.DefaultVolume);
-                    _playback.SetRate(settings.Playback.PlaybackRate);
-                    _playback.ConfigureNetwork(TimeSpan.FromSeconds(settings.Network.TimeoutSeconds), settings.Network.Proxy);
-                    _playback.ConfigurePreferredLanguages(settings.Playback.DefaultAudioLanguage, settings.Playback.DefaultSubtitleLanguage);
-                    _playback.ConfigureSubtitleStyle(settings.Subtitle.FontFamily, settings.Subtitle.FontSize, settings.Subtitle.Color, settings.Subtitle.Background, settings.Subtitle.Outline, settings.Subtitle.BottomMargin);
-                    _playback.ConfigureRtxVideoSuperResolution(settings.Playback.RtxVideoSuperResolution);
-                });
-                ScheduleSubtitleOverlaySync();
-            };
-            _settingsWindow.DllUnloadRequested += (_, _) =>
-            {
-                _settingsWindow?.Close();
-                Close();
-            };
-            _settingsWindow.RestartRequested += (_, _) =>
-            {
-                _restartRequested = true;
-                _settingsWindow?.Close();
-                Close();
-            };
-            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
-            _settingsWindow.Activate();
-        }
-        catch (Exception exception)
-        {
-            _settingsWindow = null;
-            await AppLog.WriteAsync("error", "settings", "SETTINGS_WINDOW_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("SettingsErrorTitle"), exception.Message);
-        }
-    }
-
-    private async void OnAboutClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14 };
-            header.Children.Add(new Image
-            {
-                Source = new BitmapImage(new Uri("ms-appx:///Assets/app.png")),
-                Width = 64,
-                Height = 64,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            var nameVersion = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
-            nameVersion.Children.Add(new TextBlock { Text = "AIMediaWorker", FontSize = 20, FontWeight = FontWeights.SemiBold });
-            nameVersion.Children.Add(new TextBlock { Text = F("AboutVersion", GetAppVersion()), Opacity = 0.7 });
-            header.Children.Add(nameVersion);
-
-            var github = new HyperlinkButton { Content = "https://github.com/kirinonakar/AIMediaWorker", HorizontalAlignment = HorizontalAlignment.Left };
-            github.Click += async (_, _) =>
-            {
-                try { await Windows.System.Launcher.LaunchUriAsync(new Uri("https://github.com/kirinonakar/AIMediaWorker")); }
-                catch (Exception exception) { await AppLog.WriteAsync("error", "about", "OPEN_GITHUB_ERROR", exception.Message, exception); }
-            };
-
-            var licenses = new Expander
-            {
-                Header = L("AboutThirdPartyLicenses"),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Content = new ScrollViewer
-                {
-                    MaxHeight = 220,
-                    Content = new TextBlock { Text = ThirdPartyLicensesText, TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Consolas"), FontSize = 12, Opacity = 0.85 }
-                }
-            };
-
-            var content = new StackPanel { Spacing = 12, Width = 440 };
-            content.Children.Add(header);
-            content.Children.Add(github);
-            content.Children.Add(licenses);
-
-            await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("AboutTitle"), Content = content, CloseButtonText = L("CloseButton") });
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "about", "ABOUT_DIALOG_ERROR", exception.Message, exception);
-        }
-    }
-
-    private static string GetAppVersion()
-    {
-        try
-        {
-            var version = Windows.ApplicationModel.Package.Current.Id.Version;
-            return $"{version.Major}.{version.Minor}.{version.Build}.{version.Revision}";
-        }
-        catch
-        {
-            return System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0.0";
-        }
-    }
-
-    private const string ThirdPartyLicensesText =
-        "NAudio 2.2.1 — MIT License\nhttps://github.com/naudio/NAudio\n\n" +
-        "Windows App SDK 2.4.0 — MIT License\nhttps://github.com/microsoft/WindowsAppSDK\n\n" +
-        "System.Security.Cryptography.ProtectedData 10.0.0 — MIT License\nhttps://www.nuget.org/packages/System.Security.Cryptography.ProtectedData\n\n" +
-        "libmpv / mpv — GPLv2+ (build-dependent)\nhttps://github.com/mpv-player/mpv\n\n" +
-        "FFmpeg — LGPLv2.1+ (build-dependent)\nhttps://ffmpeg.org\n\n" +
-        "Silero VAD — MIT License\nhttps://github.com/snakers4/silero-vad\n\n" +
-        "Qwen3-ASR — Apache License 2.0\nhttps://github.com/QwenLM/Qwen3-ASR";
-
-    private void ApplyTheme(AppTheme theme)
-    {
-        RootGrid.RequestedTheme = theme switch { AppTheme.Light => ElementTheme.Light, AppTheme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
-        ApplyTitleBarTheme(RootGrid.ActualTheme);
-        UpdatePlaybackIcons();
-    }
-
-    private SvgImageSource PlaybackIconSource(string name) => new()
-    {
-        UriSource = new Uri($"ms-appx:///Assets/Playback/{name}{(RootGrid.ActualTheme == ElementTheme.Dark ? "-dark" : string.Empty)}.svg")
-    };
-
-    private void UpdatePlaybackIcons()
-    {
-        BeginningIcon.Source = PlaybackIconSource("beginning");
-        PreviousIcon.Source = PlaybackIconSource("previous");
-        SeekBackIcon.Source = PlaybackIconSource("seek-back");
-        PlayPauseIcon.Source = PlaybackIconSource(_playback.State == PlaybackState.Playing ? "pause" : "play");
-        StopIcon.Source = PlaybackIconSource("stop");
-        SeekForwardIcon.Source = PlaybackIconSource("seek-forward");
-        NextIcon.Source = PlaybackIconSource("next");
-        MuteIcon.Source = PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
-        RepeatIcon.Source = PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.AutoAdvance => "repeat-auto", _ => "repeat" });
-        UpdatePanelToggleIcons();
-    }
-
-    private void UpdatePanelToggleIcons()
-    {
-        BottomPanelToggleIcon.Source = PanelToggleIconSource("bottom-panel", _panels.IsBottomVisible);
-        RightPanelToggleIcon.Source = PanelToggleIconSource("right-panel", _panels.IsRightVisible);
-    }
-
-    private SvgImageSource PanelToggleIconSource(string name, bool isOpen) => new()
-    {
-        UriSource = new Uri($"ms-appx:///Assets/Panels/{name}{(isOpen ? string.Empty : "-closed")}{(RootGrid.ActualTheme == ElementTheme.Dark ? "-dark" : string.Empty)}.svg")
-    };
-
-    private void OnRootActualThemeChanged(FrameworkElement sender, object args)
-    {
-        ApplyTitleBarTheme(sender.ActualTheme);
-        UpdatePlaybackIcons();
-    }
-
-    private void ApplyTitleBarTheme(ElementTheme theme)
-    {
-        if (_appWindow?.TitleBar is not { } titleBar) return;
-        var dark = theme == ElementTheme.Dark;
-        var background = dark ? Windows.UI.Color.FromArgb(255, 32, 32, 32) : Windows.UI.Color.FromArgb(255, 243, 243, 243);
-        var foreground = dark ? Windows.UI.Color.FromArgb(255, 255, 255, 255) : Windows.UI.Color.FromArgb(255, 24, 24, 24);
-        var inactiveForeground = dark ? Windows.UI.Color.FromArgb(255, 160, 160, 160) : Windows.UI.Color.FromArgb(255, 110, 110, 110);
-        var hover = dark ? Windows.UI.Color.FromArgb(255, 58, 58, 58) : Windows.UI.Color.FromArgb(255, 224, 224, 224);
-        var pressed = dark ? Windows.UI.Color.FromArgb(255, 72, 72, 72) : Windows.UI.Color.FromArgb(255, 208, 208, 208);
-        AppTitleBarArea.Background = new SolidColorBrush(background);
-        titleBar.BackgroundColor = background;
-        titleBar.ForegroundColor = foreground;
-        titleBar.InactiveBackgroundColor = background;
-        titleBar.InactiveForegroundColor = inactiveForeground;
-        titleBar.ButtonBackgroundColor = background;
-        titleBar.ButtonForegroundColor = foreground;
-        titleBar.ButtonHoverBackgroundColor = hover;
-        titleBar.ButtonHoverForegroundColor = foreground;
-        titleBar.ButtonPressedBackgroundColor = pressed;
-        titleBar.ButtonPressedForegroundColor = foreground;
-        titleBar.ButtonInactiveBackgroundColor = background;
-        titleBar.ButtonInactiveForegroundColor = inactiveForeground;
-    }
-
-    private void UpdateTitleBarDragRegion()
-    {
-        if (_appWindow?.TitleBar is not { } titleBar) return;
-        var scale = RootGrid.XamlRoot?.RasterizationScale ?? 1.0;
-        var left = 0.0;
-        var top = 0.0;
-        var right = 0.0;
-        var bottom = 0.0;
-        if (_appWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized })
-        {
-            // When maximized, the client area is inset by the invisible resize border.
-            var border = 8 * scale;
-            left = border;
-            top = border;
-            right = border;
-        }
-        var width = AppTitleBarArea.ActualWidth * scale;
-        var height = AppTitleBarArea.ActualHeight * scale;
-        var dragWidth = Math.Max(0, width - left - right - titleBar.RightInset);
-        var dragHeight = Math.Max(0, height - top - bottom);
-        titleBar.SetDragRectangles([new RectInt32((int)left, (int)top, (int)dragWidth, (int)dragHeight)]);
-    }
-
-    private async void OnBrowserChooseFolderRequested(object? sender, EventArgs e)
-    {
-        try
-        {
-            var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.VideosLibrary };
-            picker.FileTypeFilter.Add("*");
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var folder = await picker.PickSingleFolderAsync();
-            if (folder is not null) await MediaBrowser.NavigateAsync(folder.Path);
-        }
-        catch (Exception exception) { await ShowMessageAsync(L("FolderUnavailableTitle"), exception.Message); }
-    }
-
-    private async void OnBrowserMediaRequested(object? sender, LocalMediaBrowserEntryEventArgs e)
-    {
-        // Start playback before the browser materializes the sibling playlist.
-        await OpenMediaAsync(e.Path);
-    }
-
-    private async void OnBrowserFavoriteRequested(object? sender, LocalMediaBrowserEntryEventArgs e)
-    {
-        await AddFavoriteAsync(new LocalMediaSource(e.Path), e.IsDirectory);
-    }
-
-    private void OnBrowserErrorOccurred(object? sender, LocalMediaBrowserErrorEventArgs e)
-    {
-        StatusText.Text = e.Exception.Message;
-    }
-
-    private async void OnPlaylistItemClick(object sender, ItemClickEventArgs e)
-    {
-        if (e.ClickedItem is not PlaylistEntry entry) return;
-        var index = _playlist.IndexOf(entry);
-        if (index < 0) return;
-        _playlistIndex = index;
-        await OpenPlaylistEntryAsync(entry);
-    }
-
-    private void OnClearPlaylistClick(object sender, RoutedEventArgs e) { _playlist.Clear(); _playlistIndex = -1; UpdatePlaylistButtons(); }
-
-    private async void OnWebDavEntryRequested(object? sender, WebDavEntryEventArgs e)
-    {
-        var server = e.Server;
-        var entry = e.Entry;
-        if (MediaFileClassifier.IsSubtitle(Uri.UnescapeDataString(entry.Uri.AbsolutePath)))
-        {
-            await LoadWebDavSubtitleAsync(server, entry, confirmChanges: true, showSubtitlePanel: true);
-            return;
-        }
-        await OpenWebDavMediaAsync(server, entry, e.Siblings);
-    }
-
-    private async Task LoadWebDavSubtitleAsync(WebDavServerSettings server, WebDavEntry entry, bool confirmChanges, bool showSubtitlePanel, Uri? expectedMediaUri = null)
-    {
-        if (confirmChanges)
-        {
-            await CancelAiPipelineAsync();
-            if (!await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"))) return;
-        }
-        try
-        {
-            var bytes = await _webDavClient.DownloadAsync(server, entry.Uri);
-            if (expectedMediaUri is not null &&
-                (_currentMediaSource is not WebDavMediaSource currentSource ||
-                 currentSource.ServerId != server.Id || !WebDavUri.Equals(currentSource.Uri, expectedMediaUri))) return;
-            var path = Uri.UnescapeDataString(entry.Uri.AbsolutePath);
-            var document = _subtitleFiles.DecodeAndParse(path, bytes, _settings.Subtitle.Encoding);
-            document.MarkSaved();
-            BindDocument(document);
-            _aiWorkflow.ResetTranslation();
-            ScheduleSubtitleOverlaySync();
-            if (showSubtitlePanel) ShowRightPanelSection(RightPanelSection.Subtitles);
-            StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "webdav", exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_SUBTITLE_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message);
-        }
-    }
-
-    private async Task TryLoadMatchingWebDavSmiAsync(WebDavMediaSource mediaSource)
-    {
-        try
-        {
-            var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == mediaSource.ServerId);
-            if (server is null) return;
-
-            var directory = WebDavUri.AsDirectory(new Uri(mediaSource.Uri, "."));
-            IReadOnlyList<WebDavEntry> entries;
-            if (WebDavBrowser.TryGetEntries(mediaSource.ServerId, directory, out var displayedEntries)) entries = displayedEntries;
-            else
-            {
-                entries = await _webDavClient.ListAsync(server, directory);
-            }
-
-            if (_currentMediaSource is not WebDavMediaSource currentSource ||
-                currentSource.ServerId != mediaSource.ServerId || !WebDavUri.Equals(currentSource.Uri, mediaSource.Uri)) return;
-
-            var sidecar = entries.FirstOrDefault(candidate =>
-                !candidate.IsCollection &&
-                SmiParser.IsSidecarFor(mediaSource.DisplayName, candidate.Name));
-            if (sidecar is not null)
-            {
-                await LoadWebDavSubtitleAsync(server, sidecar, confirmChanges: false, showSubtitlePanel: false, expectedMediaUri: mediaSource.Uri);
-            }
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("warning", "webdav", exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_SIDECAR_SUBTITLE_ERROR", exception.Message, exception);
-        }
-    }
-
-    private async Task OpenWebDavMediaAsync(WebDavServerSettings server, WebDavEntry entry, IReadOnlyList<WebDavEntry>? siblings = null)
-    {
-        using var request = _webDavClient.CreateMediaRequest(server, entry.Uri);
-        IReadOnlyDictionary<string, string>? headers = request.Headers.Authorization is { } authorization
-            ? new Dictionary<string, string> { ["Authorization"] = authorization.ToString() }
-            : null;
-
-        if (siblings is null)
-        {
-            try
-            {
-                siblings = await _webDavClient.ListAsync(server, new Uri(entry.Uri, "."));
-                WebDavBrowser.Synchronize(server, entry.Uri, siblings);
-            }
-            catch (Exception exception)
-            {
-                await AppLog.WriteAsync("warning", "webdav", "WEBDAV_SIBLING_LIST_ERROR", exception.Message, exception);
-            }
-        }
-
-        var mediaEntries = (siblings ?? [])
-            .Where(IsPlayableWebDavEntry)
-            .ToList();
-        if (!mediaEntries.Any(candidate => WebDavUri.Equals(candidate.Uri, entry.Uri))) mediaEntries.Add(entry);
-
-        _playlist.Clear();
-        _playlist.AddRange(mediaEntries.Select(candidate => PlaylistEntry.FromWebDav(server.Id, candidate, headers)));
-        _playlistIndex = _playlist.FindIndex(item => WebDavUri.Equals(new Uri(item.Path), entry.Uri));
-        if (_playlistIndex < 0) _playlistIndex = 0;
-        await OpenPlaylistEntryAsync(_playlist[_playlistIndex]);
-    }
-
-    private static bool IsPlayableWebDavEntry(WebDavEntry entry) =>
-        !entry.IsCollection &&
-        (MediaFileClassifier.IsPlayable(Uri.UnescapeDataString(entry.Uri.AbsolutePath)) ||
-         entry.ContentType?.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) == true ||
-         entry.ContentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true);
-
-    private async void OnWebDavFavoriteRequested(object? sender, WebDavEntryEventArgs e)
-    {
-        await AddFavoriteAsync(new WebDavMediaSource(e.Server.Id, e.Entry.Uri, e.Entry.Name), e.Entry.IsCollection);
-    }
-
-    private async Task AddFavoriteAsync(IMediaSource source, bool isFolder)
-    {
-        await _historyService.LoadFavoritesAsync();
-        if (!_historyService.AddFavorite(source, isFolder)) return;
-        await _historyService.SaveFavoritesAsync();
-        RefreshFavoritesList();
-        StatusText.Text = isFolder ? F("StatusAddedFavoriteFolder", source.DisplayName) : L("StatusAddedFavorite");
-    }
-
-    private void RefreshFavoritesList()
-    {
-        if (!ReferenceEquals(FavoriteList.ItemsSource, _favoriteEntries)) FavoriteList.ItemsSource = _favoriteEntries;
-        _favoriteEntries.Clear();
-        foreach (var item in _historyService.Favorites)
-        {
-            _favoriteEntries.Add(new FavoriteListEntry(item, L("RemoveFavoriteButton")));
-        }
-        FavoritesEmptyText.Visibility = _favoriteEntries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private async void OnFavoriteDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
-    {
-        await _historyService.LoadFavoritesAsync();
-        if (!_historyService.ReorderFavorites(_favoriteEntries.Select(entry => entry.Item.Location))) return;
-        RefreshFavoritesList();
-        await _historyService.SaveFavoritesAsync();
-    }
-
-    private async void OnFavoriteItemClick(object sender, ItemClickEventArgs e)
-    {
-        if (e.ClickedItem is FavoriteListEntry entry) await OpenFavoriteAsync(entry.Item);
-    }
-
-    private async void OnRemoveFavoriteItemClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { DataContext: FavoriteListEntry entry }) return;
-        await _historyService.LoadFavoritesAsync();
-        if (!_historyService.RemoveFavorite(entry.Item.Location)) return;
-        await _historyService.SaveFavoritesAsync();
-        RefreshFavoritesList();
-    }
-
-    private async Task OpenFavoriteAsync(FavoriteItem favorite)
-    {
-        if (favorite.IsFolder)
-        {
-            if (favorite.SourceType == MediaSourceKind.WebDav)
-            {
-                var server = FindWebDavServerForLocation(favorite.Location);
-                if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("FavoriteServerMissingMessage")); return; }
-                _panels.IsRightVisible = true;
-                ApplyPanelVisibility();
-                ShowRightPanelSection(RightPanelSection.WebDav);
-                await ConnectWebDavServerAsync(server, new Uri(favorite.Location));
-                return;
-            }
-            if (!Directory.Exists(favorite.Location)) { await ShowMessageAsync(L("FolderUnavailableTitle"), favorite.Location); return; }
-            _panels.IsRightVisible = true;
-            ApplyPanelVisibility();
-            ShowRightPanelSection(RightPanelSection.Explorer);
-            await MediaBrowser.NavigateAsync(favorite.Location);
-            return;
-        }
-        await OpenRecentAsync(new RecentMediaItem(favorite.SourceType, favorite.DisplayName, favorite.Location, favorite.Added, 0));
-    }
-
-    private void RebuildRecentMenu()
-    {
-        RecentMenu.Items.Clear();
-        foreach (var recent in _historyService.Recent.Take(20))
-        {
-            var item = new MenuFlyoutItem { Text = recent.DisplayName, Tag = recent };
-            item.Click += async (_, _) => await OpenRecentAsync(recent);
-            RecentMenu.Items.Add(item);
-        }
-        if (RecentMenu.Items.Count == 0) RecentMenu.Items.Add(new MenuFlyoutItem { Text = L("NoRecentMediaText"), IsEnabled = false });
-    }
-
-    private async Task OpenRecentAsync(RecentMediaItem recent)
-    {
-        if (recent.SourceType == MediaSourceKind.WebDav)
-        {
-            var server = FindWebDavServerForLocation(recent.Location);
-            if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("RecentServerMissingMessage")); return; }
-            var uri = new Uri(recent.Location);
-            await OpenWebDavMediaAsync(server, new WebDavEntry(recent.DisplayName, uri, false, null, null, null));
-        }
-        else
-        {
-            await OpenMediaAsync(recent.Location, mediaSource: MediaSourceFactory.Parse(recent.Location));
-        }
-        if (_settings.General.ResumePlayback && recent.LastPlaybackPositionMicroseconds > 0)
-        {
-            var resumePosition = TimeSpan.FromTicks(recent.LastPlaybackPositionMicroseconds * 10);
-            // OpenAsync queues loadfile and returns before libmpv has produced a
-            // frame. Waiting for the UI first-frame signal prevents a recent-file
-            // resume seek from racing AV1/WebM decoder initialization.
-            if (await WaitForFirstFrameAsync(recent.Location))
-                SeekAndRestartAi(resumePosition, () => _playback.Seek(resumePosition, true));
-        }
-    }
-
-    private WebDavServerSettings? FindWebDavServerForLocation(string location)
-    {
-        if (!Uri.TryCreate(location, UriKind.Absolute, out var target)) return null;
-        var credentials = new WebDavCredentialStore(new WindowsCredentialService());
-        WebDavServerSettings? bestMatch = null;
-        var bestPathLength = -1;
-        foreach (var server in _settings.Network.WebDavServers)
-        {
-            WebDavConnectionCredential? credential;
-            try { credential = credentials.Read(server.Id); }
-            catch (Exception) { continue; }
-            if (credential is null) continue;
-            var root = credential.RootUri;
-            if (!root.Scheme.Equals(target.Scheme, StringComparison.OrdinalIgnoreCase) || !root.Host.Equals(target.Host, StringComparison.OrdinalIgnoreCase) || root.Port != target.Port || !target.AbsolutePath.StartsWith(root.AbsolutePath, StringComparison.OrdinalIgnoreCase)) continue;
-            if (root.AbsolutePath.Length <= bestPathLength) continue;
-            bestMatch = server;
-            bestPathLength = root.AbsolutePath.Length;
-        }
-        return bestMatch;
-    }
-
-    private void RememberCurrentPosition()
-    {
-        if (_currentMediaSource is null) return;
-        _historyService.AddRecent(_currentMediaSource, CurrentPlaybackPositionMicroseconds, _settings.General.RecentMediaCount);
+        var document = _subtitleFiles.DecodeAndParse(subtitle.Path, subtitle.Bytes, _settings.Subtitle.Encoding);
+        document.MarkSaved();
+        BindDocument(document);
+        _aiWorkflow.ResetTranslation();
+        ScheduleSubtitleOverlaySync();
+        if (subtitle.ShowSubtitlePanel) _rightPanel.Show(RightPanelSection.Subtitles);
+        StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
+        return Task.CompletedTask;
     }
 
     private void ScheduleSubtitleOverlaySync(bool force = false)
@@ -2143,7 +1386,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
 
     private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (!_fullscreen.IsFullscreen && sender.Presenter is OverlappedPresenter presenter && presenter.State != OverlappedPresenterState.Minimized) CaptureWindowPlacement(sender, presenter);
+        if (!_fullscreen.IsFullscreen && sender.Presenter is OverlappedPresenter presenter && presenter.State != OverlappedPresenterState.Minimized)
+            WindowChromeController.CaptureWindowPlacement(sender, presenter, _settings.Window);
         if (_allowClose) return;
 
         // Closed is too late for asynchronous cleanup: WinUI can stop its dispatcher before
@@ -2203,26 +1447,12 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         TryPlayback(seek);
         ScheduleAiRestartAfterSeek(requestedPosition);
     }
-    private ContentDialog CreateDialog(string title, object content, string primaryText) => new() { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
-    private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
-    {
-        await _dialogLock.WaitAsync();
-        var restoreVideo = _videoHost?.IsVisible == true;
-        try
-        {
-            if (restoreVideo) _videoHost!.SetVisible(false);
-            return await dialog.ShowAsync();
-        }
-        finally
-        {
-            if (restoreVideo && _videoHost is not null) _videoHost.SetVisible(true);
-            _dialogLock.Release();
-        }
-    }
-    private async Task ShowMessageAsync(string title, string message) => await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap }, CloseButtonText = L("OkButton") });
+    private ContentDialog CreateDialog(string title, object content, string primaryText) =>
+        _dialogs.Create(title, content, primaryText);
+    private Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog) => _dialogs.ShowAsync(dialog);
+    private Task ShowMessageAsync(string title, string message) => _dialogs.ShowMessageAsync(title, message);
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
-    private static Brush ThemeBrush(string resourceKey, Windows.UI.Color fallback) => Application.Current.Resources.TryGetValue(resourceKey, out var value) && value is Brush brush ? brush : new SolidColorBrush(fallback);
     private long CurrentPlaybackPositionMicroseconds => Math.Max(0, _playback.Position.Ticks / 10);
     private static string FormatTime(TimeSpan value)
     {
@@ -2249,26 +1479,20 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         {
             _appWindow.Changed -= OnAppWindowChanged;
         }
-        await _historyService.LoadRecentAsync();
-        RememberCurrentPosition();
-
-        _postOpenCancellation?.Cancel();
+        _mediaNavigation.CancelPendingWork();
         _subtitleOverlay.CancelPendingSync();
-        WebDavBrowser.Cancel();
 
-        _settingsWindow?.Close();
-        if (_cameraWindow is { } cameraWindow) await cameraWindow.CloseAsync();
-        if (_windowsCaptionWindow is { } captionWindow) await captionWindow.CloseAsync();
+        await _auxiliaryWindows.CloseAsync();
 
         try { await _aiWorkflow.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "ASR_DISPOSE_ERROR", exception.Message, exception); }
 
-        try { await _historyService.SaveRecentAsync(); }
+        try { await _mediaNavigation.SaveHistoryAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "HISTORY_SAVE_ERROR", exception.Message, exception); }
         try { await SettingsService.CreateDefault().SaveAsync(_settings); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "SETTINGS_SAVE_ERROR", exception.Message, exception); }
-        _postOpenCancellation?.Dispose(); _postOpenCancellation = null;
-        _webDavClient.Dispose();
+        _rightPanel.Dispose();
+        _mediaNavigation.Dispose();
         try { await _playback.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "PLAYBACK_DISPOSE_ERROR", exception.Message, exception); }
         _playback.FirstFrameReady -= OnFirstFrameReady;
@@ -2283,7 +1507,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         }
         _subtitleOverlay.Dispose();
 
-        if (_restartRequested)
+        if (_auxiliaryWindows.RestartRequested)
         {
             try { Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().UnregisterKey(); } catch { }
             try
@@ -2320,9 +1544,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         SetSubtitleDisplayMode(displayMode, refreshOverlay);
     void IAiWorkflowHost.ShowSubtitlePanel()
     {
-        _panels.IsRightVisible = true;
-        ApplyPanelVisibility();
-        ShowRightPanelSection(RightPanelSection.Subtitles);
+        _rightPanel.Show(RightPanelSection.Subtitles);
     }
     void IAiWorkflowHost.DrawTimeline() => DrawTimeline();
     void IAiWorkflowHost.ScheduleSubtitleOverlaySync(bool force) => ScheduleSubtitleOverlaySync(force);
@@ -2346,33 +1568,6 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         return ShowDialogAsync(dialog);
     }
     Task IAiWorkflowHost.ShowMessageAsync(string title, string message) => ShowMessageAsync(title, message);
-
-    private sealed record PlaylistEntry(string Path, string DisplayName, IReadOnlyDictionary<string, string>? HttpHeaders = null, IMediaSource? MediaSource = null)
-    {
-        public string SourceIconGlyph => MediaSource?.Kind == MediaSourceKind.WebDav ? "\uE774" : string.Empty;
-
-        public static PlaylistEntry FromLocal(string path)
-        {
-            var fullPath = System.IO.Path.GetFullPath(path);
-            return new PlaylistEntry(fullPath, System.IO.Path.GetFileName(fullPath));
-        }
-
-        public static PlaylistEntry FromWebDav(Guid serverId, WebDavEntry entry, IReadOnlyDictionary<string, string>? headers) =>
-            new(entry.Uri.AbsoluteUri, entry.Name, headers, new WebDavMediaSource(serverId, entry.Uri, entry.Name));
-    }
-
-    private sealed record FavoriteListEntry(FavoriteItem Item, string RemoveLabel)
-    {
-        public string DisplayName => Item.DisplayName;
-        public string Location => Item.Location;
-        public string SourceIconGlyph => Item.SourceType == MediaSourceKind.WebDav ? "\uE774" : string.Empty;
-        public string IconGlyph => Item.IsFolder ? "\uE8B7" : "\uE8A5";
-    }
-
-    private sealed record RightPanelSectionEntry(string IconGlyph, string Label);
-    private enum RightPanelSection { Explorer, Playlist, WebDav, Favorites, Subtitles }
-
-    private sealed record PendingPostOpenWork(string Source, string? LocalPath, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
 
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
