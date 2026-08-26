@@ -20,6 +20,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private Task? _preparationTask;
     private Task? _initializationTask;
     private CancellationTokenSource? _trackRefreshCancellation;
+    private CancellationTokenSource? _albumArtRecoveryCancellation;
     private CancellationTokenSource? _editorSubtitleSelectionCancellation;
     private long _nextCommandId;
     private PlaybackState _state = PlaybackState.Uninitialized;
@@ -224,6 +225,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private void OpenCore(string source, IReadOnlyDictionary<string, string>? httpHeaders, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        CancelPendingAlbumArtRecovery();
         var trackRefreshCancellation = Interlocked.Exchange(ref _trackRefreshCancellation, null);
         trackRefreshCancellation?.Cancel();
         trackRefreshCancellation?.Dispose();
@@ -274,7 +276,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public void Play() { SetProperty("pause", "no"); SetState(PlaybackState.Playing); }
     public void Pause() { SetProperty("pause", "yes"); SetState(PlaybackState.Paused); }
     public void TogglePause() { if (State == PlaybackState.Playing) Pause(); else Play(); }
-    public void Stop() { Command("stop"); SetState(PlaybackState.Idle); Position = TimeSpan.Zero; PositionChanged?.Invoke(this, EventArgs.Empty); }
+    public void Stop() { CancelPendingAlbumArtRecovery(); Command("stop"); SetState(PlaybackState.Idle); Position = TimeSpan.Zero; PositionChanged?.Invoke(this, EventArgs.Empty); }
 
     public void Seek(TimeSpan position, bool exact = false) => Command("seek", Math.Max(0, position.TotalSeconds).ToString("0.######", CultureInfo.InvariantCulture), "absolute" + (exact ? "+exact" : "+keyframes"));
     public void SeekRelative(TimeSpan offset) => Command("seek", offset.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture), "relative");
@@ -549,6 +551,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     {
         if (_disposed) return;
         _disposed = true;
+        CancelPendingAlbumArtRecovery();
         CancelPendingEditorSubtitleSelection();
         if (_initializationTask is { } initialization)
         {
@@ -618,6 +621,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 // the menu checkmark and the renderer cannot drift apart.
                 RestoreSubtitleVisibility();
                 SetState(GetBool("pause") ? PlaybackState.Paused : PlaybackState.Playing);
+                ScheduleAlbumArtRecovery();
                 break;
             case MpvInterop.MpvEventId.EndFile:
                 var endedNaturally = true;
@@ -672,6 +676,90 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         previous?.Cancel();
         previous?.Dispose();
         _ = RefreshTracksAfterFirstFrameAsync(cancellation);
+    }
+
+    private void ScheduleAlbumArtRecovery()
+    {
+        var cancellation = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _albumArtRecoveryCancellation, cancellation);
+        previous?.Cancel();
+        previous?.Dispose();
+        var expectedSource = CurrentSource;
+        _ = RecoverAlbumArtAfterLoadAsync(expectedSource, cancellation);
+    }
+
+    private async Task RecoverAlbumArtAfterLoadAsync(string? expectedSource, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            // loadfile's per-file vid=auto handles the normal path. Occasionally mpv
+            // finishes an audio-file replacement without presenting its selected
+            // attached picture. Give the decoder/VO time to settle, then rebuild only
+            // an unhealthy album-art selection; normal video and audio without art are
+            // deliberately left alone.
+            await Task.Delay(500, cancellation.Token).ConfigureAwait(false);
+            if (cancellation.IsCancellationRequested || _disposed || _context == 0 ||
+                _state is not PlaybackState.Playing and not PlaybackState.Paused ||
+                !string.Equals(CurrentSource, expectedSource, StringComparison.Ordinal)) return;
+
+            var loadedPath = GetString("path");
+            if (expectedSource is null || loadedPath is null || !SourcesEqual(loadedPath, expectedSource)) return;
+
+            var albumArtTrackIds = new List<int>();
+            var hasAudio = false;
+            var hasNormalVideo = false;
+            var count = GetInt("track-list/count") ?? 0;
+            for (var index = 0; index < count; index++)
+            {
+                var prefix = $"track-list/{index}/";
+                var type = GetString(prefix + "type");
+                if (string.Equals(type, "audio", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasAudio = true;
+                    continue;
+                }
+
+                if (!string.Equals(type, "video", StringComparison.OrdinalIgnoreCase)) continue;
+                if (GetBool(prefix + "albumart"))
+                {
+                    if (GetInt(prefix + "id") is { } id) albumArtTrackIds.Add(id);
+                }
+                else
+                {
+                    hasNormalVideo = true;
+                }
+            }
+
+            if (!hasAudio || hasNormalVideo || albumArtTrackIds.Count == 0) return;
+
+            var currentVideoTrackId = GetInt("vid");
+            int? selectedAlbumArtId = currentVideoTrackId is { } currentId && albumArtTrackIds.Contains(currentId) ? currentId : null;
+            var targetAlbumArtId = selectedAlbumArtId ?? albumArtTrackIds[0];
+            var hasPresentedPicture = selectedAlbumArtId is not null &&
+                (GetInt("dwidth") ?? 0) > 0 && (GetInt("dheight") ?? 0) > 0;
+            if (hasPresentedPicture) return;
+
+            // Setting the same vid is a no-op in mpv. Toggling through no forces a
+            // fresh decoder/VO attachment without reloading or interrupting audio.
+            SetProperty("vid", "no");
+            cancellation.Token.ThrowIfCancellationRequested();
+            SetProperty("vid", targetAlbumArtId.ToString(CultureInfo.InvariantCulture));
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception) when (_disposed || _context == 0) { }
+        catch (MpvException) { }
+        finally
+        {
+            if (Interlocked.CompareExchange(ref _albumArtRecoveryCancellation, null, cancellation) == cancellation)
+                cancellation.Dispose();
+        }
+    }
+
+    private void CancelPendingAlbumArtRecovery()
+    {
+        var cancellation = Interlocked.Exchange(ref _albumArtRecoveryCancellation, null);
+        cancellation?.Cancel();
+        cancellation?.Dispose();
     }
 
     private async Task RefreshTracksAfterFirstFrameAsync(CancellationTokenSource cancellation)
@@ -816,6 +904,16 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     {
         try { return string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase); }
         catch (Exception) { return string.Equals(first, second, StringComparison.OrdinalIgnoreCase); }
+    }
+
+    private static bool SourcesEqual(string first, string second)
+    {
+        if (string.Equals(first, second, StringComparison.Ordinal)) return true;
+        Uri.TryCreate(first, UriKind.Absolute, out var firstUri);
+        Uri.TryCreate(second, UriKind.Absolute, out var secondUri);
+        if (firstUri is not null && secondUri is not null && (!firstUri.IsFile || !secondUri.IsFile))
+            return string.Equals(firstUri.AbsoluteUri, secondUri.AbsoluteUri, StringComparison.Ordinal);
+        return PathsEqual(first, second);
     }
 
     private void ConfigureSubtitleOsdPlacement()

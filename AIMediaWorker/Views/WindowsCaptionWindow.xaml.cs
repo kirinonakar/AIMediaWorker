@@ -82,7 +82,7 @@ public sealed partial class WindowsCaptionWindow : Window
         {
             var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
             if (File.Exists(iconPath)) _appWindow.SetIcon(iconPath);
-            _appWindow.Resize(new SizeInt32(1360, 384));
+            _appWindow.Resize(new SizeInt32(1440, 384));
             if (_appWindow.Presenter is OverlappedPresenter presenter)
             {
                 presenter.IsAlwaysOnTop = true;
@@ -107,7 +107,7 @@ public sealed partial class WindowsCaptionWindow : Window
         PreviousSentenceCountCombo.ItemsSource = new[] { 1, 2 };
         PreviousSentenceCountCombo.SelectedItem = _previousSentenceCount;
         PreviousSentenceCountCombo.IsEnabled = _showPrevious;
-        CaptionFontSizeBox.Value = Math.Clamp(_settings.Capture.CaptionFontSize, 16, 72);
+        CaptionFontSizeBox.Value = Math.Clamp(_settings.Capture.WindowsCaptionFontSize, 16, 72);
         _initializingControls = false;
         ApplyCaptionAppearance();
         UpdateTitleBarDragRegion();
@@ -374,7 +374,7 @@ public sealed partial class WindowsCaptionWindow : Window
 
     private void UpdateCaptionFontSize()
     {
-        var fontSize = Math.Clamp(_settings.Capture.CaptionFontSize, 16, 72);
+        var fontSize = Math.Clamp(_settings.Capture.WindowsCaptionFontSize, 16, 72);
         CaptionPreviousText.FontSize = fontSize;
         CaptionLatestText.FontSize = fontSize;
         TranslationPreviousText.FontSize = fontSize;
@@ -515,7 +515,7 @@ public sealed partial class WindowsCaptionWindow : Window
     private async void OnCaptionFontSizeChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
     {
         if (_initializingControls || double.IsNaN(args.NewValue)) return;
-        _settings.Capture.CaptionFontSize = Math.Clamp(args.NewValue, 16, 72);
+        _settings.Capture.WindowsCaptionFontSize = Math.Clamp(args.NewValue, 16, 72);
         UpdateCaptionFontSize();
         await SaveCaptionPreferencesAsync();
     }

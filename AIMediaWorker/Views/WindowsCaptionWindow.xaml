@@ -31,7 +31,7 @@
             <ToggleButton x:Name="ShowPreviousButton" MinWidth="110" Click="OnShowPreviousClick" />
             <ComboBox x:Name="PreviousSentenceCountCombo" Width="92" SelectionChanged="OnPreviousSentenceCountChanged" />
             <TextBlock x:Name="FontSizeLabel" VerticalAlignment="Center" />
-            <NumberBox x:Name="CaptionFontSizeBox" Width="82" Minimum="16" Maximum="72" SmallChange="2" SpinButtonPlacementMode="Compact" ValueChanged="OnCaptionFontSizeChanged" />
+            <NumberBox x:Name="CaptionFontSizeBox" Width="82" Minimum="16" Maximum="72" SmallChange="2" SpinButtonPlacementMode="Hidden" ValueChanged="OnCaptionFontSizeChanged" />
             <Button x:Name="CloseCaptionButton" MinWidth="90" Click="OnCloseClick" />
         </StackPanel>
         <InfoBar x:Name="StatusBar" Grid.Row="3" IsOpen="False" Severity="Informational" Margin="12,0,12,10" />

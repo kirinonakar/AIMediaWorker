@@ -94,6 +94,7 @@ public sealed class SettingsService
         settings.Network.WebDavServers ??= [];
         settings.Capture ??= new CaptureSettings();
         settings.Capture.CaptionFontSize = Math.Clamp(settings.Capture.CaptionFontSize, 16, 72);
+        settings.Capture.WindowsCaptionFontSize = Math.Clamp(settings.Capture.WindowsCaptionFontSize, 16, 72);
         settings.Capture.WindowsCaptionPreviousSentenceCount = Math.Clamp(settings.Capture.WindowsCaptionPreviousSentenceCount, 1, 2);
         settings.Llm ??= new LlmSettings();
         if (string.Equals(settings.Llm.Provider, "Unsloth", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(settings.Llm.Provider)) settings.Llm.Provider = "Unsloth Desktop";

@@ -111,6 +111,7 @@ public sealed class CaptureSettings
     public string CaptionBackgroundColor { get; set; } = "#A0000000";
     public string CaptionPosition { get; set; } = "Bottom";
     public int CaptionMaximumLines { get; set; } = 2;
+    public double WindowsCaptionFontSize { get; set; } = 20;
     public bool WindowsCaptionTranslationOnly { get; set; }
     public bool WindowsCaptionShowPrevious { get; set; } = true;
     public int WindowsCaptionPreviousSentenceCount { get; set; } = 2;
