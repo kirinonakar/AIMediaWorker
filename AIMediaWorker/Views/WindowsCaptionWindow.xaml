@@ -18,8 +18,10 @@
         </Grid>
         <Border x:Name="CaptionBackground" Grid.Row="1" Background="#A0000000" CornerRadius="8" Margin="12,8,12,8" Padding="16,10" SizeChanged="OnCaptionAreaSizeChanged">
             <StackPanel VerticalAlignment="Center">
-                <TextBlock x:Name="CaptionHistoryText" Foreground="White" FontSize="28" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxLines="3" />
-                <TextBlock x:Name="TranslationHistoryText" Foreground="#FFE0B0" FontSize="24" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxLines="3" Margin="0,8,0,0" Visibility="Collapsed" />
+                <TextBlock x:Name="CaptionPreviousText" Foreground="#7AFFFFFF" FontSize="28" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="None" MaxLines="0" />
+                <TextBlock x:Name="CaptionLatestText" Foreground="White" FontSize="28" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="None" MaxLines="0" />
+                <TextBlock x:Name="TranslationPreviousText" Foreground="#7AFFE0B0" FontSize="24" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="None" MaxLines="0" Margin="0,8,0,0" Visibility="Collapsed" />
+                <TextBlock x:Name="TranslationLatestText" Foreground="#FFE0B0" FontSize="24" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="None" Visibility="Collapsed" />
             </StackPanel>
         </Border>
         <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,0,0,10">
