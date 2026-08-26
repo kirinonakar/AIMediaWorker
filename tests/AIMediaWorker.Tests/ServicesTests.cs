@@ -134,6 +134,24 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsMigrateWindowsCaptionPreviousSentenceCountDefault()
+    {
+        var path = Path.Combine(_folder, "settings-old-caption-history.json");
+        Directory.CreateDirectory(_folder);
+        await File.WriteAllTextAsync(path, "{\"SchemaVersion\":5,\"Capture\":{\"WindowsCaptionPreviousSentenceCount\":2}}");
+
+        var service = new SettingsService(path);
+        var loaded = await service.LoadAsync();
+
+        Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.SchemaVersion);
+        Assert.Equal(1, loaded.Capture.WindowsCaptionPreviousSentenceCount);
+
+        await service.SaveAsync(loaded);
+        var saved = await service.LoadAsync();
+        Assert.Equal(1, saved.Capture.WindowsCaptionPreviousSentenceCount);
+    }
+
+    [Fact]
     public async Task SettingsMigrateUnslothProviderName()
     {
         var path = Path.Combine(_folder, "settings-old-unsloth.json");

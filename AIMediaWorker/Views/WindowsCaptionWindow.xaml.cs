@@ -128,6 +128,7 @@ public sealed partial class WindowsCaptionWindow : Window
         _initializingControls = false;
         ApplyCaptionAppearance();
         UpdateTitleBarDragRegion();
+        await SaveCaptionPreferencesAsync();
     }
 
     private void ApplyTheme(AppTheme theme)

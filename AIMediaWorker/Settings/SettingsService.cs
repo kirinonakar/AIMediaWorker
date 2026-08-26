@@ -93,6 +93,8 @@ public sealed class SettingsService
         settings.Network ??= new NetworkSettings();
         settings.Network.WebDavServers ??= [];
         settings.Capture ??= new CaptureSettings();
+        if (loadedSchemaVersion < 6)
+            settings.Capture.WindowsCaptionPreviousSentenceCount = 1;
         settings.Capture.CaptionFontSize = Math.Clamp(settings.Capture.CaptionFontSize, 16, 72);
         settings.Capture.WindowsCaptionFontSize = Math.Clamp(settings.Capture.WindowsCaptionFontSize, 16, 72);
         settings.Capture.WindowsCaptionPreviousSentenceCount = Math.Clamp(settings.Capture.WindowsCaptionPreviousSentenceCount, 1, 2);

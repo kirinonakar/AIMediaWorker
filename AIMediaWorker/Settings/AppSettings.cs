@@ -12,7 +12,7 @@ public enum ThinkingLevel { Default, Off, Low, Medium, High, XHigh, Max }
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 6;
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public PlaybackSettings Playback { get; set; } = new();
     public SubtitleSettings Subtitle { get; set; } = new();
