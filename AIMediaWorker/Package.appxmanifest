@@ -9,14 +9,14 @@
 
   <Identity
     Name="e50a285f-0197-4cf2-9ee4-65a0d20fd064"
-    Publisher="CN=totor"
+    Publisher="CN=kirinonakar"
     Version="1.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="e50a285f-0197-4cf2-9ee4-65a0d20fd064" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
     <DisplayName>AIMediaWorker</DisplayName>
-    <PublisherDisplayName>totor</PublisherDisplayName>
+    <PublisherDisplayName>kirinonakar</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
