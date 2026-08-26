@@ -255,15 +255,15 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         // initial demux. This is particularly useful for Matroska files carrying fonts
         // as attachments; enabling subtitles later restores normal track selection.
         if (!AreSubtitlesVisible) TrySetProperty("sid", "no");
-        // mpv keeps the last presented frame (e.g., the previous file's cover art) on
-        // screen when the next file has no video track or its attached picture matches
-        // the previous file's format. Disable video selection before loadfile so the
-        // stale frame is dropped, then re-enable automatic selection in FileLoaded so
-        // the new file's cover art is decoded and presented from scratch.
+        // Clear the previous file's video selection before replacement. Pass vid=auto
+        // as a file-local load option so the new video or attached picture is selected
+        // during initial track selection. Restoring vid from FileLoaded is too late:
+        // loadfile completes asynchronously and can leave a one-frame cover-art track
+        // displaying the previous file's already-presented frame.
         TrySetProperty("vid", "no");
         _loadfileIssued = true;
         StartupProfiler.Mark("loadfile-command");
-        MpvInterop.CommandAsync(_context, NextCommandId(), "loadfile", source, "replace");
+        MpvInterop.CommandAsync(_context, NextCommandId(), "loadfile", source, "replace", "-1", "vid=auto");
         // A synchronous write here waits behind loadfile until playback is ready. Preserve the
         // required order without waiting for it to finish.
         MpvInterop.CommandAsync(_context, NextCommandId(), "set", "pause", "no");
@@ -613,10 +613,6 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 break;
             case MpvInterop.MpvEventId.FileLoaded:
                 StartupProfiler.Mark("file-loaded");
-                // OpenCore disables video selection before loadfile to clear stale
-                // cover art frames. Re-enable automatic selection now that the new
-                // file is loaded so its video track (or attached picture) is chosen.
-                TrySetProperty("vid", "auto");
                 // libmpv can restore per-file subtitle state when a new source is
                 // loaded. Reapply the user's preference after the file is ready so
                 // the menu checkmark and the renderer cannot drift apart.
