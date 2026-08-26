@@ -203,6 +203,7 @@ public sealed partial class WindowsCaptionWindow : Window
         _lastCaption = text;
         CaptionText.Text = text;
         CaptionText.Opacity = result.Event == "partial" ? 0.72 : 1;
+        UpdateCaptionFontSize();
         if (!_translating) return;
         // The live ASR emits rolling "partial" updates and a "final" only when
         // the stream stops, so batch every two updates into one request.
@@ -249,6 +250,7 @@ public sealed partial class WindowsCaptionWindow : Window
             _translating = true;
             TranslateButton.Content = L("WindowsCaptionTranslateOn.Content");
             TranslationText.Visibility = Visibility.Visible;
+            UpdateCaptionFontSize();
             var cancellation = _translationCancellation ??= new CancellationTokenSource();
             _translationTask ??= Task.Run(() => TranslationLoopAsync(cancellation.Token));
             if (!string.IsNullOrWhiteSpace(_lastCaption)) _translationQueue.Writer.TryWrite(_lastCaption);
@@ -261,6 +263,7 @@ public sealed partial class WindowsCaptionWindow : Window
             TranslateButton.Content = L("WindowsCaptionTranslate.Content");
             TranslationText.Text = string.Empty;
             TranslationText.Visibility = Visibility.Collapsed;
+            UpdateCaptionFontSize();
         }
     }
 
@@ -290,7 +293,12 @@ public sealed partial class WindowsCaptionWindow : Window
             var cue = new SubtitleCue { Text = text };
             var result = await llm.TranslateAsync([cue], _settings.Llm.TranslationLanguage, batchSize: 1, cancellationToken: cancellationToken).ConfigureAwait(false);
             if (result.TryGetValue(cue.Id, out var translated) && !string.IsNullOrWhiteSpace(translated))
-                DispatcherQueue.TryEnqueue(() => { if (_translating) TranslationText.Text = translated; });
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (!_translating) return;
+                    TranslationText.Text = translated;
+                    UpdateCaptionFontSize();
+                });
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)
@@ -308,15 +316,49 @@ public sealed partial class WindowsCaptionWindow : Window
         CaptionBackground.Background = new SolidColorBrush(ParseColor(_settings.Capture.CaptionBackgroundColor, Color.FromArgb(160, 0, 0, 0)));
     }
 
-    // Scales the caption font with the overlay size so text always fits the window.
+    // Scales both caption blocks to the largest size that fits their actual
+    // wrapped height. This is important when the translation block is visible.
     private void OnCaptionAreaSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        var areaHeight = e.NewSize.Height;
-        var areaWidth = e.NewSize.Width;
-        if (areaHeight <= 0 || areaWidth <= 0) return;
-        var baseSize = Math.Clamp(Math.Min(areaHeight * 0.22, areaWidth * 0.05), 10, 200);
-        CaptionText.FontSize = baseSize;
-        TranslationText.FontSize = baseSize * 0.85;
+        UpdateCaptionFontSize(e.NewSize.Width, e.NewSize.Height);
+    }
+
+    private void UpdateCaptionFontSize(double? measuredWidth = null, double? measuredHeight = null)
+    {
+        var areaWidth = measuredWidth ?? CaptionBackground.ActualWidth;
+        var areaHeight = measuredHeight ?? CaptionBackground.ActualHeight;
+        var contentWidth = areaWidth - CaptionBackground.Padding.Left - CaptionBackground.Padding.Right;
+        var contentHeight = areaHeight - CaptionBackground.Padding.Top - CaptionBackground.Padding.Bottom;
+        if (contentWidth <= 0 || contentHeight <= 0) return;
+
+        var maximum = Math.Clamp(Math.Min(contentHeight * 0.22, contentWidth * 0.05), 10, 200);
+        const double minimum = 8;
+        var lower = minimum;
+        var upper = maximum;
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var candidate = (lower + upper) / 2;
+            if (CaptionFits(candidate, contentWidth, contentHeight)) lower = candidate;
+            else upper = candidate;
+        }
+
+        CaptionText.FontSize = lower;
+        TranslationText.FontSize = lower * 0.85;
+    }
+
+    private bool CaptionFits(double fontSize, double availableWidth, double availableHeight)
+    {
+        CaptionText.FontSize = fontSize;
+        TranslationText.FontSize = fontSize * 0.85;
+        var size = new Windows.Foundation.Size(availableWidth, double.PositiveInfinity);
+        CaptionText.Measure(size);
+        var requiredHeight = CaptionText.DesiredSize.Height;
+        if (TranslationText.Visibility == Visibility.Visible)
+        {
+            TranslationText.Measure(size);
+            requiredHeight += TranslationText.DesiredSize.Height + TranslationText.Margin.Top;
+        }
+        return requiredHeight <= availableHeight;
     }
 
     private static Color ParseColor(string value, Color fallback)

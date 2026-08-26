@@ -18,8 +18,8 @@
         </Grid>
         <Border x:Name="CaptionBackground" Grid.Row="1" Background="#A0000000" CornerRadius="8" Margin="12,8,12,8" Padding="16,10" SizeChanged="OnCaptionAreaSizeChanged">
             <StackPanel VerticalAlignment="Center">
-                <TextBlock x:Name="CaptionText" Foreground="White" FontSize="28" TextAlignment="Center" TextWrapping="Wrap" MaxLines="3" />
-                <TextBlock x:Name="TranslationText" Foreground="#FFE0B0" FontSize="24" TextAlignment="Center" TextWrapping="Wrap" MaxLines="3" Margin="0,8,0,0" Visibility="Collapsed" />
+                <TextBlock x:Name="CaptionText" Foreground="White" FontSize="28" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxLines="3" />
+                <TextBlock x:Name="TranslationText" Foreground="#FFE0B0" FontSize="24" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxLines="3" Margin="0,8,0,0" Visibility="Collapsed" />
             </StackPanel>
         </Border>
         <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,0,0,10">
