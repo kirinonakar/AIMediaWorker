@@ -4,7 +4,7 @@
 
 AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 10, libmpv, FFmpeg, and the prebuilt CrispASR native runtime loaded directly from C#.
 
-It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures still video frames; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
+It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures still video frames; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
 Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs; Explorer and WebDAV entries support name filtering and cyclic name/newest/oldest sorting.
 
@@ -96,10 +96,6 @@ ffprobe -version
 FFmpeg is used as the audio extractor for ASR. Child processes are terminated
 when work is cancelled.
 
-## Screenshots
-
-Use the camera button in the playback toolbar or **Playback → Save current frame** to save the currently displayed video frame as PNG.
-
 ## Native Qwen3 and CrispASR setup
 
 ### Install the CrispASR runtime
@@ -146,8 +142,6 @@ the executable's `asr-worker` directory.
 
 Offline processing extracts bounded chunks, applies a native amplitude gate when VAD is enabled, restores global microsecond timestamps, uses the CrispASR forced aligner, and emits subtitles before the complete file finishes. The live path uses a bounded rolling PCM window because the Qwen3 C ABI is consumed through synchronous session calls.
 
-Missing runtime files, weights, CUDA, FFmpeg, and out-of-memory errors are reported without crashing the WinUI process. Model licenses and access terms remain the user's responsibility.
-
 ## Subtitle workflow
 
 1. Open a media file or URL.
@@ -157,14 +151,6 @@ Missing runtime files, weights, CUDA, FFmpeg, and out-of-memory errors are repor
 5. Save as SRT, VTT, or ASS. Converting a styled format to a simpler format shows a style-loss notice while preserving text and timing.
 
 The subtitle encoding setting supports UTF-8 and installed Windows code pages. Editor changes are mirrored to mpv through a debounced temporary ASS overlay and are protected by save/discard prompts.
-
-## WebDAV and remote media
-
-Open **Tools → WebDAV browser** to add, edit, or remove servers. Server metadata is stored in settings; passwords are stored separately in Windows Credential Manager. Supported operations include directory listing, parent navigation, refresh, direct remote playback, authenticated subtitle import (including `.smi`/SAMI), and saving the current WebDAV folder as a favorite. A same-name `.smi` file in the media folder is loaded automatically, with UTF BOM, UTF-8, and legacy EUC-KR/CP949 text detected without manual encoding changes. Connected directory results are also mirrored into the main window's WebDAV side-panel tab.
-
-Local folders, media items, WebDAV folders, and remote URLs can be opened or removed from the Favorites menu. Recent items retain source type and playback position. Missing local paths or removed servers do not prevent startup.
-
-Plain HTTP/HTTPS/HLS/DASH sources are handed directly to mpv. Authenticated WebDAV media is streamed directly for playback. When ASR is requested for an authenticated source, the application streams it to a temporary disk file, removes it after the job, and never writes credentials to settings or logs.
 
 ## Camera and live captions
 
@@ -180,7 +166,7 @@ Microphone audio is captured through WASAPI, resampled to 16 kHz mono PCM, and p
 
 Supported provider profiles:
 
-- **Local**: Unsloth Studio
+- **Local**: Unsloth Studio, Ollama, and LM Studio
 - **Cloud**: Google Gemini, Ollama Cloud, OpenCode Go, and OpenCode Zen
 
 API keys are stored in Windows Credential Manager.
@@ -190,6 +176,8 @@ API keys are stored in Windows Credential Manager.
 | Gesture | Action |
 |---|---|
 | Space | Play/pause |
+| Ctrl+B / Ctrl+F | Previous/next media |
+| Ctrl+1 / Ctrl+2 | Toggle timeline/side panel |
 | Left / Right | Seek by the configured interval |
 | Up / Down | Volume ±5 |
 | M | Mute/unmute |
@@ -203,6 +191,8 @@ API keys are stored in Windows Credential Manager.
 | Esc | Leave fullscreen |
 | Home / End | Seek to start/end |
 | Backspace / Ctrl+Shift+N | Play the current media from the beginning |
+
+Double-clicking the video surface toggles play/pause.
 
 ## Settings, data, and diagnostics
 
