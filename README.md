@@ -11,19 +11,6 @@ Media files can be opened through the picker, command line, folder explorer, pla
 ## 📥 Download
 You can download the latest portable version with libmpv from the [Releases Page](https://github.com/kirinonakar/AIMediaWorker/releases).
 
-## Requirements
-
-- Windows 10 version 1809 or newer; Windows 11 is recommended.
-- x64 [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
-- Visual Studio with the Windows App SDK workload, or the `dotnet` CLI.
-- x64 libmpv with its dependent DLLs.
-- FFmpeg and FFprobe 6 or newer on `PATH`.
-- The prebuilt native CrispASR runtime under `asr-worker/crispasr`.
-- For practical Qwen inference: an NVIDIA CUDA GPU with current drivers and enough VRAM. CPU mode is supported but substantially slower.
-
-The application does not bundle libmpv, FFmpeg, model weights, credentials, or API keys.
-The Windows App SDK runtime is deployed self-contained with the application, so the unpackaged executable does not require a separately registered Windows App Runtime.
-
 ## Automatic speech recognition setup
 
 Open **Settings → Automatic speech recognition** and choose **Install**. The
@@ -40,6 +27,19 @@ in one go; components that are already present are skipped:
 In **Settings → Automatic speech recognition**, configure: Device (`Auto`,
 `Cpu`, `Cuda`), precision, VAD, language, and chunk duration. Manual setup
 instructions for each component follow below.
+
+## Requirements
+
+- Windows 10 version 1809 or newer; Windows 11 is recommended.
+- x64 [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
+- Visual Studio with the Windows App SDK workload, or the `dotnet` CLI.
+- x64 libmpv with its dependent DLLs.
+- FFmpeg and FFprobe 6 or newer on `PATH`.
+- The prebuilt native CrispASR runtime under `asr-worker/crispasr`.
+- For practical Qwen inference: an NVIDIA CUDA GPU with current drivers and enough VRAM. CPU mode is supported but substantially slower.
+
+The application does not bundle libmpv, FFmpeg, model weights, credentials, or API keys.
+The Windows App SDK runtime is deployed self-contained with the application, so the unpackaged executable does not require a separately registered Windows App Runtime.
 
 ## Build and run
 
