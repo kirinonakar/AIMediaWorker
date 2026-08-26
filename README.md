@@ -1,10 +1,15 @@
 # AIMediaWorker
 
+![screenshot](screenshot.png)
+
 AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 10, libmpv, FFmpeg, and the prebuilt CrispASR native runtime loaded directly from C#.
 
 It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and authenticated WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures still video frames; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
-Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs; Explorer and WebDAV entries support name filtering and cyclic name/newest/oldest sorting. Drag the divider beside the side panel or above the timeline to resize either panel. The bottom playback toolbar provides previous/next media, seek, play/pause, stop, current-frame PNG capture, progress, time, volume, speed, and repeat controls. Window size, position, maximized state, panel visibility, and panel dimensions are restored on the next launch.
+Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs; Explorer and WebDAV entries support name filtering and cyclic name/newest/oldest sorting.
+
+## 📥 Download
+You can download the latest portable version with libmpv from the [Releases Page](https://github.com/kirinonakar/AIMediaWorker/releases).
 
 ## Requirements
 
@@ -18,6 +23,23 @@ Media files can be opened through the picker, command line, folder explorer, pla
 
 The application does not bundle libmpv, FFmpeg, model weights, credentials, or API keys.
 The Windows App SDK runtime is deployed self-contained with the application, so the unpackaged executable does not require a separately registered Windows App Runtime.
+
+## Automatic speech recognition setup
+
+Open **Settings → Automatic speech recognition** and choose **Install**. The
+installer checks the components below and installs everything that is missing
+in one go; components that are already present are skipped:
+
+- **FFmpeg and FFprobe** → downloaded to `asr-worker\ffmpeg` (a system `PATH`
+  installation is used instead when present)
+- **CrispASR runtime** → downloaded to `asr-worker\crispasr`
+- **Qwen3 ASR and aligner models** → `Qwen3-ASR-1.7B-Q8_0.gguf` (CrispASR
+  single-file `qwen3asr` Q8_0 model) and `qwen3-forced-aligner-0.6b-q8_0.gguf`
+  downloaded to `asr-worker\models`
+
+In **Settings → Automatic speech recognition**, configure: Device (`Auto`,
+`Cpu`, `Cuda`), precision, VAD, language, and chunk duration. Manual setup
+instructions for each component follow below.
 
 ## Build and run
 
@@ -57,7 +79,6 @@ The [official mpv installation page](https://mpv.io/installation/) lists maintai
 
 6. If the downloaded build supplies additional runtime DLLs, place those DLLs in `Libs` as well.
 7. Build the application. Every DLL directly inside `Libs` is copied beside `AIMediaWorker.exe` for Debug, Release, and publish output.
-8. Open **Tools → Diagnostics**. `libmpv` should report its version rather than `not loaded`.
 
 AIMediaWorker requests mpv's `gpu-next` D3D11 renderer and `auto-safe` hardware decoding by default. D3D11VA, NVDEC, software decode, renderer, language preferences, cache/network timeout, subtitle appearance, playback rate, and seek interval are configurable.
 
@@ -65,22 +86,15 @@ When RTX Video Super Resolution is set to Auto or On, AIMediaWorker adds mpv's `
 
 ## FFmpeg setup
 
-Open **Settings → Automatic speech recognition** and choose **Install**. If
-FFmpeg is missing from `asr-worker\ffmpeg`, the installer downloads the Windows
-Essentials ZIP and places `ffmpeg.exe` and `ffprobe.exe` there. Existing files
-are skipped. A system `PATH` installation remains a valid fallback for ASR
-when the local executable is not present.
-
-For a manual installation, verify:
+Verify the installation:
 
 ```powershell
 ffmpeg -version
 ffprobe -version
 ```
 
-If `ffmpeg.exe` is already available in `PATH`, the ASR installer skips the
-local FFmpeg download and uses that executable. FFmpeg is used as the audio
-extractor for ASR. Child processes are terminated when work is cancelled.
+FFmpeg is used as the audio extractor for ASR. Child processes are terminated
+when work is cancelled.
 
 ## Screenshots
 
@@ -126,18 +140,6 @@ asr-worker/
    ├─ cublas64_*.dll
    └─ cublasLt64_*.dll
 ```
-
-Open **Settings → Automatic speech recognition** and choose **Install**. The
-installer downloads CrispASR into `asr-worker\crispasr` only when
-`crispasr.dll` is missing, then downloads these exact model files to
-`asr-worker\models` beside the executable. Existing components are skipped:
-
-- `Qwen3-ASR-1.7B-Q8_0.gguf` (CrispASR single-file `qwen3asr` Q8_0 model)
-- `qwen3-forced-aligner-0.6b-q8_0.gguf`
-
-In **Settings → Automatic speech recognition**, configure:
-
-- Device (`Auto`, `Cpu`, `Cuda`), precision, VAD, language, and chunk duration.
 
 The CrispASR runtime and model storage paths are fixed below
 the executable's `asr-worker` directory.
@@ -202,10 +204,6 @@ API keys are stored in Windows Credential Manager.
 | Home / End | Seek to start/end |
 | Backspace / Ctrl+Shift+N | Play the current media from the beginning |
 
-Text boxes retain ordinary editing shortcuts. Available shortcuts are shown beside their menu commands or in the related control tooltip. Shortcut gestures are persisted as a declarative action-to-gesture map in `settings.json`, so custom configuration UI can be added without changing command routing.
-
-In fullscreen mode the window frame and panels are hidden. Fullscreen opens on the display currently containing the window and remains frame-free when moved between displays. Hover at the top, bottom, or right edge to reveal the menu, playback toolbar, or side panel respectively; the wider right-edge activation zone also works across a shared dual-monitor boundary.
-
 ## Settings, data, and diagnostics
 
 Per-user data is stored below `%LOCALAPPDATA%\AIMediaWorker`:
@@ -215,9 +213,7 @@ Per-user data is stored below `%LOCALAPPDATA%\AIMediaWorker`:
 - `favorites.json`: favorite media and folders.
 - `Logs\app.jsonl`: size-rotated structured diagnostics without credentials.
 
-Corrupt settings are preserved as `settings.json.corrupt-*` and replaced with safe defaults. The UI supports English, 한국어, and 日本語 resources plus System/Light/Dark themes. A language change applies to newly created views and fully applies after restarting the application.
-
-**Tools → Diagnostics** reports app, Windows, .NET, Windows App SDK, libmpv, FFmpeg, CrispASR runtime, the in-process ASR engine/model, GPU/driver, RTX VSR capability, and log location.
+The UI supports English, 한국어, and 日本語 resources plus System/Light/Dark themes.
 
 ## License
 
@@ -241,17 +237,3 @@ AIMediaWorker uses, links to, or can download third-party software, native runti
 | [xUnit](https://github.com/xunit/xunit) 2.9.3 and [xunit.runner.visualstudio](https://github.com/xunit/visualstudio.xunit) 3.1.5 | Test-only dependencies | Apache-2.0. |
 
 Transitive NuGet dependencies are governed by their own package license and notice files as well. In particular, review the `NOTICE.txt` and `license.txt` files shipped in the Microsoft Windows App SDK package when redistributing its runtime.
-
-## Troubleshooting
-
-- **Playback unavailable**: confirm x64 `mpv-2.dll` and its dependencies are next to the executable. Check Diagnostics for an architecture mismatch.
-- **FFmpeg/FFprobe unavailable**: add both executables to `PATH`, restart the app, and inspect Diagnostics.
-- **MODEL_NOT_FOUND**: verify the two exact GGUF files under `asr-worker\models`.
-- **CUDA_OOM**: use a lower-precision mode, reduce competing GPU load, or select CPU mode.
-- **WebDAV 401/403**: edit the server and re-enter the credential. Only Basic authentication is currently supported by the built-in WebDAV browser.
-- **Remote seek unavailable**: the origin must support byte ranges. mpv can continue sequential playback where the protocol permits.
-- **Camera or microphone denied**: enable desktop-app access under Windows **Privacy & security** and reopen the capture window.
-- **LLM model sync fails**: verify the endpoint/key; select a cached model or enter an exact model ID manually.
-- **RTX VSR not visible**: use current NVIDIA drivers, enable video enhancement for AIMediaWorker in NVIDIA App, and verify an RTX adapter in Diagnostics.
-
-Environment-dependent media, GPU, camera, WebDAV, model, and provider checks are listed in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).

@@ -51,6 +51,7 @@ internal sealed class MediaNavigationController : IDisposable
                 _host.GetSettings,
                 _host.GetCurrentMediaSource,
                 _host.GetPlaybackPositionMicroseconds,
+                location => FindWebDavServerForLocation(location)?.Name,
                 OpenFavoriteAsync,
                 OpenRecentAsync,
                 _host.SetStatus,

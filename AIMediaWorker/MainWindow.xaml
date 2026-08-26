@@ -200,7 +200,7 @@
                                                 <FontIcon Grid.Column="1" Glyph="{Binding IconGlyph}" VerticalAlignment="Center" />
                                                 <StackPanel Grid.Column="2" Spacing="2">
                                                     <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{Binding Location}" TextTrimming="CharacterEllipsis" Opacity="0.55" FontSize="11" />
+                                                    <TextBlock Text="{Binding Details}" TextTrimming="CharacterEllipsis" Opacity="0.55" FontSize="11" />
                                                 </StackPanel>
                                                 <Button Grid.Column="3" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0" Click="OnRemoveFavoriteItemClick" ToolTipService.ToolTip="{Binding RemoveLabel}" AutomationProperties.Name="{Binding RemoveLabel}">
                                                     <SymbolIcon Symbol="Delete" />

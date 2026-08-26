@@ -48,7 +48,12 @@ internal sealed class MediaHistoryController
             _favoriteList.ItemsSource = _favoriteEntries;
         _favoriteEntries.Clear();
         foreach (var item in _history.Favorites)
-            _favoriteEntries.Add(new FavoriteListEntry(item, L("RemoveFavoriteButton")));
+        {
+            var details = item.SourceType == MediaSourceKind.WebDav
+                ? _host.GetWebDavServerName(item.Location) ?? string.Empty
+                : item.Location;
+            _favoriteEntries.Add(new FavoriteListEntry(item, details, L("RemoveFavoriteButton")));
+        }
         _favoritesEmptyText.Visibility = _favoriteEntries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -141,15 +146,15 @@ internal sealed record MediaHistoryHost(
     Func<AppSettings> GetSettings,
     Func<IMediaSource?> GetCurrentMediaSource,
     Func<long> GetPlaybackPositionMicroseconds,
+    Func<string, string?> GetWebDavServerName,
     Func<FavoriteItem, Task> OpenFavoriteAsync,
     Func<RecentMediaItem, Task> OpenRecentAsync,
     Action<string> SetStatus,
     Func<Exception, Task> LogHistoryErrorAsync);
 
-internal sealed record FavoriteListEntry(FavoriteItem Item, string RemoveLabel)
+internal sealed record FavoriteListEntry(FavoriteItem Item, string Details, string RemoveLabel)
 {
     public string DisplayName => Item.DisplayName;
-    public string Location => Item.Location;
     public string SourceIconGlyph => Item.SourceType == MediaSourceKind.WebDav ? "\uE774" : string.Empty;
     public string IconGlyph => Item.IsFolder ? "\uE8B7" : "\uE8A5";
 }
