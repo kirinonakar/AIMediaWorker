@@ -41,7 +41,7 @@ public sealed partial class SettingsWindow : Window
     public Array Precisions { get; } = Enum.GetValues<AsrPrecision>();
     public Array ThinkingLevels { get; } = Enum.GetValues<ThinkingLevel>();
     public IReadOnlyList<FileAssociationOption> AssociationOptions { get; } = WindowsFileAssociationService.SupportedExtensions.Select(extension => new FileAssociationOption(extension)).ToArray();
-    public string[] Providers { get; } = ["Unsloth Desktop", "Google", "OllamaCloud", "OpenCodeGo", "OpenCodeZen"];
+    public string[] Providers { get; } = ["Unsloth Desktop", "Ollama", "LM Studio", "Google", "OllamaCloud", "OpenCodeGo", "OpenCodeZen"];
     public string GeneralHeading { get; } = L("GeneralExpander.Header");
     public string PlaybackHeading { get; } = L("PlaybackExpander.Header");
     public string PlaybackAdvancedHeading { get; } = L("PlaybackAdvancedExpander.Header");

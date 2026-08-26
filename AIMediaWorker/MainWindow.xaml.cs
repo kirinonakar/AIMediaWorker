@@ -553,6 +553,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
         _aiWorkflow.ResetForMedia();
         StatusText.Text = source;
+        UpdateAudioTagStatus();
         QueuePostOpenWork(source, _currentMediaSource as LocalMediaSource, !preservePlaylist, showInExplorer);
         UpdatePlaylistButtons();
         FocusPlaybackSurface();
@@ -561,6 +562,22 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         if (_firstFrameUiReadyForMedia) StartAutomaticSubtitleGenerationIfReady();
     }
 
+    private void UpdateAudioTagStatus()
+    {
+        if (_currentMediaSource is not LocalMediaSource localSource || !MediaFileClassifier.IsAudio(localSource.Path)) return;
+        var path = localSource.Path;
+        _ = Task.Run(() =>
+        {
+            var tagText = AudioTagReader.ReadDisplayText(path);
+            if (tagText is null) return;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_currentMediaSource is LocalMediaSource current &&
+                    string.Equals(current.Path, path, StringComparison.OrdinalIgnoreCase))
+                    StatusText.Text = tagText;
+            });
+        });
+    }
     private void BeginMediaOpen(string source)
     {
         _mediaOpenReady = false;

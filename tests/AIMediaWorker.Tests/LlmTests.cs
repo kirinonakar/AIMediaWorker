@@ -256,6 +256,40 @@ public sealed class LlmTests
         Assert.Equal("http://127.0.0.1:8888/v1/models", requestUri?.AbsoluteUri);
     }
 
+    [Fact]
+    public async Task OllamaUsesLocalApiAddress()
+    {
+        Uri? requestUri = null;
+        using var http = new HttpClient(new CaptureHandler(request =>
+        {
+            requestUri = request.RequestUri;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"data\":[]}") });
+        }));
+        using var provider = new OllamaProvider(httpClient: http);
+
+        await provider.GetModelsAsync();
+
+        Assert.Equal("Ollama", provider.DisplayName);
+        Assert.Equal("http://localhost:11434/v1/models", requestUri?.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task LmStudioUsesLocalApiAddress()
+    {
+        Uri? requestUri = null;
+        using var http = new HttpClient(new CaptureHandler(request =>
+        {
+            requestUri = request.RequestUri;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"data\":[]}") });
+        }));
+        using var provider = new LmStudioProvider(httpClient: http);
+
+        await provider.GetModelsAsync();
+
+        Assert.Equal("LM Studio", provider.DisplayName);
+        Assert.Equal("http://localhost:1234/v1/models", requestUri?.AbsoluteUri);
+    }
+
     [Theory]
     [InlineData(ThinkingLevel.Off, false, "none")]
     [InlineData(ThinkingLevel.Low, true, "low")]

@@ -21,4 +21,7 @@
     <Compile Include="..\AIMediaWorker\Waveform\**\*.cs" Link="Waveform\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Llm\**\*.cs" Link="Llm\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
+  </ItemGroup>
 </Project>

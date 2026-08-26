@@ -125,3 +125,11 @@ public sealed class OpenCodeZenProvider(string apiKey, HttpClient? httpClient = 
 public sealed class OpenCodeGoProvider(string apiKey, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
     "OpenCodeGo", "OpenCode Go", new Uri("https://opencode.ai/zen/go/v1/"), apiKey,
     new(true, true, true, true, true, true), httpClient);
+
+public sealed class OllamaProvider(string? apiKey = null, Uri? baseUri = null, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
+    "Ollama", "Ollama", baseUri ?? new Uri("http://localhost:11434/v1/"), apiKey,
+    new(true, true, false, true, true, true), httpClient);
+
+public sealed class LmStudioProvider(string? apiKey = null, Uri? baseUri = null, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
+    "LM Studio", "LM Studio", baseUri ?? new Uri("http://localhost:1234/v1/"), apiKey,
+    new(true, true, false, true, true, true), httpClient);
