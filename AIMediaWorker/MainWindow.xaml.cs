@@ -78,6 +78,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private TaskCompletionSource? _firstFrameWaiter;
     private string? _pendingLaunchSource;
     private string[]? _pendingDroppedFiles;
+    private string? _audioTagStatusText;
     private PendingPostOpenWork? _pendingPostOpenWork;
     private CancellationTokenSource? _postOpenCancellation;
     private readonly TaskCompletionSource _firstUiFrameReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -552,6 +553,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _subtitleEditor.ResetTimeline();
         var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
         _aiWorkflow.ResetForMedia();
+        _audioTagStatusText = null;
         StatusText.Text = source;
         UpdateAudioTagStatus();
         QueuePostOpenWork(source, _currentMediaSource as LocalMediaSource, !preservePlaylist, showInExplorer);
@@ -574,7 +576,10 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             {
                 if (_currentMediaSource is LocalMediaSource current &&
                     string.Equals(current.Path, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    _audioTagStatusText = tagText;
                     StatusText.Text = tagText;
+                }
             });
         });
     }
@@ -582,6 +587,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     {
         _mediaOpenReady = false;
         _firstFrameUiReadyForMedia = false;
+        _audioTagStatusText = null;
         _pendingMediaOpenSource = source;
         _firstFrameWaiter?.TrySetCanceled();
         _firstFrameWaitSource = source;
@@ -1012,7 +1018,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         var state = _playback.State;
         UpdatePlaybackPowerRequirement(state);
         PlayPauseIcon.Source = PlaybackIconSource(state == PlaybackState.Playing ? "pause" : "play");
-        StatusText.Text = L(state switch
+        StatusText.Text = _audioTagStatusText is { } audioTag && state != PlaybackState.Failed ? audioTag : L(state switch
         {
             PlaybackState.Playing => "PlaybackStatePlaying",
             PlaybackState.Paused => "PlaybackStatePaused",
