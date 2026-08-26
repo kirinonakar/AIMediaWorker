@@ -57,7 +57,7 @@
                         <Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddWebDavFavorite" Text="Add to favorites" Click="OnAddFavoriteClick" /></MenuFlyout></Grid.ContextFlyout>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <FontIcon Glyph="{Binding IconGlyph}" />
-                        <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Name}" />
                         <TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" />
                     </Grid>
                 </DataTemplate>
