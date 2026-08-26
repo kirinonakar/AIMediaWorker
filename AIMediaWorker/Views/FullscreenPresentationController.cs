@@ -23,6 +23,7 @@ internal sealed class FullscreenPresentationController : IDisposable
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
+    private const double EdgeClickActivationRatio = 0.2;
     private static readonly TimeSpan CursorHideDelay = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan EdgeClickDisplayDuration = TimeSpan.FromSeconds(2);
 
@@ -150,7 +151,8 @@ internal sealed class FullscreenPresentationController : IDisposable
     }
 
     /// <summary>
-    /// Reveals the transient full-screen chrome associated with the edge under the pointer.
+    /// Reveals the transient full-screen chrome associated with the touch/click zone under the pointer,
+    /// or closes all transient panels immediately when the pointer is outside every activation zone.
     /// This is called for clicks received by the native video child window, which is outside
     /// the XAML pointer event route.
     /// </summary>
@@ -166,24 +168,30 @@ internal sealed class FullscreenPresentationController : IDisposable
 
         var now = DateTimeOffset.UtcNow;
         var showUntil = now.Add(EdgeClickDisplayDuration);
+        var verticalActivationDepth = _appWindow.Size.Height * EdgeClickActivationRatio;
+        var horizontalActivationDepth = _appWindow.Size.Width * EdgeClickActivationRatio;
         var revealed = false;
-        if (cursor.Y <= top + 32)
+        if (cursor.Y < top + verticalActivationDepth)
         {
             _showMenuUntil = LaterOf(_showMenuUntil, showUntil);
             revealed = true;
         }
-        if (cursor.Y >= bottom - 32)
+        if (cursor.Y >= bottom - verticalActivationDepth)
         {
             _showControlsUntil = LaterOf(_showControlsUntil, showUntil);
             revealed = true;
         }
-        if (cursor.X >= right - 64)
+        if (cursor.X >= right - horizontalActivationDepth)
         {
             _showRightPanelUntil = LaterOf(_showRightPanelUntil, showUntil);
             revealed = true;
         }
 
-        if (!revealed) return false;
+        if (!revealed)
+        {
+            HideTransientPanels(now);
+            return false;
+        }
         _cursorLastMovedAt = now;
         SetCursorHidden(false);
         ApplyTransientPanelVisibility(now);
@@ -338,6 +346,14 @@ internal sealed class FullscreenPresentationController : IDisposable
         _view.RightPanelSplitter.Visibility = showRight ? Visibility.Visible : Visibility.Collapsed;
         _view.RightPanelSplitterColumn.Width = showRight ? new GridLength(6) : new GridLength(0);
         _view.RightPanelColumn.Width = showRight ? new GridLength(_getRightPanelWidth()) : new GridLength(0);
+    }
+
+    private void HideTransientPanels(DateTimeOffset now)
+    {
+        _showMenuUntil = default;
+        _showControlsUntil = default;
+        _showRightPanelUntil = default;
+        ApplyTransientPanelVisibility(now);
     }
 
     private static DateTimeOffset LaterOf(DateTimeOffset first, DateTimeOffset second) => first >= second ? first : second;
