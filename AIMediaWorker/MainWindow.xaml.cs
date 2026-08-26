@@ -2,13 +2,9 @@ using AIMediaWorker.Playback;
 using AIMediaWorker.Subtitle;
 using AIMediaWorker.Subtitle.Editing;
 using AIMediaWorker.Subtitle.Parsing;
-using AIMediaWorker.Subtitle.Writing;
-using AIMediaWorker.Timeline;
 using AIMediaWorker.Views;
 using AIMediaWorker.Settings;
 using AIMediaWorker.Asr;
-using AIMediaWorker.Llm;
-using AIMediaWorker.Llm.Providers;
 using AIMediaWorker.Network;
 using AIMediaWorker.History;
 using AIMediaWorker.Media;
@@ -23,29 +19,25 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
-using Rectangle = Microsoft.UI.Xaml.Shapes.Rectangle;
 using Windows.Graphics;
 using Windows.Storage.Pickers;
 using Windows.Storage;
 using WinRT.Interop;
 using Windows.ApplicationModel.DataTransfer;
 using System.Runtime.InteropServices;
-using System.Threading.Channels;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using System.Collections.ObjectModel;
 
 namespace AIMediaWorker;
 
-public sealed partial class MainWindow : Window
+public sealed partial class MainWindow : Window, IAiWorkflowHost
 {
     private readonly MpvPlaybackEngine _playback = new();
     private readonly WindowsPowerManagement _windowsPowerManagement = new();
-    private readonly SubtitleCommandHistory _history = new();
     private readonly SubtitleFileService _subtitleFiles = new();
-    private readonly TimelineTransform _timelineTransform = new();
-    private readonly Dictionary<Guid, string> _textBeforeEdit = [];
-    private readonly Dictionary<Guid, (long Start, long End)> _timesBeforeEdit = [];
+    private readonly SubtitleEditorController _subtitleEditor;
+    private readonly SubtitleOverlayController _subtitleOverlay;
     private SubtitleDocument _document = new();
     private NativeVideoHost? _videoHost;
     private AppWindow? _appWindow;
@@ -58,34 +50,14 @@ public sealed partial class MainWindow : Window
     private readonly WindowsCredentialService _windowsCredentials = new();
     private readonly WebDavCredentialStore _webDavCredentials;
     private readonly WebDavClient _webDavClient;
-    private readonly AsrWorkerClient _asrEngine = new();
-    private CancellationTokenSource? _aiOperationCancellation;
-    private Task? _aiPipelineTask;
-    private Task? _aiSummaryTask;
-    private SummaryKind _activeSummaryKind = SummaryKind.Short;
-    private AiRetryRequest? _retryableAiOperation;
+    private readonly AiWorkflowController _aiWorkflow;
     private int _generatedSubtitleUiRefreshQueued;
-    private bool _generatedSubtitleOsdActive;
-    private bool _generatedSubtitleOsdConfigured;
-    private Guid? _generatedSubtitleOsdCueId;
-    private string? _generatedSubtitleOsdText;
     private int _playbackPositionUiRefreshQueued;
-    private CancellationTokenSource? _seekAiRestartCancellation;
-    private bool _subtitleGenerationCompletedForCurrentMedia;
-    private bool _translationCompletedForCurrentMedia;
-    private readonly AiProgressTracker _combinedAiProgress = new();
-    private readonly RemoteMediaDownloadService _remoteMediaDownloader = new();
     private readonly SemaphoreSlim _dialogLock = new(1, 1);
     private readonly MediaHistoryService _historyService = MediaHistoryService.CreateDefault();
     private readonly ObservableCollection<FavoriteListEntry> _favoriteEntries = [];
     private IMediaSource? _currentMediaSource;
     private IReadOnlyDictionary<string, string>? _currentHttpHeaders;
-    private SubtitleCue? _dragCue;
-    private Guid? _playbackLinkedCueId;
-    private TimelineDragMode _dragMode;
-    private double _dragStartX;
-    private long _dragOldStart;
-    private long _dragOldEnd;
     private bool _allowClose;
     private bool _closeInProgress;
     private bool _restartRequested;
@@ -93,13 +65,6 @@ public sealed partial class MainWindow : Window
     private bool _playbackPowerManagementDisabled;
     private Task? _shutdownTask;
     private TimeSpan? _abStart;
-    private CancellationTokenSource? _overlaySyncCancellation;
-    private readonly SemaphoreSlim _overlayWriteLock = new(1, 1);
-    private string? _renderedOverlayContent;
-    private string? _renderedOverlayFontFamily;
-    private SubtitleDisplayMode? _renderedOverlayDisplayMode;
-    private Rectangle? _timelinePlayhead;
-    private bool _subtitleEditorHasFocus;
     private SubtitleDisplayMode? _subtitleDisplayMode;
     private int? _selectedNativeSubtitleTrackId;
     private bool _updatingSubtitleTrackSelector;
@@ -119,11 +84,8 @@ public sealed partial class MainWindow : Window
     private readonly Task _playbackInitializationTask;
     private readonly PanelLayoutController _panels;
     private readonly FullscreenPresentationController _fullscreen;
-    private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
 
     private sealed record SubtitleSelectionOption(string DisplayName, SubtitleDisplayMode? DisplayMode, int? TrackId);
-    private enum AiRetryOperationKind { SubtitlePipeline, Summary }
-    private sealed record AiRetryRequest(AiRetryOperationKind Kind, SummaryKind SummaryKind, SubtitleDocument Document, string? Source);
 
     public MainWindow() : this(null, new AppSettings()) { }
 
@@ -137,6 +99,32 @@ public sealed partial class MainWindow : Window
         StartupProfiler.Mark("xaml-start");
         InitializeComponent();
         StartupProfiler.Mark("xaml-ready");
+        _subtitleEditor = new SubtitleEditorController(
+            SubtitleList,
+            TimelineCanvas,
+            () => _document,
+            () => CurrentPlaybackPositionMicroseconds,
+            position => SeekAndRestartAi(position, () => _playback.Seek(position, true)),
+            () => ScheduleSubtitleOverlaySync(),
+            message => StatusText.Text = message,
+            L,
+            async (title, content, primaryText) => await ShowDialogAsync(CreateDialog(title, content, primaryText)),
+            ShowMessageAsync);
+        _subtitleOverlay = new SubtitleOverlayController(
+            _playback,
+            () => _document,
+            () => _settings,
+            () => _subtitleDisplayMode,
+            () => _selectedNativeSubtitleTrackId,
+            () => CurrentPlaybackPositionMicroseconds,
+            visible => SubtitleVisibilityMenuItem.IsChecked = visible,
+            message => StatusText.Text = message,
+            DispatcherQueue);
+        _aiWorkflow = new AiWorkflowController(
+            this,
+            _playback,
+            GenerateSubtitlesMenuItem.IsChecked,
+            TranslateMenuItem.IsChecked);
         _panels = new PanelLayoutController(
             new PanelLayoutViewElements(
                 SubtitlePanel, RightPanelSplitter, RightPanelSplitterColumn, RightPanelColumn,
@@ -169,7 +157,6 @@ public sealed partial class MainWindow : Window
         MediaBrowser.MediaRequested += OnBrowserMediaRequested;
         MediaBrowser.FavoriteRequested += OnBrowserFavoriteRequested;
         MediaBrowser.ErrorOccurred += OnBrowserErrorOccurred;
-        _combinedAiProgress.ProgressChanged += OnCombinedAiProgressChanged;
         WebDavBrowser.Configure(_webDavClient, _webDavCredentials);
         WebDavBrowser.AddServerRequested += OnAddWebDavServerRequested;
         WebDavBrowser.DeleteServerRequested += OnDeleteWebDavServerRequested;
@@ -178,6 +165,7 @@ public sealed partial class MainWindow : Window
         RefreshRightPanelSections();
         GenerateSubtitlesMenuItem.IsChecked = _settings.Asr.GenerateSubtitles;
         TranslateMenuItem.IsChecked = _settings.Llm.TranslateSubtitles;
+        _aiWorkflow.UpdateModes(GenerateSubtitlesMenuItem.IsChecked, TranslateMenuItem.IsChecked);
         var handle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
         ResizeToAvailableWorkArea(1280, 820);
@@ -561,10 +549,9 @@ public sealed partial class MainWindow : Window
         UpdateWindowTitle(_currentMediaSource.DisplayName);
         if (_currentMediaSource is WebDavMediaSource webDavSource) WebDavBrowser.SelectEntry(webDavSource.ServerId, webDavSource.Uri);
         _ = SaveHistoryAfterOpenAsync(_currentMediaSource);
-        _timelineTransform.Reset();
+        _subtitleEditor.ResetTimeline();
         var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
-        _subtitleGenerationCompletedForCurrentMedia = false;
-        _translationCompletedForCurrentMedia = false;
+        _aiWorkflow.ResetForMedia();
         StatusText.Text = source;
         QueuePostOpenWork(source, _currentMediaSource as LocalMediaSource, !preservePlaylist, showInExplorer);
         UpdatePlaylistButtons();
@@ -885,7 +872,7 @@ public sealed partial class MainWindow : Window
         {
             var document = await _subtitleFiles.LoadAsync(path, _settings.Subtitle.Encoding);
             BindDocument(document);
-            _translationCompletedForCurrentMedia = false;
+            _aiWorkflow.ResetTranslation();
             // Keep the native player and the editable document on one subtitle track.
             // Loading the source file directly left the old track alive when the editor
             // later switched to its temporary ASS overlay.
@@ -936,317 +923,71 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnAddCueClick(object sender, RoutedEventArgs e)
-    {
-        var track = _document.EnsureTrack();
-        var start = CurrentPlaybackPositionMicroseconds;
-        var cue = new SubtitleCue { StartMicroseconds = start, EndMicroseconds = start + 2_000_000, Text = string.Empty, Source = SubtitleCueSource.Manual };
-        _history.Execute(new AddSubtitleCommand(_document, track.Cues, cue));
-        SubtitleList.SelectedItem = cue;
-        DrawTimeline();
-        ScheduleSubtitleOverlaySync();
-    }
+        => _subtitleEditor.AddCue();
 
     private void OnDeleteCueClick(object sender, RoutedEventArgs e)
-    {
-        var track = _document.ActiveTrack;
-        if (track is null) return;
-        var selected = SubtitleList.SelectedItems.Cast<SubtitleCue>().ToArray();
-        if (selected.Length == 0) return;
-        _history.Execute(new DeleteSubtitleCommand(_document, track.Cues, selected));
-        DrawTimeline();
-        ScheduleSubtitleOverlaySync();
-    }
+        => _subtitleEditor.DeleteSelectedCues();
 
     private void OnSplitCueClick(object sender, RoutedEventArgs e)
-    {
-        var track = _document.ActiveTrack;
-        if (track is null || SubtitleList.SelectedItem is not SubtitleCue cue) return;
-        var playhead = CurrentPlaybackPositionMicroseconds;
-        var split = playhead > cue.StartMicroseconds && playhead < cue.EndMicroseconds ? playhead : cue.StartMicroseconds + cue.DurationMicroseconds / 2;
-        _history.Execute(new SplitSubtitleCommand(_document, track.Cues, cue, split));
-        DrawTimeline();
-        ScheduleSubtitleOverlaySync();
-    }
+        => _subtitleEditor.SplitSelectedCue();
 
     private void OnMergeCueClick(object sender, RoutedEventArgs e)
-    {
-        var track = _document.ActiveTrack;
-        if (track is null || SubtitleList.SelectedItem is not SubtitleCue first) return;
-        var index = track.Cues.IndexOf(first);
-        if (index < 0 || index + 1 >= track.Cues.Count) return;
-        _history.Execute(new MergeSubtitleCommand(_document, track.Cues, first, track.Cues[index + 1]));
-        DrawTimeline();
-        ScheduleSubtitleOverlaySync();
-    }
+        => _subtitleEditor.MergeSelectedCueWithNext();
 
-    private void OnUndoClick(object sender, RoutedEventArgs e) { _history.Undo(); DrawTimeline(); ScheduleSubtitleOverlaySync(); }
-    private void OnRedoClick(object sender, RoutedEventArgs e) { _history.Redo(); DrawTimeline(); ScheduleSubtitleOverlaySync(); }
-    private void OnCueTextGotFocus(object sender, RoutedEventArgs e) { _subtitleEditorHasFocus = true; if (sender is TextBox { DataContext: SubtitleCue cue }) _textBeforeEdit[cue.Id] = cue.Text; }
-    private void OnCueTextLostFocus(object sender, RoutedEventArgs e)
-    {
-        _subtitleEditorHasFocus = false;
-        if (sender is not TextBox { DataContext: SubtitleCue cue } box || !_textBeforeEdit.Remove(cue.Id, out var before) || before == box.Text) return;
-        var after = box.Text; cue.Text = before; _history.Execute(new EditSubtitleTextCommand(_document, cue, after)); DrawTimeline(); ScheduleSubtitleOverlaySync();
-    }
+    private void OnUndoClick(object sender, RoutedEventArgs e) => _subtitleEditor.Undo();
+    private void OnRedoClick(object sender, RoutedEventArgs e) => _subtitleEditor.Redo();
+    private void OnCueTextGotFocus(object sender, RoutedEventArgs e) => _subtitleEditor.CueTextGotFocus(sender);
+    private void OnCueTextLostFocus(object sender, RoutedEventArgs e) => _subtitleEditor.CueTextLostFocus(sender);
 
-    private void OnCueTimeGotFocus(object sender, RoutedEventArgs e)
-    {
-        _subtitleEditorHasFocus = true;
-        if (sender is TextBox { DataContext: SubtitleCue cue }) _timesBeforeEdit[cue.Id] = (cue.StartMicroseconds, cue.EndMicroseconds);
-    }
+    private void OnCueTimeGotFocus(object sender, RoutedEventArgs e) => _subtitleEditor.CueTimeGotFocus(sender);
 
-    private void OnCueTimeLostFocus(object sender, RoutedEventArgs e)
-    {
-        _subtitleEditorHasFocus = false;
-        if (sender is not TextBox { DataContext: SubtitleCue cue } box || !_timesBeforeEdit.Remove(cue.Id, out var before)) return;
-        if (!long.TryParse(box.Text, out var value)) { box.Text = box.Tag?.ToString() switch { "Start" => before.Start.ToString(), "End" => before.End.ToString(), _ => (before.End - before.Start).ToString() }; return; }
-        var start = before.Start; var end = before.End;
-        switch (box.Tag?.ToString()) { case "Start": start = value; break; case "End": end = value; break; case "Duration": end = checked(start + value); break; }
-        if (start < 0 || end <= start) { box.Text = box.Tag?.ToString() switch { "Start" => before.Start.ToString(), "End" => before.End.ToString(), _ => (before.End - before.Start).ToString() }; StatusText.Text = L("StatusInvalidSubtitleTime"); return; }
-        _history.Execute(new MoveSubtitleCommand(_document, cue, start, end)); DrawTimeline(); ScheduleSubtitleOverlaySync();
-    }
+    private void OnCueTimeLostFocus(object sender, RoutedEventArgs e) => _subtitleEditor.CueTimeLostFocus(sender);
 
     private void OnDuplicateCueClick(object sender, RoutedEventArgs e)
-    {
-        var track = _document.ActiveTrack; if (track is null) return;
-        var selected = SubtitleList.SelectedItems.Cast<SubtitleCue>().OrderBy(cue => cue.StartMicroseconds).ToArray(); if (selected.Length == 0) return;
-        var copies = selected.Select(cue => { var copy = cue.Clone(false); copy.StartMicroseconds += 100_000; copy.EndMicroseconds += 100_000; return copy; }).ToArray();
-        var commands = copies.Select(copy => (IUndoableSubtitleCommand)new AddSubtitleCommand(_document, track.Cues, copy)).ToArray();
-        _history.Execute(new CompositeSubtitleCommand("Duplicate subtitles", commands)); SubtitleList.SelectedItems.Clear(); foreach (var copy in copies) SubtitleList.SelectedItems.Add(copy); DrawTimeline(); ScheduleSubtitleOverlaySync();
-    }
+        => _subtitleEditor.DuplicateSelectedCues();
 
     private async void OnShiftCueClick(object sender, RoutedEventArgs e)
-    {
-        var track = _document.ActiveTrack; if (track is null || track.Cues.Count == 0) return;
-        var input = new NumberBox { Header = L("ShiftSecondsHeader"), Value = 0, SmallChange = 0.1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, MinWidth = 320 };
-        if (await ShowDialogAsync(CreateDialog(L("ShiftSubtitlesTitle"), input, L("ShiftButton"))) != ContentDialogResult.Primary) return;
-        var selected = SubtitleList.SelectedItems.Cast<SubtitleCue>().ToArray(); var cues = selected.Length > 0 ? selected : track.Cues.ToArray();
-        try { _history.Execute(new BatchShiftCommand(_document, cues, checked((long)Math.Round(input.Value * 1_000_000)))); DrawTimeline(); ScheduleSubtitleOverlaySync(); }
-        catch (Exception exception) { await ShowMessageAsync(L("InvalidShiftTitle"), exception.Message); }
-    }
+        => await _subtitleEditor.ShiftCuesAsync();
 
     private async void OnAdjustSubtitleSyncClick(object sender, RoutedEventArgs e)
-    {
-        var track = _document.ActiveTrack;
-        if (track is null || track.Cues.Count == 0)
-        {
-            await ShowMessageAsync(L("SubtitleSyncTitle"), L("LoadSubtitlesFirst"));
-            return;
-        }
+        => await _subtitleEditor.AdjustSynchronizationAsync();
 
-        var referenceCue = SubtitleList.SelectedItems.Cast<SubtitleCue>().OrderBy(cue => cue.StartMicroseconds).FirstOrDefault();
-        var offsetInput = new NumberBox
-        {
-            Header = L("SubtitleSyncOffsetHeader"),
-            Value = 0,
-            SmallChange = 0.1,
-            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-            MinWidth = 320
-        };
-        var alignButton = new Button
-        {
-            Content = L("SyncToCurrentPositionButton"),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            IsEnabled = referenceCue is not null
-        };
-        alignButton.Click += (_, _) =>
-        {
-            if (referenceCue is null) return;
-            offsetInput.Value = (CurrentPlaybackPositionMicroseconds - referenceCue.StartMicroseconds) / 1_000_000d;
-        };
-        var content = new StackPanel
-        {
-            Spacing = 12,
-            Children =
-            {
-                new TextBlock { Text = L("SubtitleSyncOffsetHint"), TextWrapping = TextWrapping.Wrap },
-                offsetInput,
-                alignButton
-            }
-        };
-
-        if (await ShowDialogAsync(CreateDialog(L("SubtitleSyncTitle"), content, L("ApplySyncButton"))) != ContentDialogResult.Primary) return;
-        if (!double.IsFinite(offsetInput.Value))
-        {
-            await ShowMessageAsync(L("InvalidShiftTitle"), L("SubtitleSyncInvalidValue"));
-            return;
-        }
-
-        try
-        {
-            var deltaMicroseconds = checked((long)Math.Round(offsetInput.Value * 1_000_000d, MidpointRounding.AwayFromZero));
-            if (deltaMicroseconds == 0) return;
-            _history.Execute(new BatchShiftCommand(_document, track.Cues.ToArray(), deltaMicroseconds));
-            DrawTimeline();
-            ScheduleSubtitleOverlaySync();
-        }
-        catch (Exception exception)
-        {
-            await ShowMessageAsync(L("InvalidShiftTitle"), exception.Message);
-        }
-    }
-
-    private void OnSelectAllCuesClick(object sender, RoutedEventArgs e) => SubtitleList.SelectAll();
+    private void OnSelectAllCuesClick(object sender, RoutedEventArgs e) => _subtitleEditor.SelectAll();
 
     private void OnCopyCuesClick(object sender, RoutedEventArgs e)
-    {
-        var selected = SubtitleList.SelectedItems.Cast<SubtitleCue>().OrderBy(cue => cue.StartMicroseconds).ToArray(); if (selected.Length == 0) return;
-        var track = new SubtitleTrack(); foreach (var cue in selected) track.Cues.Add(cue.Clone(false));
-        var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy }; package.SetText(SrtWriter.Write(track)); Clipboard.SetContent(package);
-    }
+        => _subtitleEditor.CopySelectedCues();
 
     private async void OnPasteCuesClick(object sender, RoutedEventArgs e)
-    {
-        var content = Clipboard.GetContent(); if (!content.Contains(StandardDataFormats.Text)) return;
-        try
-        {
-            var text = await content.GetTextAsync(); var track = _document.EnsureTrack(); SubtitleCue[] cues;
-            if (text.Contains("-->", StringComparison.Ordinal)) cues = SrtParser.Parse(text).ActiveTrack?.Cues.Select(cue => cue.Clone(false)).ToArray() ?? [];
-            else
-            {
-                var start = CurrentPlaybackPositionMicroseconds;
-                cues = text.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries).Select((line, index) => new SubtitleCue { StartMicroseconds = start + index * 2_000_000, EndMicroseconds = start + (index + 1) * 2_000_000, Text = line, Source = SubtitleCueSource.Manual }).ToArray();
-            }
-            var commands = cues.Select(cue => (IUndoableSubtitleCommand)new AddSubtitleCommand(_document, track.Cues, cue)).ToArray();
-            _history.Execute(new CompositeSubtitleCommand("Paste subtitles", commands)); DrawTimeline(); ScheduleSubtitleOverlaySync();
-        }
-        catch (Exception exception) { await ShowMessageAsync(L("PasteErrorTitle"), exception.Message); }
-    }
-    private void OnSubtitleItemClick(object sender, ItemClickEventArgs e) { if (e.ClickedItem is SubtitleCue cue) SeekAndRestartAi(TimeSpan.FromTicks(cue.StartMicroseconds * 10), () => _playback.Seek(TimeSpan.FromTicks(cue.StartMicroseconds * 10), true)); }
+        => await _subtitleEditor.PasteCuesAsync();
+    private void OnSubtitleItemClick(object sender, ItemClickEventArgs e) => _subtitleEditor.SubtitleItemClicked(e);
 
     private void OnTimelinePointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        var point = e.GetCurrentPoint(TimelineCanvas);
-        var element = e.OriginalSource as DependencyObject;
-        while (element is not null && element != TimelineCanvas && element is not FrameworkElement { Tag: SubtitleCue }) element = VisualTreeHelper.GetParent(element);
-        if (element is FrameworkElement { Tag: SubtitleCue cue } block)
-        {
-            _dragCue = cue; _dragStartX = point.Position.X; _dragOldStart = cue.StartMicroseconds; _dragOldEnd = cue.EndMicroseconds;
-            var local = e.GetCurrentPoint(block).Position.X;
-            _dragMode = local <= 8 ? TimelineDragMode.ResizeStart : local >= block.ActualWidth - 8 ? TimelineDragMode.ResizeEnd : TimelineDragMode.Move;
-            SubtitleList.SelectedItem = cue; TimelineCanvas.CapturePointer(e.Pointer); e.Handled = true; return;
-        }
-        var time = _timelineTransform.XToTime(point.Position.X);
-        SeekAndRestartAi(TimeSpan.FromTicks(time * 10), () => _playback.Seek(TimeSpan.FromTicks(time * 10), true));
-    }
+        => _subtitleEditor.TimelinePointerPressed(e);
 
     private void OnTimelinePointerMoved(object sender, PointerRoutedEventArgs e)
-    {
-        if (_dragCue is null || !e.GetCurrentPoint(TimelineCanvas).Properties.IsLeftButtonPressed) return;
-        var currentX = e.GetCurrentPoint(TimelineCanvas).Position.X;
-        var delta = _timelineTransform.XToTime(currentX) - _timelineTransform.XToTime(_dragStartX);
-        var trackCues = _document.ActiveTrack?.Cues;
-        var candidates = (trackCues is null ? Enumerable.Empty<long>() : trackCues.Where(cue => cue != _dragCue).SelectMany(cue => new[] { cue.StartMicroseconds, cue.EndMicroseconds }))
-            .Append(CurrentPlaybackPositionMicroseconds);
-        var tolerance = Math.Max(1L, _timelineTransform.XToTime(8) - _timelineTransform.XToTime(0));
-        switch (_dragMode)
-        {
-            case TimelineDragMode.Move:
-                var duration = _dragOldEnd - _dragOldStart;
-                var start = TimelineSnapper.Snap(Math.Max(0, _dragOldStart + delta), candidates, tolerance);
-                _dragCue.StartMicroseconds = start; _dragCue.EndMicroseconds = start + duration; break;
-            case TimelineDragMode.ResizeStart:
-                _dragCue.StartMicroseconds = Math.Min(_dragCue.EndMicroseconds - 10_000, TimelineSnapper.Snap(Math.Max(0, _dragOldStart + delta), candidates, tolerance)); break;
-            case TimelineDragMode.ResizeEnd:
-                _dragCue.EndMicroseconds = Math.Max(_dragCue.StartMicroseconds + 10_000, TimelineSnapper.Snap(_dragOldEnd + delta, candidates, tolerance)); break;
-        }
-        DrawTimeline(); e.Handled = true;
-    }
+        => _subtitleEditor.TimelinePointerMoved(e);
 
     private void OnTimelinePointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        if (_dragCue is null) return;
-        TimelineCanvas.ReleasePointerCapture(e.Pointer);
-        var cue = _dragCue; var newStart = cue.StartMicroseconds; var newEnd = cue.EndMicroseconds;
-        cue.StartMicroseconds = _dragOldStart; cue.EndMicroseconds = _dragOldEnd;
-        if (newStart != _dragOldStart || newEnd != _dragOldEnd) _history.Execute(new MoveSubtitleCommand(_document, cue, newStart, newEnd));
-        _dragCue = null; _dragMode = TimelineDragMode.None; DrawTimeline(); ScheduleSubtitleOverlaySync(); e.Handled = true;
-    }
+        => _subtitleEditor.TimelinePointerReleased(e);
 
     private void OnTimelinePointerWheelChanged(object sender, PointerRoutedEventArgs e)
-    {
-        var point = e.GetCurrentPoint(TimelineCanvas); var delta = point.Properties.MouseWheelDelta;
-        var ctrl = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-        if (ctrl) _timelineTransform.ZoomAt(delta > 0 ? 1.25 : 0.8, point.Position.X);
-        else
-        {
-            var visible = _timelineTransform.VisibleRange(TimelineCanvas.ActualWidth);
-            var shift = (visible.End - visible.Start) / 8;
-            _timelineTransform.PanTo(_timelineTransform.ViewStartMicroseconds + (delta > 0 ? -shift : shift));
-        }
-        DrawTimeline(); e.Handled = true;
-    }
-    private void OnVisualizationSizeChanged(object sender, SizeChangedEventArgs e) => DrawTimeline();
+        => _subtitleEditor.TimelinePointerWheelChanged(e);
+    private void OnVisualizationSizeChanged(object sender, SizeChangedEventArgs e) => _subtitleEditor.DrawTimeline();
 
     private void DrawTimeline(long? positionMicroseconds = null)
-    {
-        TimelineCanvas.Children.Clear();
-        _timelinePlayhead = null;
-        if (_document.ActiveTrack?.Cues is { } cues)
-        {
-            foreach (var cue in cues)
-            {
-                var left = _timelineTransform.TimeToX(cue.StartMicroseconds); var right = _timelineTransform.TimeToX(cue.EndMicroseconds);
-                if (right < 0) continue;
-                if (left > TimelineCanvas.ActualWidth) break;
-                var border = new Border
-                {
-                    Width = Math.Max(3, right - left), Height = Math.Max(20, TimelineCanvas.ActualHeight - 8),
-                    Background = ThemeBrush("AccentFillColorDefaultBrush", Windows.UI.Color.FromArgb(255, 40, 130, 220)), CornerRadius = new CornerRadius(3), Padding = new Thickness(4, 2, 4, 2),
-                    Child = new TextBlock
-                    {
-                        Text = cue.GetDisplayText(SubtitleDisplayMode.OriginalAndTranslation),
-                        TextWrapping = TextWrapping.Wrap,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        MaxLines = 4,
-                        FontSize = 13,
-                        LineHeight = 17,
-                        Foreground = ThemeBrush("TextOnAccentFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255))
-                    },
-                    Tag = cue
-                };
-                Canvas.SetLeft(border, left); Canvas.SetTop(border, 4); TimelineCanvas.Children.Add(border);
-            }
-        }
-        _timelinePlayhead = new Rectangle
-        {
-            Width = 2,
-            Height = TimelineCanvas.ActualHeight,
-            Fill = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 255, 69, 0)),
-            IsHitTestVisible = false
-        };
-        Canvas.SetTop(_timelinePlayhead, 0);
-        TimelineCanvas.Children.Add(_timelinePlayhead);
-        UpdateTimelinePlayhead(positionMicroseconds ?? CurrentPlaybackPositionMicroseconds);
-    }
-
-    private void UpdateTimelinePlayhead(long positionMicroseconds)
-    {
-        if (_timelinePlayhead is null) return;
-        var playheadX = _timelineTransform.TimeToX(positionMicroseconds);
-        _timelinePlayhead.Height = TimelineCanvas.ActualHeight;
-        _timelinePlayhead.Visibility = playheadX >= 0 && playheadX <= TimelineCanvas.ActualWidth ? Visibility.Visible : Visibility.Collapsed;
-        if (_timelinePlayhead.Visibility == Visibility.Visible) Canvas.SetLeft(_timelinePlayhead, playheadX);
-    }
+        => _subtitleEditor.DrawTimeline(positionMicroseconds);
 
     private void BindDocument(SubtitleDocument document)
     {
-        ClearGeneratedSubtitleOsd(force: true);
-        _generatedSubtitleOsdActive = false;
-        _overlaySyncCancellation?.Cancel();
-        _overlaySyncCancellation?.Dispose();
-        _overlaySyncCancellation = null;
+        _subtitleOverlay.ResetForDocument();
         _document = document;
-        _playbackLinkedCueId = null;
-        _renderedOverlayContent = null;
-        _renderedOverlayFontFamily = null;
-        _renderedOverlayDisplayMode = null;
         _subtitleDisplayMode = null;
         _selectedNativeSubtitleTrackId = null;
         var track = _document.EnsureTrack();
         if (track.Cues.Count > 0) _subtitleDisplayMode = SubtitleDisplayMode.Original;
         if (_document.FilePath is null && track.Cues.Count == 0) _document.MarkSaved();
-        SubtitleList.ItemsSource = track.Cues; _history.Clear(); RefreshSubtitleTrackSelector(); DrawTimeline();
+        _subtitleEditor.BindDocument(document);
+        RefreshSubtitleTrackSelector();
     }
 
     private void OnPlaybackStateChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
@@ -1267,8 +1008,7 @@ public sealed partial class MainWindow : Window
         {
             // show-text has a finite lifetime. Re-arm the current cue after a
             // pause/resume so a long pause cannot make it disappear permanently.
-            _generatedSubtitleOsdCueId = null;
-            _generatedSubtitleOsdText = null;
+            _subtitleOverlay.InvalidateGeneratedCue();
         }
         RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
     });
@@ -1315,7 +1055,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_mediaOpenReady || !_firstFrameUiReadyForMedia ||
             !string.Equals(_currentMediaSource?.Location, _playback.CurrentSource, StringComparison.OrdinalIgnoreCase)) return;
-        if (_playback.State == PlaybackState.Playing && _seekAiRestartCancellation is null)
+        if (_playback.State == PlaybackState.Playing && !_aiWorkflow.IsSeekRestartPending)
             StartCheckedAiPipeline(waitForMediaReady: true);
     }
 
@@ -1343,7 +1083,7 @@ public sealed partial class MainWindow : Window
 
     private void OnPlaybackSeeked(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
     {
-        if (_generatedSubtitleOsdActive)
+        if (_subtitleOverlay.IsGeneratedOverlayActive)
         {
             ApplySubtitleVisibilityPreference();
             ClearGeneratedSubtitleOsd(force: true);
@@ -1373,21 +1113,7 @@ public sealed partial class MainWindow : Window
             DecoderText.Text = _playback.DecoderDescription ?? string.Empty;
             ResolutionText.Text = _playback.VideoWidth is { } width && _playback.VideoHeight is { } height ? $"{width}×{height}" : string.Empty;
             var positionMicroseconds = Math.Max(0, position.Ticks / 10);
-            var visualizationWidth = TimelineCanvas.ActualWidth;
-            var viewportChanged = visualizationWidth > 0 && _timelineTransform.EnsureVisible(positionMicroseconds, visualizationWidth);
-            var cue = _document.FindActiveCue(positionMicroseconds);
-            if (!_subtitleEditorHasFocus)
-            {
-                var cueChanged = cue?.Id != _playbackLinkedCueId;
-                _playbackLinkedCueId = cue?.Id;
-                if (cue is not null)
-                {
-                    if (!SubtitleList.SelectedItems.Contains(cue)) SubtitleList.SelectedItem = cue;
-                    if (cueChanged) SubtitleList.ScrollIntoView(cue, ScrollIntoViewAlignment.Leading);
-                }
-            }
-            if (viewportChanged) DrawTimeline(positionMicroseconds);
-            else UpdateTimelinePlayhead(positionMicroseconds);
+            _subtitleEditor.UpdatePlaybackPosition(positionMicroseconds);
             RefreshGeneratedSubtitleOsd(positionMicroseconds);
         }
         finally { Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 0); }
@@ -1414,10 +1140,9 @@ public sealed partial class MainWindow : Window
         }
 
         if (option.TrackId is not { } trackId) return;
-        if (_generatedSubtitleOsdActive)
+        if (_subtitleOverlay.IsGeneratedOverlayActive)
         {
-            _generatedSubtitleOsdActive = false;
-            ClearGeneratedSubtitleOsd(force: true);
+            _subtitleOverlay.DisableGeneratedOverlay();
         }
         _subtitleDisplayMode = null;
         _selectedNativeSubtitleTrackId = trackId;
@@ -1537,11 +1262,7 @@ public sealed partial class MainWindow : Window
         e.Handled = true;
     }
     private void SelectRelativeCue(int delta)
-    {
-        var cues = _document.ActiveTrack?.Cues; if (cues is null || cues.Count == 0) return;
-        var index = SubtitleList.SelectedItem is SubtitleCue selected ? cues.IndexOf(selected) : 0; index = Math.Clamp(index + delta, 0, cues.Count - 1);
-        SubtitleList.SelectedItem = cues[index]; SubtitleList.ScrollIntoView(cues[index]); SeekAndRestartAi(TimeSpan.FromTicks(cues[index].StartMicroseconds * 10), () => _playback.Seek(TimeSpan.FromTicks(cues[index].StartMicroseconds * 10), true));
-    }
+        => _subtitleEditor.SelectRelativeCue(delta);
 
     private void OnPreviousSubtitleClick(object sender, RoutedEventArgs e) => SelectRelativeCue(-1);
     private void OnNextSubtitleClick(object sender, RoutedEventArgs e) => SelectRelativeCue(1);
@@ -1695,705 +1416,34 @@ public sealed partial class MainWindow : Window
     private async void OnDiagnosticsClick(object sender, RoutedEventArgs e)
     {
         StatusText.Text = L("StatusCollectingDiagnostics");
-        var snapshot = await new DiagnosticsService().CollectAsync(_playback, _asrEngine.State, AsrRuntimePaths.GetCrispAsrRuntimeDirectory(_settings.Asr.CrispAsrRuntimeDirectory), _settings.Asr.ModelPath, _settings.Asr.AlignerPath);
+        var snapshot = await new DiagnosticsService().CollectAsync(_playback, _aiWorkflow.AsrState, AsrRuntimePaths.GetCrispAsrRuntimeDirectory(_settings.Asr.CrispAsrRuntimeDirectory), _settings.Asr.ModelPath, _settings.Asr.AlignerPath);
         var output = new TextBox { Text = snapshot.ToString(), IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinWidth = 650, MinHeight = 420, FontFamily = new FontFamily("Consolas") };
         await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("DiagnosticsTitle"), Content = output, CloseButtonText = L("CloseButton") });
         StatusText.Text = L("ReadyText");
     }
     private void OnGenerateSubtitleClick(object sender, RoutedEventArgs e)
-    {
-        _settings.Asr.GenerateSubtitles = GenerateSubtitlesMenuItem.IsChecked;
-        if (!GenerateSubtitlesMenuItem.IsChecked) return;
-        _subtitleGenerationCompletedForCurrentMedia = false;
-        _translationCompletedForCurrentMedia = false;
-        StartCheckedAiPipeline();
-    }
+        => _aiWorkflow.RequestSubtitleGeneration(GenerateSubtitlesMenuItem.IsChecked);
 
     private void StartCheckedAiPipeline(long? requestedStartMicroseconds = null, bool waitForMediaReady = false, bool continueExistingResults = false)
-    {
-        if (_aiPipelineTask is { IsCompleted: false } || _aiOperationCancellation is not null) return;
-        SetRetryableAiOperation(null);
-        _aiPipelineTask = RunCheckedAiPipelineAsync(requestedStartMicroseconds, waitForMediaReady, continueExistingResults);
-    }
+        => _aiWorkflow.StartPipeline(requestedStartMicroseconds, waitForMediaReady, continueExistingResults);
 
     private async Task CancelAiPipelineAsync()
-    {
-        CancelPendingSeekAiRestart();
-        var pipelineOperation = _aiPipelineTask;
-        var summaryOperation = _aiSummaryTask;
-        _aiOperationCancellation?.Cancel();
-        foreach (var operation in new[] { pipelineOperation, summaryOperation })
-        {
-            if (operation is null || operation.IsCompleted) continue;
-            try { await operation; }
-            catch (OperationCanceledException) { }
-            catch (Exception exception) { await AppLog.WriteAsync("warning", "ai", "AI_CANCEL_WAIT_ERROR", exception.Message, exception); }
-        }
-    }
+        => await _aiWorkflow.CancelAsync();
 
     private void ScheduleAiRestartAfterSeek(TimeSpan requestedPosition)
-    {
-        if (!GenerateSubtitlesMenuItem.IsChecked && !TranslateMenuItem.IsChecked) return;
-        CancelPendingSeekAiRestart();
-        var cancellation = new CancellationTokenSource();
-        _seekAiRestartCancellation = cancellation;
-        var maximum = _playback.Duration > TimeSpan.Zero ? _playback.Duration : TimeSpan.MaxValue;
-        var clampedPosition = requestedPosition < TimeSpan.Zero ? TimeSpan.Zero : requestedPosition > maximum ? maximum : requestedPosition;
-        _ = RestartAiAfterSeekAsync(cancellation, Math.Max(0, clampedPosition.Ticks / 10));
-    }
-
-    private async Task RestartAiAfterSeekAsync(CancellationTokenSource cancellation, long requestedStartMicroseconds)
-    {
-        var cancellationToken = cancellation.Token;
-        try
-        {
-            // Give mpv's seek and the WebM/Opus demuxer time to settle before FFmpeg
-            // opens the same media for subtitle generation.
-            await Task.Delay(AutomaticSubtitleStartDelay, cancellationToken);
-            await CancelAiPipelineForSeekAsync(cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(_seekAiRestartCancellation, cancellation)) return;
-            if (GenerateSubtitlesMenuItem.IsChecked) _subtitleGenerationCompletedForCurrentMedia = false;
-            if (TranslateMenuItem.IsChecked) _translationCompletedForCurrentMedia = false;
-            StartCheckedAiPipeline(requestedStartMicroseconds);
-        }
-        catch (OperationCanceledException) { }
-        finally
-        {
-            if (ReferenceEquals(_seekAiRestartCancellation, cancellation)) _seekAiRestartCancellation = null;
-            cancellation.Dispose();
-        }
-    }
-
-    private void CancelPendingSeekAiRestart()
-    {
-        var cancellation = _seekAiRestartCancellation;
-        _seekAiRestartCancellation = null;
-        if (cancellation is null) return;
-        cancellation.Cancel();
-        cancellation.Dispose();
-    }
-
-    private async Task CancelAiPipelineForSeekAsync(CancellationToken seekCancellationToken)
-    {
-        var operation = _aiPipelineTask;
-        _aiOperationCancellation?.Cancel();
-        if (operation is null || operation.IsCompleted) return;
-        try { await operation.WaitAsync(seekCancellationToken); }
-        catch (OperationCanceledException) when (!seekCancellationToken.IsCancellationRequested) { }
-    }
-
-    private async Task RunCheckedAiPipelineAsync(long? requestedStartMicroseconds = null, bool waitForMediaReady = false, bool continueExistingResults = false)
-    {
-        if (_aiOperationCancellation is not null) return;
-        var generate = GenerateSubtitlesMenuItem.IsChecked && !_subtitleGenerationCompletedForCurrentMedia;
-        var translate = TranslateMenuItem.IsChecked && !_translationCompletedForCurrentMedia;
-        if (!generate && !translate) return;
-        if (_playback.CurrentSource is not { } source || !File.Exists(source) && !(Uri.TryCreate(source, UriKind.Absolute, out var remoteUri) && remoteUri.Scheme is "http" or "https"))
-        {
-            StatusText.Text = L("AutomaticSubtitlesOpenMedia");
-            return;
-        }
-        if (generate && !File.Exists(AsrRuntimePaths.CrispAsrDllPath))
-        {
-            StatusText.Text = L("AsrInstallRequiredMessage");
-            return;
-        }
-
-        _aiOperationCancellation = new CancellationTokenSource();
-        var combineAiProgress = generate && translate;
-        if (combineAiProgress) _combinedAiProgress.Begin();
-        string? temporaryInput = null;
-        var translating = false;
-        try
-        {
-            var token = _aiOperationCancellation.Token;
-            if (waitForMediaReady)
-            {
-                // The player must get a short uninterrupted playback window before
-                // ASR opens the same WebM file. This avoids probing an Opus stream
-                // while libmpv is still finalizing the first audio packets.
-                await Task.Delay(AutomaticSubtitleStartDelay, token);
-                token.ThrowIfCancellationRequested();
-                if (!string.Equals(_playback.CurrentSource, source, StringComparison.OrdinalIgnoreCase) ||
-                    _playback.State is not (PlaybackState.Playing or PlaybackState.Paused)) return;
-            }
-            var startMicroseconds = waitForMediaReady
-                ? 0
-                : requestedStartMicroseconds ?? CurrentPlaybackPositionMicroseconds;
-            var preserveExistingSubtitles = continueExistingResults || requestedStartMicroseconds.HasValue && !waitForMediaReady;
-            if (generate)
-            {
-                if (!File.Exists(source) && _currentHttpHeaders is { Count: > 0 })
-                {
-                    StatusText.Text = L("StatusPreparingRemoteAsr");
-                    temporaryInput = await _remoteMediaDownloader.DownloadAsync(source, _currentHttpHeaders, _settings.Network.Proxy, _settings.Network.TimeoutSeconds, token);
-                    source = temporaryInput;
-                }
-                _translationCompletedForCurrentMedia = await GenerateSubtitlesAsync(source, startMicroseconds, token, preserveExistingSubtitles);
-                _subtitleGenerationCompletedForCurrentMedia = true;
-            }
-            if (TranslateMenuItem.IsChecked && !_translationCompletedForCurrentMedia)
-            {
-                translating = true;
-                _translationCompletedForCurrentMedia = await TranslateSubtitlesAsync(startMicroseconds, token, includeAllMissing: preserveExistingSubtitles && !continueExistingResults);
-            }
-        }
-        catch (OperationCanceledException) { StatusText.Text = L(translating ? "StatusTranslationCancelled" : "StatusSubtitleGenerationCancelled"); }
-        catch (AsrWorkerException exception)
-        {
-            StatusText.Text = $"{exception.Code}: {exception.Message}";
-            await AppLog.WriteAsync("error", "asr", exception.Code, exception.Message, exception);
-        }
-        catch (Exception exception)
-        {
-            StatusText.Text = $"AI_ERROR: {exception.Message}";
-            await AppLog.WriteAsync("error", "ai", "AI_PIPELINE_ERROR", exception.Message, exception);
-        }
-        finally
-        {
-            AsrDownloadProgressBar.Visibility = Visibility.Collapsed;
-            AsrDownloadProgressBar.IsIndeterminate = false;
-            if (temporaryInput is not null) try { File.Delete(temporaryInput); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-            if (combineAiProgress) _combinedAiProgress.End();
-            _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null;
-        }
-    }
-
-    private async Task<bool> GenerateSubtitlesAsync(string source, long startMicroseconds, CancellationToken token, bool preserveExistingSubtitles)
-    {
-        var document = preserveExistingSubtitles ? _document : new SubtitleDocument();
-        var track = document.EnsureTrack("srt");
-        if (string.IsNullOrWhiteSpace(track.Name)) track.Name = "Qwen3-ASR";
-        var generationStartMicroseconds = preserveExistingSubtitles
-            ? FindGenerationStartMicroseconds(track, startMicroseconds)
-            : Math.Max(0, startMicroseconds);
-        var translateGeneratedCues = TranslateMenuItem.IsChecked;
-
-        StatusText.Text = L("StatusStartingAsr");
-        var runtimeDirectory = AsrRuntimePaths.GetCrispAsrRuntimeDirectory(_settings.Asr.CrispAsrRuntimeDirectory);
-        await _asrEngine.StartAsync(runtimeDirectory, token);
-        StatusText.Text = L("StatusLoadingAsr");
-        var acceptingLoadProgress = true;
-        var loadProgress = new Progress<AsrEvent>(update => { if (acceptingLoadProgress) UpdateAsrModelProgress(update); });
-        try { await _asrEngine.LoadModelAsync(_settings.Asr.ModelPath!, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress, token); }
-        finally { acceptingLoadProgress = false; }
-        if (!preserveExistingSubtitles)
-        {
-            BindDocument(document);
-        }
-        else if (!ReferenceEquals(_document, document))
-        {
-            return false;
-        }
-
-        var displayMode = preserveExistingSubtitles && _subtitleDisplayMode is { } existingDisplayMode
-            ? existingDisplayMode
-            : TranslateMenuItem.IsChecked ? SubtitleDisplayMode.Translation : SubtitleDisplayMode.Original;
-        SetSubtitleDisplayMode(displayMode, refreshOverlay: false);
-        _panels.IsRightVisible = true;
-        ApplyPanelVisibility();
-        ShowRightPanelSection(RightPanelSection.Subtitles);
-        SetSubtitleGenerationStatus(0d);
-        EnableGeneratedSubtitleOverlay();
-
-        var durationMicroseconds = Math.Max(0, _playback.Duration.Ticks / 10);
-        if (preserveExistingSubtitles && durationMicroseconds > 0 && generationStartMicroseconds >= durationMicroseconds)
-        {
-            await DispatchSubtitleUiAsync(() =>
-            {
-                DrawTimeline();
-                if (translateGeneratedCues)
-                {
-                    _combinedAiProgress.CompleteSubtitle();
-                    var translatedCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
-                    if (track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
-                        _combinedAiProgress.CompleteTranslation(translatedCount, track.Cues.Count);
-                    else if (!_combinedAiProgress.UpdateTranslation(translatedCount, track.Cues.Count))
-                        StatusText.Text = F("StatusTranslated", translatedCount);
-                }
-                else StatusText.Text = F("StatusGeneratedSubtitles", track.Cues.Count);
-            }, document, token).ConfigureAwait(false);
-            return !translateGeneratedCues || track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
-        }
-
-        var translationQueue = Channel.CreateUnbounded<SubtitleCue>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
-        var translationTask = TranslateGeneratedCuesRealtimeAsync(translationQueue.Reader, document, track, token);
-        var translatedCount = 0;
-        var segmentation = _settings.Subtitle.Segmentation;
-        var asrSegmentation = new AsrSegmentationOptions(segmentation.MinimumCueSeconds, segmentation.MaximumCueSeconds, segmentation.MaximumLines, segmentation.TargetCharactersPerLine, segmentation.SilenceSplitSeconds, segmentation.MaximumCharactersPerSecond);
-        var subtitleGenerationCompleted = false;
-        try
-        {
-            await foreach (var result in _asrEngine.TranscribeFileAsync(source, _settings.Asr.Language, _settings.Asr.ChunkDurationSeconds, _settings.Asr.UseVad, asrSegmentation, generationStartMicroseconds, token).ConfigureAwait(false))
-            {
-                if (!ReferenceEquals(_document, document)) throw new OperationCanceledException(token);
-                if (result.Event == "progress" && result.Progress is { } progress)
-                    await DispatchSubtitleUiAsync(() => SetSubtitleGenerationStatus(progress), document, token).ConfigureAwait(false);
-                if (result.Event == "segment" && result.Segment is { } segment)
-                {
-                    var cue = new SubtitleCue { StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds, Text = segment.Text, Confidence = segment.Confidence, Source = SubtitleCueSource.AutomaticSpeechRecognition };
-                    await DispatchSubtitleUiAsync(() =>
-                    {
-                        if (IsAlreadyGeneratedCue(track, segment)) return;
-                        track.Cues.Add(cue);
-                        translationQueue.Writer.TryWrite(cue);
-                        ScheduleGeneratedSubtitleUiRefresh();
-                    }, document, token).ConfigureAwait(false);
-                }
-            }
-            subtitleGenerationCompleted = true;
-        }
-        finally
-        {
-            translationQueue.Writer.TryComplete();
-            if (subtitleGenerationCompleted && translateGeneratedCues) _combinedAiProgress.CompleteSubtitle();
-            if (token.IsCancellationRequested)
-            {
-                try { await translationTask.ConfigureAwait(false); }
-                catch (OperationCanceledException) { }
-                catch (Exception exception) { await AppLog.WriteAsync("warning", "translation", "TRANSLATION_CANCEL_WAIT_ERROR", exception.Message, exception); }
-            }
-            else translatedCount = await translationTask.ConfigureAwait(false);
-        }
-        if (!ReferenceEquals(_document, document)) return false;
-        var finalCueCount = 0;
-        await DispatchSubtitleUiAsync(() =>
-        {
-            SubtitleDocument.Sort(track);
-            document.MarkDirty();
-            DrawTimeline();
-            // Reload the native subtitle track once after the complete ASR result is
-            // available. Reloading libass for every incoming segment can interrupt
-            // mpv's audio/video clock even though the ASR work itself is asynchronous.
-            ScheduleSubtitleOverlaySync(force: true);
-            finalCueCount = track.Cues.Count;
-            var completedTranslationCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
-            if (translateGeneratedCues)
-            {
-                if (track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
-                    _combinedAiProgress.CompleteTranslation(completedTranslationCount, track.Cues.Count);
-                else if (!_combinedAiProgress.UpdateTranslation(completedTranslationCount, track.Cues.Count))
-                    StatusText.Text = F("StatusTranslated", translatedCount);
-            }
-            else StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
-        }, document, token).ConfigureAwait(false);
-        return !translateGeneratedCues || track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
-    }
-
-    private static long FindGenerationStartMicroseconds(SubtitleTrack track, long requestedStartMicroseconds)
-    {
-        var cursor = Math.Max(0, requestedStartMicroseconds);
-        foreach (var cue in track.Cues.OrderBy(cue => cue.StartMicroseconds))
-        {
-            if (cue.EndMicroseconds <= cursor) continue;
-            if (cue.StartMicroseconds > cursor) break;
-            cursor = Math.Max(cursor, cue.EndMicroseconds);
-        }
-        return cursor;
-    }
-
-    private static bool IsAlreadyGeneratedCue(SubtitleTrack track, AsrSegment segment)
-    {
-        var segmentStart = Math.Max(0, segment.StartMicroseconds);
-        var segmentEnd = Math.Max(segmentStart + 1, segment.EndMicroseconds);
-        var segmentDuration = segmentEnd - segmentStart;
-        var normalizedText = segment.Text.Trim();
-        foreach (var existing in track.Cues)
-        {
-            var overlap = Math.Min(segmentEnd, existing.EndMicroseconds) - Math.Max(segmentStart, existing.StartMicroseconds);
-            if (overlap <= 0) continue;
-            if (string.Equals(existing.Text.Trim(), normalizedText, StringComparison.OrdinalIgnoreCase)) return true;
-
-            var existingDuration = Math.Max(1, existing.EndMicroseconds - existing.StartMicroseconds);
-            var sharedHalf = Math.Max(1, Math.Min(segmentDuration, existingDuration) / 2);
-            var segmentCoverage = Math.Max(1, segmentDuration / 3);
-            if (overlap >= sharedHalf && overlap >= segmentCoverage) return true;
-        }
-        return false;
-    }
-
-    private Task DispatchSubtitleUiAsync(Action action, SubtitleDocument targetDocument, CancellationToken cancellationToken)
-    {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
-        {
-            try
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (ReferenceEquals(_document, targetDocument)) action();
-                completion.TrySetResult();
-            }
-            catch (OperationCanceledException) { completion.TrySetCanceled(cancellationToken); }
-            catch (Exception exception) { completion.TrySetException(exception); }
-        })) completion.TrySetException(new InvalidOperationException("The subtitle result could not be dispatched to the UI thread."));
-        return completion.Task;
-    }
-
-    private async Task<int> TranslateGeneratedCuesRealtimeAsync(ChannelReader<SubtitleCue> reader, SubtitleDocument targetDocument, SubtitleTrack track, CancellationToken cancellationToken)
-    {
-        const int realtimeBatchSize = 6;
-        var pending = new List<SubtitleCue>(realtimeBatchSize);
-        DateTimeOffset? firstPendingAt = null;
-        ILlmProvider? provider = null;
-        IDisposable? disposable = null;
-        LlmService? service = null;
-        var translatedCount = 0;
-        try
-        {
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                while (reader.TryRead(out var cue))
-                {
-                    pending.Add(cue);
-                    firstPendingAt ??= DateTimeOffset.UtcNow;
-                }
-
-                if (pending.Count == 0)
-                {
-                    if (reader.Completion.IsCompleted) break;
-                    await Task.Delay(100, cancellationToken);
-                    continue;
-                }
-                if (!TranslateMenuItem.IsChecked)
-                {
-                    if (reader.Completion.IsCompleted) break;
-                    await Task.Delay(100, cancellationToken);
-                    continue;
-                }
-                if (string.IsNullOrWhiteSpace(_settings.Llm.Model)) throw new InvalidOperationException(L("LlmModelMissingMessage"));
-
-                var waitRemaining = TimeSpan.FromMilliseconds(750) - (DateTimeOffset.UtcNow - firstPendingAt!.Value);
-                if (pending.Count < realtimeBatchSize && !reader.Completion.IsCompleted && waitRemaining > TimeSpan.Zero)
-                {
-                    await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(100, waitRemaining.TotalMilliseconds)), cancellationToken);
-                    continue;
-                }
-
-                provider ??= CreateLlmProvider();
-                disposable ??= provider as IDisposable;
-                service ??= new LlmService(provider, _settings.Llm.Model, _settings.Llm.ThinkingLevel);
-                var batch = pending.Take(realtimeBatchSize).ToArray();
-                pending.RemoveRange(0, batch.Length);
-                firstPendingAt = pending.Count > 0 ? DateTimeOffset.UtcNow : null;
-                var cuesById = batch.ToDictionary(cue => cue.Id);
-                var translatedBeforeBatch = translatedCount;
-                SetTranslationProgressStatus(translatedCount, Math.Max(translatedCount + batch.Length, track.Cues.Count));
-                var translated = await service.TranslateAsync(batch, _settings.Llm.TranslationLanguage, batchCompleted: (result, token) =>
-                {
-                    var completed = translatedBeforeBatch + result.Completed;
-                    var total = Math.Max(completed, track.Cues.Count);
-                    return ApplyTranslationBatchAsync(targetDocument, new TranslationBatch(result.Items, completed, total), cuesById, token);
-                }, batchSize: realtimeBatchSize, cancellationToken: cancellationToken);
-                translatedCount += translated.Count;
-                await AppLog.WriteAsync("info", "translation", "TRANSLATION_BATCH_COMPLETED", $"Realtime translation completed {translatedCount} cues; {pending.Count} queued.");
-            }
-            return translatedCount;
-        }
-        finally { disposable?.Dispose(); }
-    }
-
-    private void UpdateAsrModelProgress(AsrEvent update)
-    {
-        if (update.Stage == "download" && update.Progress is { } progress)
-        {
-            AsrDownloadProgressBar.Visibility = Visibility.Visible;
-            AsrDownloadProgressBar.IsIndeterminate = false;
-            AsrDownloadProgressBar.Value = Math.Clamp(progress, 0, 1);
-            var model = update.Message ?? "Qwen3-ASR";
-            var modelProgress = update.ModelProgress ?? progress;
-            StatusText.Text = update.TotalBytes is > 0 && update.DownloadedBytes is { } downloaded
-                ? F("StatusDownloadingAsrModel", model, modelProgress, FormatDownloadSize(downloaded), FormatDownloadSize(update.TotalBytes.Value))
-                : F("StatusPreparingAsrDownload", model);
-            return;
-        }
-        if (update.Stage == "loading")
-        {
-            AsrDownloadProgressBar.Visibility = Visibility.Visible;
-            AsrDownloadProgressBar.IsIndeterminate = true;
-            StatusText.Text = update.ElapsedSeconds is > 0 ? $"{L("StatusLoadingAsr")} ({update.ElapsedSeconds}s)" : L("StatusLoadingAsr");
-            return;
-        }
-        AsrDownloadProgressBar.Visibility = Visibility.Collapsed;
-        AsrDownloadProgressBar.IsIndeterminate = false;
-        StatusText.Text = L("StatusLoadingAsr");
-    }
-
-    private void SetSubtitleGenerationStatus(double progress)
-    {
-        if (_combinedAiProgress.UpdateSubtitle(progress)) return;
-        StatusText.Text = F("StatusGeneratingSubtitles", progress);
-    }
-
-    private void SetTranslationProgressStatus(int completed, int total)
-    {
-        if (_combinedAiProgress.UpdateTranslation(completed, total)) return;
-        StatusText.Text = F("StatusTranslating", completed, total);
-    }
-
-    private void OnCombinedAiProgressChanged(object? sender, AiProgressChangedEventArgs e)
-    {
-        void Apply()
-        {
-            var progress = e.Progress;
-            StatusText.Text = progress.SubtitleGenerationComplete
-                ? progress.TranslationComplete
-                    ? L("StatusSubtitlesAndTranslationComplete")
-                    : F("StatusSubtitlesGeneratedAndTranslating", progress.TranslatedCount, progress.TranslationTotal)
-                : F("StatusGeneratingSubtitlesAndTranslating", progress.SubtitleProgress, progress.TranslatedCount, progress.TranslationTotal);
-        }
-        if (DispatcherQueue.HasThreadAccess) Apply();
-        else DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, Apply);
-    }
-
-    private static string FormatDownloadSize(long bytes) => bytes >= 1_073_741_824
-        ? $"{bytes / 1_073_741_824d:0.00} GB"
-        : $"{bytes / 1_048_576d:0.0} MB";
+        => _aiWorkflow.ScheduleRestartAfterSeek(requestedPosition);
 
     private void OnTranslateClick(object sender, RoutedEventArgs e)
-    {
-        _settings.Llm.TranslateSubtitles = TranslateMenuItem.IsChecked;
-        if (!TranslateMenuItem.IsChecked) return;
-        SetSubtitleDisplayMode(SubtitleDisplayMode.Translation, refreshOverlay: false);
-        _translationCompletedForCurrentMedia = false;
-        StartCheckedAiPipeline();
-    }
-
-    private async Task<bool> TranslateSubtitlesAsync(long startMicroseconds, CancellationToken cancellationToken, bool includeAllMissing = false)
-    {
-        var targetDocument = _document;
-        var track = targetDocument.ActiveTrack;
-        if (track is null || track.Cues.Count == 0)
-        {
-            StatusText.Text = L("LoadSubtitlesFirst");
-            return false;
-        }
-        if (string.IsNullOrWhiteSpace(_settings.Llm.Model))
-        {
-            StatusText.Text = L("LlmModelMissingMessage");
-            return false;
-        }
-        // Translation can finish after ASR. Only send cues that still have no
-        // translation so existing results survive a seek and are not replaced.
-        var cues = track.Cues
-            .Where(cue => string.IsNullOrWhiteSpace(cue.TranslatedText) && (includeAllMissing || cue.EndMicroseconds > startMicroseconds))
-            .OrderBy(cue => cue.StartMicroseconds)
-            .ToArray();
-
-        SetSubtitleDisplayMode(SubtitleDisplayMode.Translation, refreshOverlay: false);
-        if (cues.Length == 0)
-        {
-            ScheduleSubtitleOverlaySync(force: true);
-            var existingTranslatedCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
-            if (track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
-                _combinedAiProgress.CompleteTranslation(existingTranslatedCount, track.Cues.Count);
-            else if (!_combinedAiProgress.UpdateTranslation(existingTranslatedCount, track.Cues.Count))
-                StatusText.Text = F("StatusTranslated", 0);
-            return track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
-        }
-
-        EnableGeneratedSubtitleOverlay();
-        var translatedBefore = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
-        SetTranslationProgressStatus(translatedBefore, track.Cues.Count);
-        var provider = CreateLlmProvider();
-        using var disposable = provider as IDisposable;
-        var service = new LlmService(provider, _settings.Llm.Model, _settings.Llm.ThinkingLevel);
-        var cuesById = cues.ToDictionary(cue => cue.Id);
-        var translated = await service.TranslateAsync(cues, _settings.Llm.TranslationLanguage, batchCompleted: (batch, token) =>
-            ApplyTranslationBatchAsync(targetDocument, new TranslationBatch(batch.Items, translatedBefore + batch.Completed, track.Cues.Count), cuesById, token), cancellationToken: cancellationToken);
-        if (!ReferenceEquals(_document, targetDocument)) return false;
-        ScheduleSubtitleOverlaySync(force: true);
-        var translatedCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
-        if (cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
-            _combinedAiProgress.CompleteTranslation(translatedCount, track.Cues.Count);
-        else if (!_combinedAiProgress.UpdateTranslation(translatedCount, track.Cues.Count))
-            StatusText.Text = F("StatusTranslated", translated.Count);
-        await AppLog.WriteAsync("info", "translation", "TRANSLATION_COMPLETED", $"Translated {translated.Count} cues from {startMicroseconds} microseconds using {_settings.Llm.Provider}.");
-        return cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
-    }
-
-    private Task ApplyTranslationBatchAsync(SubtitleDocument targetDocument, TranslationBatch batch, IReadOnlyDictionary<Guid, SubtitleCue> cuesById, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!ReferenceEquals(_document, targetDocument)) return Task.CompletedTask;
-        if (DispatcherQueue.HasThreadAccess)
-        {
-            Apply();
-            return Task.CompletedTask;
-        }
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
-        {
-            try { Apply(); completion.SetResult(); }
-            catch (Exception exception) { completion.SetException(exception); }
-        })) completion.SetException(new InvalidOperationException("The translation result could not be dispatched to the UI thread."));
-        return completion.Task;
-
-        void Apply()
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(_document, targetDocument)) return;
-            var commands = batch.Items
-                .Where(item => cuesById.ContainsKey(item.Key))
-                .Select(item => (IUndoableSubtitleCommand)new SetSubtitleTranslationCommand(targetDocument, cuesById[item.Key], item.Value))
-                .ToArray();
-            if (commands.Length > 0) _history.Execute(new CompositeSubtitleCommand("Translate subtitle batch", commands));
-            // Translation arrives asynchronously after the subtitle file has
-            // already been rendered. Rebuild the current display mode so the
-            // user does not need to select Translation a second time.
-            ScheduleSubtitleOverlaySync();
-            ScheduleGeneratedSubtitleUiRefresh();
-            SetTranslationProgressStatus(batch.Completed, batch.Total);
-        }
-    }
+        => _aiWorkflow.RequestTranslation(TranslateMenuItem.IsChecked);
 
     private async void OnSummarizeClick(object sender, RoutedEventArgs e)
-    {
-        var track = _document.ActiveTrack;
-        if (track is null || track.Cues.Count == 0) { await ShowMessageAsync(L("SummaryTitle"), L("LoadSubtitlesFirst")); return; }
-        if (string.IsNullOrWhiteSpace(_settings.Llm.Model)) { await ShowMessageAsync(L("LlmModelMissingTitle"), L("LlmModelMissingMessage")); return; }
-        if (_aiOperationCancellation is not null) return;
-        var choices = new ComboBox { Header = L("SummaryStyleHeader"), MinWidth = 300, ItemsSource = Enum.GetValues<SummaryKind>(), SelectedIndex = 0 };
-        if (await ShowDialogAsync(CreateDialog(L("SummarizeTranscriptTitle"), choices, L("SummarizeButton"))) != ContentDialogResult.Primary) return;
-        await RunSummaryWithTrackingAsync(track, (SummaryKind)(choices.SelectedItem ?? SummaryKind.Short));
-    }
-
-    private async Task RunSummaryWithTrackingAsync(SubtitleTrack track, SummaryKind summaryKind)
-    {
-        if (_aiOperationCancellation is not null) return;
-        SetRetryableAiOperation(null);
-        _activeSummaryKind = summaryKind;
-        var operation = RunSummaryAsync(track, summaryKind);
-        _aiSummaryTask = operation;
-        try { await operation; }
-        finally
-        {
-            if (ReferenceEquals(_aiSummaryTask, operation)) _aiSummaryTask = null;
-        }
-    }
-
-    private async Task RunSummaryAsync(SubtitleTrack track, SummaryKind summaryKind)
-    {
-        using var cancellation = new CancellationTokenSource();
-        _aiOperationCancellation = cancellation;
-        try
-        {
-            var provider = CreateLlmProvider();
-            using var disposable = provider as IDisposable;
-            var service = new LlmService(provider, _settings.Llm.Model!, _settings.Llm.ThinkingLevel);
-            var progress = new Progress<double>(value => StatusText.Text = F("StatusSummarizing", value));
-            var summaryLanguage = _settings.Llm.TranslationLanguage.Trim();
-            var summary = await service.SummarizeAsync(track.Cues, summaryKind, summaryLanguage, progress, cancellationToken: cancellation.Token);
-            // ContentDialog has a 548px maximum width including its padding. Keep the
-            // summary content below that limit so the text can wrap inside the dialog.
-            var summaryWidth = Math.Min(480, Math.Max(240, RootGrid.ActualWidth - 96));
-            var summaryHeight = Math.Clamp(RootGrid.ActualHeight - 440, 140, 280);
-            // Keep the provider response as plain text. In particular, Markdown markers
-            // such as ** must not be treated as delimiters that can hide the rest.
-            var output = new TextBlock
-            {
-                Text = summary,
-                TextWrapping = TextWrapping.Wrap,
-                Width = Math.Max(200, summaryWidth - 32)
-            };
-            var outputScrollViewer = new ScrollViewer
-            {
-                Content = output,
-                Width = summaryWidth,
-                MaxWidth = summaryWidth,
-                Height = summaryHeight,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Stretch,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                HorizontalScrollMode = ScrollMode.Disabled,
-                VerticalScrollMode = ScrollMode.Auto,
-                Padding = new Thickness(4, 0, 4, 0)
-            };
-            var copyButton = new Button
-            {
-                Content = new SymbolIcon(Symbol.Copy),
-                Width = 40,
-                Height = 40,
-                Padding = new Thickness(0),
-                HorizontalAlignment = HorizontalAlignment.Right
-            };
-            ToolTipService.SetToolTip(copyButton, L("Copy.Text"));
-            AutomationProperties.SetName(copyButton, L("Copy.Text"));
-            copyButton.Click += (_, _) =>
-            {
-                var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-                package.SetText(summary);
-                Clipboard.SetContent(package);
-            };
-            var summaryContent = new StackPanel { Width = summaryWidth, Spacing = 8 };
-            summaryContent.Children.Add(outputScrollViewer);
-            summaryContent.Children.Add(copyButton);
-            await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("TranscriptSummaryTitle"), Content = summaryContent, CloseButtonText = L("CloseButton") });
-            StatusText.Text = L("StatusSummaryComplete");
-        }
-        catch (OperationCanceledException) { StatusText.Text = L("StatusSummaryCancelled"); }
-        catch (Exception exception) { await ShowMessageAsync("LLM_ERROR", exception.Message); }
-        finally
-        {
-            if (ReferenceEquals(_aiOperationCancellation, cancellation)) _aiOperationCancellation = null;
-        }
-    }
+        => await _aiWorkflow.SummarizeAsync();
 
     private void OnCancelAiClick(object sender, RoutedEventArgs e)
-    {
-        CancelPendingSeekAiRestart();
-        if (_aiOperationCancellation is null) return;
-        var kind = _aiSummaryTask is { IsCompleted: false } ? AiRetryOperationKind.Summary : AiRetryOperationKind.SubtitlePipeline;
-        SetRetryableAiOperation(new AiRetryRequest(kind, _activeSummaryKind, _document, _playback.CurrentSource));
-        _aiOperationCancellation.Cancel();
-    }
+        => _aiWorkflow.CancelWithRetry();
 
     private async void OnRetryAiClick(object sender, RoutedEventArgs e)
-    {
-        var retry = _retryableAiOperation;
-        if (retry is null) return;
-        SetRetryableAiOperation(null);
-        if (!IsRetryStillValid(retry)) return;
-
-        try
-        {
-            await CancelAiPipelineAsync();
-            if (retry.Kind == AiRetryOperationKind.Summary)
-            {
-                var track = _document.ActiveTrack;
-                if (track is null || track.Cues.Count == 0 || string.IsNullOrWhiteSpace(_settings.Llm.Model)) return;
-                await RunSummaryWithTrackingAsync(track, retry.SummaryKind);
-                return;
-            }
-
-            if (!GenerateSubtitlesMenuItem.IsChecked && !TranslateMenuItem.IsChecked) return;
-            StartCheckedAiPipeline(continueExistingResults: true);
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("warning", "ai", "AI_RETRY_ERROR", exception.Message, exception);
-        }
-    }
-
-    private void SetRetryableAiOperation(AiRetryRequest? retry)
-    {
-        _retryableAiOperation = retry;
-        RetryAiMenuItem.IsEnabled = retry is not null;
-    }
-
-    private bool IsRetryStillValid(AiRetryRequest retry)
-    {
-        if (!ReferenceEquals(_document, retry.Document)) return false;
-        return retry.Kind != AiRetryOperationKind.SubtitlePipeline ||
-            string.Equals(_playback.CurrentSource, retry.Source, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private ILlmProvider CreateLlmProvider()
-    {
-        return new LlmProviderFactory(new WindowsCredentialService()).Create(_settings.Llm.Provider);
-    }
+        => await _aiWorkflow.RetryAsync();
     private async void OnAddWebDavServerRequested(object? sender, EventArgs e)
     {
         try
@@ -2792,7 +1842,7 @@ public sealed partial class MainWindow : Window
             var document = _subtitleFiles.DecodeAndParse(path, bytes, _settings.Subtitle.Encoding);
             document.MarkSaved();
             BindDocument(document);
-            _translationCompletedForCurrentMedia = false;
+            _aiWorkflow.ResetTranslation();
             ScheduleSubtitleOverlaySync();
             if (showSubtitlePanel) ShowRightPanelSection(RightPanelSection.Subtitles);
             StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
@@ -3009,17 +2059,7 @@ public sealed partial class MainWindow : Window
     }
 
     private void ScheduleSubtitleOverlaySync(bool force = false)
-    {
-        if (_subtitleDisplayMode is null || !_playback.IsAvailable || _playback.CurrentSource is null || _document.ActiveTrack is null) return;
-        if (_generatedSubtitleOsdActive)
-        {
-            RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
-            return;
-        }
-        _overlaySyncCancellation?.Cancel(); _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = new CancellationTokenSource();
-        var token = _overlaySyncCancellation.Token;
-        _ = SyncSubtitleOverlayAsync(token, force);
-    }
+        => _subtitleOverlay.ScheduleSync(force);
 
     private void ScheduleGeneratedSubtitleUiRefresh()
     {
@@ -3041,141 +2081,16 @@ public sealed partial class MainWindow : Window
     }
 
     private void EnableGeneratedSubtitleOverlay()
-    {
-        if (!_playback.IsAvailable) return;
-        _generatedSubtitleOsdActive = true;
-        ClearGeneratedSubtitleOsd(force: true);
-        _overlaySyncCancellation?.Cancel();
-        TryPlayback(() =>
-        {
-            _playback.SetSubtitleVisibility(true);
-            // Generated cues are rendered through OSD. Do not add/reload an external
-            // ASS track while the media is playing, because libass track changes can
-            // pause the playback clock while the track is rebuilt.
-            _playback.SelectTrack(MediaTrackType.Subtitle, null);
-            _playback.ConfigureGeneratedSubtitleOsd(true);
-            _generatedSubtitleOsdConfigured = true;
-        });
-        SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
-        _settings.Playback.ShowSubtitles = _playback.AreSubtitlesVisible;
-        RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
-    }
+        => _subtitleOverlay.EnableGeneratedOverlay();
 
     private void ApplySubtitleVisibilityPreference()
-    {
-        var visible = _settings.Playback.ShowSubtitles;
-        TryPlayback(() =>
-        {
-            _playback.SetSubtitleVisibility(visible);
-            // mpv keeps subtitle visibility and subtitle track selection as
-            // separate states. A seek or file reconfiguration can leave the
-            // menu checked while sid is still "no", so restore both states
-            // whenever subtitles are meant to be visible.
-            if (_generatedSubtitleOsdActive)
-            {
-                _playback.SelectTrack(MediaTrackType.Subtitle, null);
-                _playback.ConfigureGeneratedSubtitleOsd(visible);
-                _generatedSubtitleOsdConfigured = visible;
-            }
-            else if (visible)
-            {
-                _playback.RestoreSubtitleSelection(_selectedNativeSubtitleTrackId, _subtitleDisplayMode is not null);
-            }
-        });
-        SubtitleVisibilityMenuItem.IsChecked = _playback.AreSubtitlesVisible;
-        if (_generatedSubtitleOsdActive)
-        {
-            if (visible) RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
-            else ClearGeneratedSubtitleOsd();
-        }
-    }
+        => _subtitleOverlay.ApplyVisibilityPreference();
 
     private void RefreshGeneratedSubtitleOsd(long positionMicroseconds)
-    {
-        if (!_generatedSubtitleOsdActive || !_playback.IsAvailable) return;
-        if (!_settings.Playback.ShowSubtitles || _subtitleDisplayMode is not { } displayMode)
-        {
-            ClearGeneratedSubtitleOsd();
-            return;
-        }
-
-        var cue = _document.FindActiveCue(positionMicroseconds);
-        var text = cue?.GetDisplayText(displayMode).Replace("\r\n", "\n").Replace('\r', '\n').Trim();
-        if (cue is null || string.IsNullOrWhiteSpace(text))
-        {
-            ClearGeneratedSubtitleOsd();
-            return;
-        }
-
-        if (_generatedSubtitleOsdCueId == cue.Id && string.Equals(_generatedSubtitleOsdText, text, StringComparison.Ordinal)) return;
-        var remainingSeconds = Math.Clamp((cue.EndMicroseconds - positionMicroseconds) / 1_000_000d + 0.5, 0.2, 60);
-        _generatedSubtitleOsdCueId = cue.Id;
-        _generatedSubtitleOsdText = text;
-        _generatedSubtitleOsdConfigured = true;
-        TryPlayback(() => _playback.ShowSubtitleOsdText(text, remainingSeconds));
-    }
+        => _subtitleOverlay.RefreshGeneratedOsd(positionMicroseconds);
 
     private void ClearGeneratedSubtitleOsd(bool force = false)
-    {
-        var wasShowing = _generatedSubtitleOsdCueId is not null || _generatedSubtitleOsdText is not null;
-        var shouldClear = force || wasShowing || _generatedSubtitleOsdConfigured;
-        _generatedSubtitleOsdConfigured = false;
-        _generatedSubtitleOsdCueId = null;
-        _generatedSubtitleOsdText = null;
-        if (shouldClear && _playback.IsAvailable) TryPlayback(_playback.ClearSubtitleOsdText);
-    }
-
-    private async Task SyncSubtitleOverlayAsync(CancellationToken cancellationToken, bool force)
-    {
-        try
-        {
-            await Task.Delay(150, cancellationToken);
-            var document = _document;
-            var track = document.ActiveTrack;
-            if (track is null) return;
-            var fontFamily = _settings.Subtitle.FontFamily;
-            var displayMode = _subtitleDisplayMode ?? SubtitleDisplayMode.Original;
-            var cues = track.Cues
-                .Select(cue => new AssCueSnapshot(cue.Id, cue.StartMicroseconds, cue.EndMicroseconds, cue.GetDisplayText(displayMode), cue.Style, cue.Speaker))
-                .OrderBy(cue => cue.StartMicroseconds)
-                .ToArray();
-            var nativeHeader = track.NativeHeader;
-            var content = await Task.Run(() => AssWriter.Write(cues, nativeHeader, fontFamily), cancellationToken).ConfigureAwait(false);
-            if (!ReferenceEquals(_document, document)) return;
-            var contentChanged = !string.Equals(content, _renderedOverlayContent, StringComparison.Ordinal);
-            var fontChanged = !string.Equals(fontFamily, _renderedOverlayFontFamily, StringComparison.OrdinalIgnoreCase);
-            var displayModeChanged = displayMode != _renderedOverlayDisplayMode;
-
-            // Translation completion can schedule one final forced sync even when the
-            // last batch did not change the rendered text. Re-select the existing editor
-            // track in that case instead of rewriting/reloading ASS, which causes a
-            // visible one-frame subtitle blink.
-            if (!contentChanged && !fontChanged && (displayModeChanged || force) && _playback.RestoreEditorSubtitleAfterSeek())
-            {
-                _renderedOverlayDisplayMode = displayMode;
-                return;
-            }
-            if (!force && !contentChanged && !fontChanged && !displayModeChanged) return;
-
-            if (!ReferenceEquals(_document, document)) return;
-            await _overlayWriteLock.WaitAsync(cancellationToken);
-            try
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!ReferenceEquals(_document, document)) return;
-                await File.WriteAllTextAsync(_editorOverlayPath, content, new System.Text.UTF8Encoding(false), cancellationToken);
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!ReferenceEquals(_document, document)) return;
-                _playback.UpdateEditorSubtitle(_editorOverlayPath);
-                _renderedOverlayContent = content;
-                _renderedOverlayFontFamily = fontFamily;
-                _renderedOverlayDisplayMode = displayMode;
-            }
-            finally { _overlayWriteLock.Release(); }
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception exception) { DispatcherQueue.TryEnqueue(() => StatusText.Text = $"Subtitle overlay update failed: {exception.Message}"); }
-    }
+        => _subtitleOverlay.ClearGeneratedOsd(force);
 
     private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
@@ -3278,7 +2193,6 @@ public sealed partial class MainWindow : Window
     private async Task ShutdownAsync()
     {
         _playback.StateChanged -= OnPlaybackStateChanged;
-        _combinedAiProgress.ProgressChanged -= OnCombinedAiProgressChanged;
         ReleasePlaybackPowerRequirement();
         _windowsPowerManagement.Dispose();
         _fullscreen.Dispose();
@@ -3290,31 +2204,21 @@ public sealed partial class MainWindow : Window
         RememberCurrentPosition();
 
         _postOpenCancellation?.Cancel();
-        _overlaySyncCancellation?.Cancel();
-        CancelPendingSeekAiRestart();
-        _aiOperationCancellation?.Cancel();
+        _subtitleOverlay.CancelPendingSync();
         WebDavBrowser.Cancel();
 
         _settingsWindow?.Close();
         if (_cameraWindow is { } cameraWindow) await cameraWindow.CloseAsync();
 
-        if (_aiPipelineTask is { IsCompleted: false } aiPipeline)
-        {
-            try { await aiPipeline.WaitAsync(TimeSpan.FromSeconds(5)); }
-            catch (OperationCanceledException) { }
-            catch (TimeoutException exception) { await AppLog.WriteAsync("warning", "shutdown", "AI_PIPELINE_SHUTDOWN_TIMEOUT", exception.Message, exception); }
-        }
+        try { await _aiWorkflow.DisposeAsync(); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "ASR_DISPOSE_ERROR", exception.Message, exception); }
 
         try { await _historyService.SaveRecentAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "HISTORY_SAVE_ERROR", exception.Message, exception); }
         try { await SettingsService.CreateDefault().SaveAsync(_settings); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "SETTINGS_SAVE_ERROR", exception.Message, exception); }
         _postOpenCancellation?.Dispose(); _postOpenCancellation = null;
-        _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = null;
-        _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null;
         _webDavClient.Dispose();
-        try { await _asrEngine.DisposeAsync(); }
-        catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "ASR_DISPOSE_ERROR", exception.Message, exception); }
         try { await _playback.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "PLAYBACK_DISPOSE_ERROR", exception.Message, exception); }
         _playback.FirstFrameReady -= OnFirstFrameReady;
@@ -3327,7 +2231,7 @@ public sealed partial class MainWindow : Window
             _videoHost.DoubleClicked -= OnNativeVideoDoubleClicked;
             _videoHost.Dispose();
         }
-        try { File.Delete(_editorOverlayPath); } catch (IOException) { }
+        _subtitleOverlay.Dispose();
 
         if (_restartRequested)
         {
@@ -3352,6 +2256,46 @@ public sealed partial class MainWindow : Window
         Closed -= OnWindowClosed;
         Application.Current.Exit();
     }
+
+    AppSettings IAiWorkflowHost.Settings => _settings;
+    SubtitleDocument IAiWorkflowHost.Document => _document;
+    SubtitleDisplayMode? IAiWorkflowHost.CurrentSubtitleDisplayMode => _subtitleDisplayMode;
+    IReadOnlyDictionary<string, string>? IAiWorkflowHost.CurrentHttpHeaders => _currentHttpHeaders;
+    long IAiWorkflowHost.CurrentPlaybackPositionMicroseconds => CurrentPlaybackPositionMicroseconds;
+    double IAiWorkflowHost.ViewWidth => RootGrid.ActualWidth;
+    double IAiWorkflowHost.ViewHeight => RootGrid.ActualHeight;
+    DispatcherQueue IAiWorkflowHost.DispatcherQueue => DispatcherQueue;
+    void IAiWorkflowHost.BindDocument(SubtitleDocument document) => BindDocument(document);
+    void IAiWorkflowHost.SetSubtitleDisplayMode(SubtitleDisplayMode displayMode, bool refreshOverlay) =>
+        SetSubtitleDisplayMode(displayMode, refreshOverlay);
+    void IAiWorkflowHost.ShowSubtitlePanel()
+    {
+        _panels.IsRightVisible = true;
+        ApplyPanelVisibility();
+        ShowRightPanelSection(RightPanelSection.Subtitles);
+    }
+    void IAiWorkflowHost.DrawTimeline() => DrawTimeline();
+    void IAiWorkflowHost.ScheduleSubtitleOverlaySync(bool force) => ScheduleSubtitleOverlaySync(force);
+    void IAiWorkflowHost.ScheduleGeneratedSubtitleUiRefresh() => ScheduleGeneratedSubtitleUiRefresh();
+    void IAiWorkflowHost.EnableGeneratedSubtitleOverlay() => EnableGeneratedSubtitleOverlay();
+    void IAiWorkflowHost.ExecuteSubtitleCommand(IUndoableSubtitleCommand command) => _subtitleEditor.Execute(command);
+    void IAiWorkflowHost.SetStatus(string message) => StatusText.Text = message;
+    void IAiWorkflowHost.SetDownloadProgress(bool visible, bool indeterminate, double value)
+    {
+        AsrDownloadProgressBar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        AsrDownloadProgressBar.IsIndeterminate = indeterminate;
+        if (!indeterminate) AsrDownloadProgressBar.Value = value;
+    }
+    void IAiWorkflowHost.SetRetryAvailable(bool available) => RetryAiMenuItem.IsEnabled = available;
+    Task<ContentDialogResult> IAiWorkflowHost.ShowDialogAsync(string title, object content, string primaryText) =>
+        ShowDialogAsync(CreateDialog(title, content, primaryText));
+    Task<ContentDialogResult> IAiWorkflowHost.ShowDialogAsync(ContentDialog dialog)
+    {
+        dialog.XamlRoot ??= RootGrid.XamlRoot;
+        dialog.RequestedTheme = RootGrid.ActualTheme;
+        return ShowDialogAsync(dialog);
+    }
+    Task IAiWorkflowHost.ShowMessageAsync(string title, string message) => ShowMessageAsync(title, message);
 
     private sealed record PlaylistEntry(string Path, string DisplayName, IReadOnlyDictionary<string, string>? HttpHeaders = null, IMediaSource? MediaSource = null)
     {
@@ -3380,10 +2324,8 @@ public sealed partial class MainWindow : Window
 
     private sealed record PendingPostOpenWork(string Source, string? LocalPath, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
 
-    private static readonly TimeSpan AutomaticSubtitleStartDelay = TimeSpan.FromSeconds(2);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
 
-    private enum TimelineDragMode { None, Move, ResizeStart, ResizeEnd }
     private enum RepeatMode { Off, One, AutoAdvance }
 }

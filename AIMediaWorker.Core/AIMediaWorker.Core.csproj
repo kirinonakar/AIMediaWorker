@@ -6,14 +6,18 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="..\AIMediaWorker\Subtitle\**\*.cs" Link="Subtitle\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\AIMediaWorker\Subtitle\**\*.cs"
+             Exclude="..\AIMediaWorker\Subtitle\SubtitleOverlayController.cs;..\AIMediaWorker\Subtitle\Editing\SubtitleEditorController.cs"
+             Link="Subtitle\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Timeline\**\*.cs" Link="Timeline\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Settings\**\*.cs" Link="Settings\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\History\**\*.cs" Link="History\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Media\**\*.cs" Link="Media\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Network\**\*.cs" Link="Network\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Playback\MediaTrack.cs" Link="Playback\MediaTrack.cs" />
-    <Compile Include="..\AIMediaWorker\Asr\**\*.cs" Link="Asr\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\AIMediaWorker\Asr\**\*.cs"
+             Exclude="..\AIMediaWorker\Asr\AiWorkflowController.cs"
+             Link="Asr\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Waveform\**\*.cs" Link="Waveform\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Llm\**\*.cs" Link="Llm\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
