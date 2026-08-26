@@ -82,7 +82,7 @@ public sealed partial class WindowsCaptionWindow : Window
         {
             var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
             if (File.Exists(iconPath)) _appWindow.SetIcon(iconPath);
-            _appWindow.Resize(new SizeInt32(1440, 384));
+            _appWindow.Resize(new SizeInt32(1450, 384));
             if (_appWindow.Presenter is OverlappedPresenter presenter)
             {
                 presenter.IsAlwaysOnTop = true;
