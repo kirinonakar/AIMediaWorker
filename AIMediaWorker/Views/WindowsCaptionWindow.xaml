@@ -25,14 +25,14 @@
             </StackPanel>
         </Border>
         <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="12,0,12,10">
-            <Button x:Name="CaptionButton" MinWidth="110" Click="OnCaptionClick" />
-            <ToggleButton x:Name="TranslateButton" MinWidth="110" IsEnabled="False" Click="OnTranslateClick" />
-            <ToggleButton x:Name="TranslationOnlyButton" MinWidth="100" IsEnabled="False" Click="OnTranslationOnlyClick" />
-            <ToggleButton x:Name="ShowPreviousButton" MinWidth="110" Click="OnShowPreviousClick" />
+            <Button x:Name="CaptionButton" MinWidth="96" Click="OnCaptionClick" />
+            <ToggleButton x:Name="TranslateButton" MinWidth="88" IsEnabled="False" Click="OnTranslateClick" />
+            <ToggleButton x:Name="TranslationOnlyButton" MinWidth="88" IsEnabled="False" Click="OnTranslationOnlyClick" />
+            <ToggleButton x:Name="ShowPreviousButton" MinWidth="96" Click="OnShowPreviousClick" />
             <ComboBox x:Name="PreviousSentenceCountCombo" Width="92" SelectionChanged="OnPreviousSentenceCountChanged" />
             <TextBlock x:Name="FontSizeLabel" VerticalAlignment="Center" />
             <NumberBox x:Name="CaptionFontSizeBox" Width="82" Minimum="16" Maximum="72" SmallChange="2" SpinButtonPlacementMode="Hidden" ValueChanged="OnCaptionFontSizeChanged" />
-            <Button x:Name="CloseCaptionButton" MinWidth="90" Click="OnCloseClick" />
+            <Button x:Name="CloseCaptionButton" MinWidth="72" Click="OnCloseClick" />
         </StackPanel>
         <InfoBar x:Name="StatusBar" Grid.Row="3" IsOpen="False" Severity="Informational" Margin="12,0,12,10" />
     </Grid>

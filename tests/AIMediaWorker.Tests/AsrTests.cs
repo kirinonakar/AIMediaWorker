@@ -119,6 +119,54 @@ public sealed class AsrTests
         Assert.Equal(1, CountOccurrences(display, "좋아요."));
     }
 
+    [Fact]
+    public void LiveCaptionStabilizerKeepsJapaneseCharactersTogether()
+    {
+        var stabilizer = new LiveCaptionStabilizer(language: "ja");
+        var source = new AsrSegment
+        {
+            StartMicroseconds = 0,
+            EndMicroseconds = 4_000_000,
+            Text = "おはよう。今日は晴れです。",
+            Words =
+            [
+                Word("おはよう", 700_000), Word("。", 800_000),
+                Word("今日", 1_500_000), Word("は", 1_700_000),
+                Word("晴れ", 2_500_000), Word("です", 3_000_000), Word("。", 3_100_000)
+            ]
+        };
+
+        var display = stabilizer.Update(new AsrEvent { Event = "partial", Segments = [source] });
+
+        Assert.Equal(source.Text, display);
+        Assert.DoesNotContain("お は", display, StringComparison.Ordinal);
+        Assert.DoesNotContain("今 日", display, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LiveCaptionStabilizerPreservesKoreanWordSpacingWhenAlignerReturnsSubwords()
+    {
+        var stabilizer = new LiveCaptionStabilizer(language: "ko");
+        var source = new AsrSegment
+        {
+            StartMicroseconds = 0,
+            EndMicroseconds = 4_000_000,
+            Text = "오늘 날씨가 정말 좋네요.",
+            Words =
+            [
+                Word("오", 300_000), Word("늘", 600_000),
+                Word("날", 1_000_000), Word("씨", 1_200_000), Word("가", 1_400_000),
+                Word("정말", 2_200_000), Word("좋네요", 3_000_000), Word(".", 3_100_000)
+            ]
+        };
+
+        var display = stabilizer.Update(new AsrEvent { Event = "partial", Segments = [source] });
+
+        Assert.Equal(source.Text, display);
+        Assert.DoesNotContain("오 늘", display, StringComparison.Ordinal);
+        Assert.Contains("오늘 날씨가 정말 좋네요.", display, StringComparison.Ordinal);
+    }
+
     private static AsrWord Word(string text, long endMicroseconds) => new()
     {
         StartMicroseconds = Math.Max(0, endMicroseconds - 400_000),

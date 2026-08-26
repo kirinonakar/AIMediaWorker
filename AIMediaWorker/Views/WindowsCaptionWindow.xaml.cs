@@ -46,7 +46,9 @@ public sealed partial class WindowsCaptionWindow : Window
     private string _latestCaptionText = string.Empty;
     private string _latestTranslationText = string.Empty;
     private long _captionSentenceId;
+    private long _captionRevision;
     private long _latestTranslationSentenceId = -1;
+    private long _latestTranslationRevision = -1;
     private bool _translating;
     private bool _translationOnly;
     private bool _showPrevious = true;
@@ -54,7 +56,7 @@ public sealed partial class WindowsCaptionWindow : Window
     private bool _initializingControls;
     private bool _allowClose;
 
-    private sealed record TranslationRequest(string Text, long SentenceId);
+    private sealed record TranslationRequest(string Text, long SentenceId, long Revision);
 
     public WindowsCaptionWindow(Window owner)
     {
@@ -96,6 +98,7 @@ public sealed partial class WindowsCaptionWindow : Window
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         _settings = await SettingsService.CreateDefault().LoadAsync();
+        _captionStabilizer.Language = _settings.Asr.Language;
         UiFontService.Apply(_settings.General.UiFontFamily, Root);
         ApplyTheme(_settings.General.Theme);
         _initializingControls = true;
@@ -242,7 +245,7 @@ public sealed partial class WindowsCaptionWindow : Window
             _pendingTranslationUpdates = 0;
             _pendingFlushTimer.Stop();
             if (!string.IsNullOrWhiteSpace(_lastCaptionForTranslation))
-                _translationQueue.Writer.TryWrite(new TranslationRequest(_lastCaptionForTranslation, _captionSentenceId));
+                _translationQueue.Writer.TryWrite(new TranslationRequest(_lastCaptionForTranslation, _captionSentenceId, _captionRevision));
         }
         else
         {
@@ -257,7 +260,7 @@ public sealed partial class WindowsCaptionWindow : Window
         if (!string.IsNullOrWhiteSpace(_latestCaptionText))
         {
             _lastCaptionForTranslation = _latestCaptionText;
-            _translationQueue.Writer.TryWrite(new TranslationRequest(_lastCaptionForTranslation, _captionSentenceId));
+            _translationQueue.Writer.TryWrite(new TranslationRequest(_lastCaptionForTranslation, _captionSentenceId, _captionRevision));
         }
     }
 
@@ -289,7 +292,7 @@ public sealed partial class WindowsCaptionWindow : Window
             var cancellation = _translationCancellation ??= new CancellationTokenSource();
             _translationTask ??= Task.Run(() => TranslationLoopAsync(cancellation.Token));
             if (!string.IsNullOrWhiteSpace(_latestCaptionText))
-                _translationQueue.Writer.TryWrite(new TranslationRequest(_latestCaptionText, _captionSentenceId));
+                _translationQueue.Writer.TryWrite(new TranslationRequest(_latestCaptionText, _captionSentenceId, _captionRevision));
         }
         else
         {
@@ -331,9 +334,13 @@ public sealed partial class WindowsCaptionWindow : Window
             if (result.TryGetValue(cue.Id, out var translated) && !string.IsNullOrWhiteSpace(translated))
                 DispatcherQueue.TryEnqueue(() =>
                 {
-                    if (!_translating || request.SentenceId != _captionSentenceId ||
-                        !string.Equals(request.Text, _latestCaptionText, StringComparison.Ordinal)) return;
-                    SetLatestTranslation(translated);
+                    // A live ASR sentence is revised while the LLM is working.
+                    // Keep a usable translation for that sentence instead of
+                    // dropping it just because a newer partial caption arrived.
+                    // Revision ordering prevents an older response from
+                    // overwriting a newer response that already rendered.
+                    if (!_translating || request.SentenceId != _captionSentenceId) return;
+                    SetLatestTranslation(translated, request.Revision);
                     UpdateCaptionFontSize();
                 });
         }
@@ -408,6 +415,7 @@ public sealed partial class WindowsCaptionWindow : Window
         _captionPreviousItems.Clear();
         _captionPreviousItems.AddRange(previous);
         _latestCaptionText = latest;
+        if (latestChanged) _captionRevision++;
         RebuildHistoryText();
         return true;
     }
@@ -432,10 +440,10 @@ public sealed partial class WindowsCaptionWindow : Window
 
     private static bool IsSentenceTerminator(char character) => ".!?。！？…".Contains(character);
 
-    private void SetLatestTranslation(string translated)
+    private void SetLatestTranslation(string translated, long revision)
     {
         var current = NormalizeHistoryText(translated);
-        if (string.IsNullOrWhiteSpace(current)) return;
+        if (string.IsNullOrWhiteSpace(current) || revision < _latestTranslationRevision) return;
 
         if (_latestTranslationSentenceId != _captionSentenceId &&
             !string.IsNullOrWhiteSpace(_latestTranslationText))
@@ -444,6 +452,7 @@ public sealed partial class WindowsCaptionWindow : Window
         }
 
         _latestTranslationSentenceId = _captionSentenceId;
+        _latestTranslationRevision = revision;
         _latestTranslationText = current;
         RebuildHistoryText();
     }
@@ -454,6 +463,7 @@ public sealed partial class WindowsCaptionWindow : Window
         AddTranslationToPrevious(_latestTranslationText);
         _latestTranslationText = string.Empty;
         _latestTranslationSentenceId = -1;
+        _latestTranslationRevision = -1;
     }
 
     private void AddTranslationToPrevious(string text)
@@ -496,6 +506,7 @@ public sealed partial class WindowsCaptionWindow : Window
         _lastCaptionForTranslation = string.Empty;
         _captionStabilizer.Reset();
         _captionSentenceId++;
+        _captionRevision++;
         ClearTranslationHistory();
         TranslationPreviousText.Visibility = Visibility.Collapsed;
         TranslationLatestText.Visibility = Visibility.Collapsed;
@@ -508,6 +519,7 @@ public sealed partial class WindowsCaptionWindow : Window
         _translationPreviousItems.Clear();
         _latestTranslationText = string.Empty;
         _latestTranslationSentenceId = -1;
+        _latestTranslationRevision = -1;
         TranslationPreviousText.Visibility = Visibility.Collapsed;
         TranslationLatestText.Visibility = Visibility.Collapsed;
     }
