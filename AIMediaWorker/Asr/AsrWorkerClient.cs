@@ -298,7 +298,7 @@ public sealed class AsrWorkerClient : IAsrEngine
             stream.Gate.Release();
         }
 
-        if (snapshot is not null) await EmitLiveResultAsync(stream, snapshot, "partial", cancellationToken).ConfigureAwait(false);
+        if (snapshot is not null) await EmitLiveResultAsync(stream, snapshot, stream.WindowStartSample, "partial", cancellationToken).ConfigureAwait(false);
     }
 
     public async Task StopStreamingAsync(string streamId, CancellationToken cancellationToken = default)
@@ -308,7 +308,7 @@ public sealed class AsrWorkerClient : IAsrEngine
         try
         {
             if (stream.SampleCount > 0)
-                await EmitLiveResultAsync(stream, stream.Samples.ToArray(), "final", cancellationToken).ConfigureAwait(false);
+                await EmitLiveResultAsync(stream, stream.Samples.ToArray(), stream.WindowStartSample, "final", cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -391,9 +391,9 @@ public sealed class AsrWorkerClient : IAsrEngine
         }
     }
 
-    private async Task EmitLiveResultAsync(LiveStream stream, float[] samples, string eventName, CancellationToken cancellationToken)
+    private async Task EmitLiveResultAsync(LiveStream stream, float[] samples, long windowStartSample, string eventName, CancellationToken cancellationToken)
     {
-        var segments = await TranscribeChunkAsync(samples, 0, 0, stream.Language, cancellationToken).ConfigureAwait(false);
+        var segments = await TranscribeChunkAsync(samples, 0, SamplesToMicroseconds(windowStartSample), stream.Language, cancellationToken).ConfigureAwait(false);
         var text = string.Join(" ", segments.Select(segment => segment.Text).Where(text => !string.IsNullOrWhiteSpace(text))).Trim();
         if (text.Length == 0) return;
 
@@ -402,7 +402,8 @@ public sealed class AsrWorkerClient : IAsrEngine
             Id = stream.Id,
             Event = eventName,
             Text = text,
-            Segment = segments.FirstOrDefault()
+            Segment = segments.FirstOrDefault(),
+            Segments = segments
         };
         LiveResultReceived?.Invoke(this, result);
     }
@@ -689,6 +690,7 @@ public sealed class AsrWorkerClient : IAsrEngine
         public List<float> Samples { get; } = [];
         public int SampleCount => Samples.Count;
         public int LastDecodedSampleCount { get; set; }
+        public long WindowStartSample { get; private set; }
 
         public void Append(ReadOnlySpan<byte> pcm16)
         {
@@ -705,6 +707,7 @@ public sealed class AsrWorkerClient : IAsrEngine
             {
                 var remove = Samples.Count - SampleRate * 8;
                 Samples.RemoveRange(0, remove);
+                WindowStartSample += remove;
                 LastDecodedSampleCount = Math.Max(0, LastDecodedSampleCount - remove);
             }
         }

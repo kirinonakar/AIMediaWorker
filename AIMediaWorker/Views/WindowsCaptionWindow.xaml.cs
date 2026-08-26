@@ -28,9 +28,10 @@ public sealed partial class WindowsCaptionWindow : Window
     private readonly AsrWorkerClient _asr = new();
     private readonly AudioCaptureService _audio = new();
     private readonly LiveAsrController _liveAsr;
+    private readonly LiveCaptionStabilizer _captionStabilizer = new();
     private readonly Channel<TranslationRequest> _translationQueue = Channel.CreateUnbounded<TranslationRequest>();
+    private readonly SemaphoreSlim _settingsSaveGate = new(1, 1);
     private readonly DispatcherQueueTimer _pendingFlushTimer;
-    private const int MaximumDisplayedCaptionHistoryItems = 2;
     private const int MaximumDisplayedTranslationHistoryItems = 2;
     private readonly List<string> _captionPreviousItems = [];
     private readonly List<string> _translationPreviousItems = [];
@@ -41,14 +42,16 @@ public sealed partial class WindowsCaptionWindow : Window
     private Task? _translationTask;
     private CancellationTokenSource? _translationCancellation;
     private LlmService? _llm;
-    private string _lastCaption = string.Empty;
     private string _lastCaptionForTranslation = string.Empty;
-    private string _lastAsrText = string.Empty;
     private string _latestCaptionText = string.Empty;
     private string _latestTranslationText = string.Empty;
     private long _captionSentenceId;
     private long _latestTranslationSentenceId = -1;
     private bool _translating;
+    private bool _translationOnly;
+    private bool _showPrevious = true;
+    private int _previousSentenceCount = 2;
+    private bool _initializingControls;
     private bool _allowClose;
 
     private sealed record TranslationRequest(string Text, long SentenceId);
@@ -65,6 +68,9 @@ public sealed partial class WindowsCaptionWindow : Window
         _liveAsr.Failed += OnLiveFailed;
         CaptionButton.Content = L("WindowsCaptionStart.Content");
         TranslateButton.Content = L("WindowsCaptionTranslate.Content");
+        TranslationOnlyButton.Content = L("WindowsCaptionTranslationOnly.Content");
+        ShowPreviousButton.Content = L("WindowsCaptionShowPrevious.Content");
+        FontSizeLabel.Text = L("WindowsCaptionFontSize.Text");
         CloseCaptionButton.Content = L("CloseButton");
         _pendingFlushTimer = DispatcherQueue.CreateTimer();
         _pendingFlushTimer.Interval = TimeSpan.FromSeconds(4);
@@ -92,6 +98,17 @@ public sealed partial class WindowsCaptionWindow : Window
         _settings = await SettingsService.CreateDefault().LoadAsync();
         UiFontService.Apply(_settings.General.UiFontFamily, Root);
         ApplyTheme(_settings.General.Theme);
+        _initializingControls = true;
+        _translationOnly = _settings.Capture.WindowsCaptionTranslationOnly;
+        _showPrevious = _settings.Capture.WindowsCaptionShowPrevious;
+        _previousSentenceCount = Math.Clamp(_settings.Capture.WindowsCaptionPreviousSentenceCount, 1, 2);
+        TranslationOnlyButton.IsChecked = _translationOnly;
+        ShowPreviousButton.IsChecked = _showPrevious;
+        PreviousSentenceCountCombo.ItemsSource = new[] { 1, 2 };
+        PreviousSentenceCountCombo.SelectedItem = _previousSentenceCount;
+        PreviousSentenceCountCombo.IsEnabled = _showPrevious;
+        CaptionFontSizeBox.Value = Math.Clamp(_settings.Capture.CaptionFontSize, 16, 72);
+        _initializingControls = false;
         ApplyCaptionAppearance();
         UpdateTitleBarDragRegion();
     }
@@ -173,10 +190,12 @@ public sealed partial class WindowsCaptionWindow : Window
             var loadProgress = new Progress<AsrEvent>(update => { if (acceptingLoadProgress) UpdateAsrModelProgress(update); });
             try { await _asr.LoadModelAsync(_settings.Asr.ModelPath ?? AsrSettings.DefaultModelId, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress); }
             finally { acceptingLoadProgress = false; }
+            ClearCaptionHistory();
             await _liveAsr.StartLoopbackAsync(null, _settings.Asr.Language);
             CaptionButton.Content = L("WindowsCaptionStop.Content");
             CaptionButton.IsEnabled = true;
             TranslateButton.IsEnabled = true;
+            TranslationOnlyButton.IsEnabled = true;
             SetStatus(L("WindowsCaptionListening.Title"), L("WindowsCaptionListening.Message"), InfoBarSeverity.Success);
         }
         catch (Exception exception)
@@ -210,9 +229,8 @@ public sealed partial class WindowsCaptionWindow : Window
 
     private void OnCaptionReceived(object? sender, AsrEvent result) => DispatcherQueue.TryEnqueue(() =>
     {
-        var text = NormalizeHistoryText(result.Text ?? result.Segment?.Text ?? string.Empty);
+        var text = NormalizeHistoryText(_captionStabilizer.Update(result));
         if (string.IsNullOrWhiteSpace(text) || !UpdateCaptionSentences(text)) return;
-        _lastCaption = text;
         _lastCaptionForTranslation = _latestCaptionText;
         UpdateCaptionFontSize();
         if (!_translating) return;
@@ -264,6 +282,7 @@ public sealed partial class WindowsCaptionWindow : Window
                 return;
             }
             _translating = true;
+            TranslationOnlyButton.IsEnabled = true;
             TranslateButton.Content = L("WindowsCaptionTranslateOn.Content");
             RebuildHistoryText();
             UpdateCaptionFontSize();
@@ -278,6 +297,7 @@ public sealed partial class WindowsCaptionWindow : Window
             _pendingTranslationUpdates = 0;
             _pendingFlushTimer.Stop();
             TranslateButton.Content = L("WindowsCaptionTranslate.Content");
+            TranslationOnlyButton.IsEnabled = false;
             ClearTranslationHistory();
             UpdateCaptionFontSize();
         }
@@ -329,15 +349,17 @@ public sealed partial class WindowsCaptionWindow : Window
     {
         var fontFamily = new FontFamily(string.IsNullOrWhiteSpace(_settings.Subtitle.FontFamily) ? SubtitleSettings.DefaultFontFamily : _settings.Subtitle.FontFamily);
         var captionColor = new SolidColorBrush(ParseColor(_settings.Capture.CaptionTextColor, Color.FromArgb(255, 255, 255, 255)));
+        var captionPreviousColor = new SolidColorBrush(WithOpacity(captionColor.Color, 0.48));
         var translationColor = new SolidColorBrush(Color.FromArgb(255, 255, 224, 176));
+        var translationPreviousColor = new SolidColorBrush(WithOpacity(translationColor.Color, 0.48));
         CaptionPreviousText.FontFamily = fontFamily;
-        CaptionPreviousText.Foreground = captionColor;
+        CaptionPreviousText.Foreground = captionPreviousColor;
         CaptionPreviousText.MaxLines = 0;
         CaptionLatestText.FontFamily = fontFamily;
         CaptionLatestText.Foreground = captionColor;
         CaptionLatestText.MaxLines = 0;
         TranslationPreviousText.FontFamily = fontFamily;
-        TranslationPreviousText.Foreground = translationColor;
+        TranslationPreviousText.Foreground = translationPreviousColor;
         TranslationPreviousText.MaxLines = 0;
         TranslationLatestText.FontFamily = fontFamily;
         TranslationLatestText.Foreground = translationColor;
@@ -345,64 +367,18 @@ public sealed partial class WindowsCaptionWindow : Window
         CaptionBackground.Background = new SolidColorBrush(ParseColor(_settings.Capture.CaptionBackgroundColor, Color.FromArgb(160, 0, 0, 0)));
     }
 
-    // Scales both caption blocks to the largest size that fits their actual
-    // wrapped height. This is important when the translation block is visible.
     private void OnCaptionAreaSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        UpdateCaptionFontSize(e.NewSize.Width, e.NewSize.Height);
+        UpdateCaptionFontSize();
     }
 
-    private void UpdateCaptionFontSize(double? measuredWidth = null, double? measuredHeight = null)
+    private void UpdateCaptionFontSize()
     {
-        var areaWidth = measuredWidth ?? CaptionBackground.ActualWidth;
-        var areaHeight = measuredHeight ?? CaptionBackground.ActualHeight;
-        var contentWidth = areaWidth - CaptionBackground.Padding.Left - CaptionBackground.Padding.Right;
-        var contentHeight = areaHeight - CaptionBackground.Padding.Top - CaptionBackground.Padding.Bottom;
-        if (contentWidth <= 0 || contentHeight <= 0) return;
-
-        var maximum = Math.Clamp(Math.Min(contentHeight * 0.22, contentWidth * 0.05), 10, 200);
-        const double minimum = 8;
-
-        // Keep the newest text visible. If the history cannot fit even at the
-        // minimum size, remove only the oldest entries before calculating the
-        // final size; never remove the item at index 0.
-        while (!CaptionFits(minimum, contentWidth, contentHeight) && RemoveOldestHistoryItem())
-        {
-            RebuildHistoryText();
-        }
-
-        var lower = minimum;
-        var upper = maximum;
-        for (var attempt = 0; attempt < 10; attempt++)
-        {
-            var candidate = (lower + upper) / 2;
-            if (CaptionFits(candidate, contentWidth, contentHeight)) lower = candidate;
-            else upper = candidate;
-        }
-
-        CaptionPreviousText.FontSize = lower;
-        CaptionLatestText.FontSize = lower;
-        TranslationPreviousText.FontSize = lower * 0.85;
-        TranslationLatestText.FontSize = lower * 0.85;
-    }
-
-    private bool CaptionFits(double fontSize, double availableWidth, double availableHeight)
-    {
-        var size = new Windows.Foundation.Size(availableWidth, double.PositiveInfinity);
+        var fontSize = Math.Clamp(_settings.Capture.CaptionFontSize, 16, 72);
         CaptionPreviousText.FontSize = fontSize;
         CaptionLatestText.FontSize = fontSize;
-        TranslationPreviousText.FontSize = fontSize * 0.85;
-        TranslationLatestText.FontSize = fontSize * 0.85;
-        var requiredHeight = MeasureVisibleTextBlock(CaptionPreviousText, size) + MeasureVisibleTextBlock(CaptionLatestText, size);
-        requiredHeight += MeasureVisibleTextBlock(TranslationPreviousText, size) + MeasureVisibleTextBlock(TranslationLatestText, size);
-        return requiredHeight <= availableHeight;
-    }
-
-    private static double MeasureVisibleTextBlock(TextBlock item, Windows.Foundation.Size availableSize)
-    {
-        if (item.Visibility != Visibility.Visible || string.IsNullOrWhiteSpace(item.Text)) return 0;
-        item.Measure(availableSize);
-        return item.DesiredSize.Height + item.Margin.Top;
+        TranslationPreviousText.FontSize = fontSize;
+        TranslationLatestText.FontSize = fontSize;
     }
 
     private bool UpdateCaptionSentences(string text)
@@ -412,7 +388,7 @@ public sealed partial class WindowsCaptionWindow : Window
 
         var latest = sentences[^1];
         var previous = sentences.Count > 1
-            ? sentences.Take(sentences.Count - 1).TakeLast(MaximumDisplayedCaptionHistoryItems).ToArray()
+            ? sentences.Take(sentences.Count - 1).TakeLast(2).ToArray()
             : [];
         var latestChanged = !string.Equals(latest, _latestCaptionText, StringComparison.Ordinal);
         var previousChanged = !_captionPreviousItems.SequenceEqual(previous, StringComparer.Ordinal);
@@ -492,14 +468,17 @@ public sealed partial class WindowsCaptionWindow : Window
 
     private void RebuildHistoryText()
     {
-        CaptionPreviousText.Text = string.Join(" ", _captionPreviousItems);
+        var visiblePreviousCaptions = _showPrevious ? _captionPreviousItems.TakeLast(_previousSentenceCount) : [];
+        var visiblePreviousTranslations = _showPrevious ? _translationPreviousItems.TakeLast(_previousSentenceCount) : [];
+        var hideOriginal = _translating && _translationOnly;
+        CaptionPreviousText.Text = string.Join(" ", visiblePreviousCaptions);
         CaptionLatestText.Text = _latestCaptionText;
-        CaptionPreviousText.Visibility = string.IsNullOrWhiteSpace(CaptionPreviousText.Text) ? Visibility.Collapsed : Visibility.Visible;
-        CaptionLatestText.Visibility = string.IsNullOrWhiteSpace(CaptionLatestText.Text) ? Visibility.Collapsed : Visibility.Visible;
+        CaptionPreviousText.Visibility = hideOriginal || string.IsNullOrWhiteSpace(CaptionPreviousText.Text) ? Visibility.Collapsed : Visibility.Visible;
+        CaptionLatestText.Visibility = hideOriginal || string.IsNullOrWhiteSpace(CaptionLatestText.Text) ? Visibility.Collapsed : Visibility.Visible;
 
-        TranslationPreviousText.Text = string.Join(" ", _translationPreviousItems);
+        TranslationPreviousText.Text = string.Join(" ", visiblePreviousTranslations);
         TranslationLatestText.Text = _latestTranslationText;
-        TranslationPreviousText.Visibility = string.IsNullOrWhiteSpace(TranslationPreviousText.Text) ? Visibility.Collapsed : Visibility.Visible;
+        TranslationPreviousText.Visibility = _translating && !string.IsNullOrWhiteSpace(TranslationPreviousText.Text) ? Visibility.Visible : Visibility.Collapsed;
         TranslationLatestText.Visibility = _translating && !string.IsNullOrWhiteSpace(TranslationLatestText.Text)
             ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -514,12 +493,10 @@ public sealed partial class WindowsCaptionWindow : Window
         CaptionLatestText.Text = string.Empty;
         _captionPreviousItems.Clear();
         _latestCaptionText = string.Empty;
-        _lastCaption = string.Empty;
         _lastCaptionForTranslation = string.Empty;
-        _lastAsrText = string.Empty;
-        _captionSentenceId = 0;
+        _captionStabilizer.Reset();
+        _captionSentenceId++;
         ClearTranslationHistory();
-        TranslateButton.IsChecked = false;
         TranslationPreviousText.Visibility = Visibility.Collapsed;
         TranslationLatestText.Visibility = Visibility.Collapsed;
     }
@@ -535,19 +512,46 @@ public sealed partial class WindowsCaptionWindow : Window
         TranslationLatestText.Visibility = Visibility.Collapsed;
     }
 
-    private bool RemoveOldestHistoryItem()
+    private async void OnCaptionFontSizeChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
     {
-        if (_captionPreviousItems.Count > 0)
-        {
-            _captionPreviousItems.RemoveAt(0);
-            return true;
-        }
-        if (_translationPreviousItems.Count > 0)
-        {
-            _translationPreviousItems.RemoveAt(0);
-            return true;
-        }
-        return false;
+        if (_initializingControls || double.IsNaN(args.NewValue)) return;
+        _settings.Capture.CaptionFontSize = Math.Clamp(args.NewValue, 16, 72);
+        UpdateCaptionFontSize();
+        await SaveCaptionPreferencesAsync();
+    }
+
+    private async void OnTranslationOnlyClick(object sender, RoutedEventArgs e)
+    {
+        _translationOnly = TranslationOnlyButton.IsChecked == true;
+        _settings.Capture.WindowsCaptionTranslationOnly = _translationOnly;
+        RebuildHistoryText();
+        await SaveCaptionPreferencesAsync();
+    }
+
+    private async void OnShowPreviousClick(object sender, RoutedEventArgs e)
+    {
+        _showPrevious = ShowPreviousButton.IsChecked == true;
+        _settings.Capture.WindowsCaptionShowPrevious = _showPrevious;
+        PreviousSentenceCountCombo.IsEnabled = _showPrevious;
+        RebuildHistoryText();
+        await SaveCaptionPreferencesAsync();
+    }
+
+    private async void OnPreviousSentenceCountChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializingControls || PreviousSentenceCountCombo.SelectedItem is not int count) return;
+        _previousSentenceCount = Math.Clamp(count, 1, 2);
+        _settings.Capture.WindowsCaptionPreviousSentenceCount = _previousSentenceCount;
+        RebuildHistoryText();
+        await SaveCaptionPreferencesAsync();
+    }
+
+    private async Task SaveCaptionPreferencesAsync()
+    {
+        await _settingsSaveGate.WaitAsync();
+        try { await SettingsService.CreateDefault().SaveAsync(_settings); }
+        catch (Exception exception) { await AppLog.WriteAsync("warning", "captions", "CAPTION_SETTINGS_SAVE_ERROR", exception.Message, exception); }
+        finally { _settingsSaveGate.Release(); }
     }
 
     private static Color WithOpacity(Color color, double opacity) =>

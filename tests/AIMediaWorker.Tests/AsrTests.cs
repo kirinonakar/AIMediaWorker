@@ -82,6 +82,69 @@ public sealed class AsrTests
     }
 
     [Fact]
+    public void LiveCaptionStabilizerCommitsOldWordsAndReplacesRecentTail()
+    {
+        var stabilizer = new LiveCaptionStabilizer(2_000_000);
+        var first = LiveEvent("partial",
+            Word("오늘", 500_000), Word("날씨가", 1_500_000), Word("정말", 2_500_000), Word("좋네요.", 3_500_000));
+        var second = LiveEvent("partial",
+            Word("날씨가", 1_500_000), Word("정말", 2_500_000), Word("좋네요.", 3_500_000), Word("그래서", 4_500_000), Word("나갑니다.", 5_500_000));
+
+        Assert.Equal("오늘 날씨가 정말 좋네요.", stabilizer.Update(first));
+        Assert.Equal("오늘 날씨가 정말 좋네요. 그래서 나갑니다.", stabilizer.Update(second));
+        Assert.Equal("오늘 날씨가 정말 좋네요.", stabilizer.ConfirmedText);
+        Assert.Equal("그래서 나갑니다.", stabilizer.ProvisionalText);
+    }
+
+    [Fact]
+    public void LiveCaptionStabilizerUsesFuzzyOverlapWhenTimestampsAreUnavailable()
+    {
+        var stabilizer = new LiveCaptionStabilizer();
+        stabilizer.Update(new AsrEvent { Event = "partial", Text = "그 사람이 오늘 서울에 왔습니다" });
+
+        var display = stabilizer.Update(new AsrEvent { Event = "partial", Text = "사람은 오늘 서울에 왔습니다 그리고 출발합니다" });
+
+        Assert.Equal(1, CountOccurrences(display, "오늘 서울에 왔습니다"));
+        Assert.EndsWith("그리고 출발합니다", display);
+    }
+
+    [Fact]
+    public void LiveCaptionStabilizerIgnoresSmallAlignerBoundaryJitter()
+    {
+        var stabilizer = new LiveCaptionStabilizer(1_000_000);
+        stabilizer.Update(LiveEvent("partial", Word("오늘", 500_000), Word("좋아요.", 1_500_000), Word("계속", 2_500_000)));
+
+        var display = stabilizer.Update(LiveEvent("partial", Word("좋아요.", 1_650_000), Word("계속", 2_650_000), Word("갑시다.", 3_650_000)));
+
+        Assert.Equal(1, CountOccurrences(display, "좋아요."));
+    }
+
+    private static AsrWord Word(string text, long endMicroseconds) => new()
+    {
+        StartMicroseconds = Math.Max(0, endMicroseconds - 400_000),
+        EndMicroseconds = endMicroseconds,
+        Text = text
+    };
+
+    private static AsrEvent LiveEvent(string eventName, params AsrWord[] words) => new()
+    {
+        Event = eventName,
+        Segments =
+        [
+            new AsrSegment
+            {
+                StartMicroseconds = words[0].StartMicroseconds,
+                EndMicroseconds = words[^1].EndMicroseconds,
+                Text = string.Join(' ', words.Select(word => word.Text)),
+                Words = words
+            }
+        ]
+    };
+
+    private static int CountOccurrences(string text, string value) =>
+        (text.Length - text.Replace(value, string.Empty, StringComparison.Ordinal).Length) / value.Length;
+
+    [Fact]
     public async Task CrispAsrRuntimeLifecycleRoundTripsWhenRuntimeIsAvailable()
     {
         var root = FindRepositoryRoot();

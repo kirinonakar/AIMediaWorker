@@ -50,6 +50,7 @@ public sealed record AsrEvent
     [JsonPropertyName("downloaded_bytes")] public long? DownloadedBytes { get; init; }
     [JsonPropertyName("total_bytes")] public long? TotalBytes { get; init; }
     [JsonPropertyName("segment")] public AsrSegment? Segment { get; init; }
+    [JsonPropertyName("segments")] public IReadOnlyList<AsrSegment>? Segments { get; init; }
     [JsonPropertyName("text")] public string? Text { get; init; }
     [JsonPropertyName("code")] public string? Code { get; init; }
     [JsonPropertyName("message")] public string? Message { get; init; }
