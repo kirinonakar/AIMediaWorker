@@ -11,6 +11,48 @@ public sealed record TranslationBatch(IReadOnlyDictionary<Guid, string> Items, i
 
 public sealed class LlmService(ILlmProvider provider, string model, Settings.ThinkingLevel thinkingLevel = Settings.ThinkingLevel.Default)
 {
+    public async Task<string> TranslateLiveAsync(
+        string stableSourceDelta,
+        string sourceContext,
+        string translatedPrefix,
+        string targetLanguage,
+        IProgress<string>? streamingProgress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(stableSourceDelta)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(targetLanguage)) throw new ArgumentException("A target language is required.", nameof(targetLanguage));
+
+        var prompt = $"""
+            Translate only NEW_STABLE_TEXT to {targetLanguage} for a live subtitle.
+            CONTEXT_BEFORE is read-only context and must not be translated again.
+            TRANSLATED_PREFIX is the already displayed translation for the current sentence; use it only to keep grammar and style coherent.
+            Return only the translation of NEW_STABLE_TEXT. Do not add labels, quotes, explanations, or repeat prior translated text.
+
+            CONTEXT_BEFORE:
+            {sourceContext}
+
+            TRANSLATED_PREFIX:
+            {translatedPrefix}
+
+            NEW_STABLE_TEXT:
+            {stableSourceDelta}
+            """;
+        var builder = new StringBuilder();
+        await foreach (var chunk in provider.GenerateStreamingAsync(
+            model,
+            "You are a low-latency simultaneous subtitle translator. Translate faithfully and concisely, using the supplied context to resolve grammar.",
+            prompt,
+            new LlmGenerationOptions(thinkingLevel, 0.1, false, 256),
+            cancellationToken).ConfigureAwait(false))
+        {
+            if (string.IsNullOrEmpty(chunk)) continue;
+            builder.Append(chunk);
+            streamingProgress?.Report(builder.ToString());
+        }
+
+        return builder.ToString().Trim();
+    }
+
     public async Task<IReadOnlyDictionary<Guid, string>> TranslateAsync(
         IReadOnlyCollection<SubtitleCue> cues,
         string targetLanguage,

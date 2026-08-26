@@ -13,6 +13,7 @@ namespace AIMediaWorker.Asr;
 public sealed class AsrWorkerClient : IAsrEngine
 {
     private const int SampleRate = 16_000;
+    private const int LiveDecodeIntervalSamples = SampleRate;
     private const long CentisecondMicroseconds = 10_000;
     private static readonly TimeSpan[] EmptyDecodeRetryDelays =
     [
@@ -287,7 +288,7 @@ public sealed class AsrWorkerClient : IAsrEngine
         try
         {
             stream.Append(pcm16.Span);
-            if (stream.SampleCount - stream.LastDecodedSampleCount >= SampleRate * 2)
+            if (stream.SampleCount - stream.LastDecodedSampleCount >= LiveDecodeIntervalSamples)
             {
                 snapshot = stream.Samples.ToArray();
                 stream.LastDecodedSampleCount = stream.SampleCount;

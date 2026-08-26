@@ -4,11 +4,49 @@ using TagLib;
 
 namespace AIMediaWorker.Media;
 
+public sealed record AudioArtwork(byte[] Bytes, string? MimeType);
+
 /// <summary>
 /// Reads audio metadata (ID3v1/v2, Vorbis comments, MP4 atoms, RIFF INFO) from local audio files.
 /// </summary>
 public static class AudioTagReader
 {
+    private const int MaxArtworkBytes = 32 * 1024 * 1024;
+
+    /// <summary>
+    /// Reads the first usable embedded picture, preferring a front cover. The returned bytes
+    /// are detached from TagLib so the file can be closed before the UI decodes the image.
+    /// </summary>
+    public static AudioArtwork? ReadArtwork(string path)
+    {
+        try
+        {
+            using var file = TagLib.File.Create(path, TagLib.ReadStyle.PictureLazy);
+            var pictures = file.Tag.Pictures ?? Array.Empty<TagLib.IPicture>();
+            foreach (var picture in pictures.OrderBy(GetPicturePriority))
+            {
+                try
+                {
+                    var data = picture.Data;
+                    if (data is null || data.Count == 0 || data.Count > MaxArtworkBytes) continue;
+                    var bytes = data.Data;
+                    if (bytes is not { Length: > 0 } || bytes.Length > MaxArtworkBytes) continue;
+                    return new AudioArtwork(bytes.ToArray(), picture.MimeType);
+                }
+                catch (Exception)
+                {
+                    // A corrupt picture should not prevent a later valid picture from being used.
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Artwork is optional; unreadable tags must never interrupt playback.
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Returns a compact "Title - Artist (Album, Year)" display string, or null when the
     /// file has no readable tags. Never throws; unreadable or untagged files return null.
@@ -55,6 +93,14 @@ public static class AudioTagReader
     {
         if (!string.IsNullOrWhiteSpace(value)) parts.Add(value.Trim());
     }
+
+    private static int GetPicturePriority(TagLib.IPicture picture) => picture.Type switch
+    {
+        TagLib.PictureType.FrontCover => 0,
+        TagLib.PictureType.Other => 1,
+        TagLib.PictureType.FileIcon => 2,
+        _ => 3,
+    };
 
     // ---- MP3 fallback: manual ID3v2 (2.2/2.3/2.4) + ID3v1 parsing ----
 

@@ -172,7 +172,7 @@ Open **Tools → Camera and live captions**:
 2. Start preview; optionally save MP4 capture.
 3. Configure Qwen first, then start live captions.
 
-Microphone audio is captured through WASAPI, resampled to 16 kHz mono PCM, and passed through bounded drop-oldest channels. Partial captions are visually dimmed; final captions are fully opaque. Font, size, colors, position, and maximum lines are configurable under Capture defaults. Windows camera/microphone privacy settings must permit desktop access.
+Microphone audio is captured through WASAPI, resampled to 16 kHz mono PCM, and passed through bounded drop-oldest channels. Partial captions are visually dimmed; final captions are fully opaque. Windows loopback captions decode a rolling window every second, keep the recent ASR tail editable, and send only newly committed clause-sized deltas to the translation model. Streaming translation tokens are rendered immediately; an idle flush handles stable text that has not yet reached punctuation. Font, size, colors, position, and maximum lines are configurable under Capture defaults. Windows camera/microphone privacy settings must permit desktop access.
 
 ## LLM providers
 

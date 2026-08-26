@@ -1,5 +1,12 @@
 namespace AIMediaWorker.Asr;
 
+public sealed record LiveCaptionUpdate(
+    string DisplayText,
+    string CommittedText,
+    string CommittedDelta,
+    string UnstableText,
+    bool IsFinal);
+
 /// <summary>
 /// Turns overlapping rolling-window ASR results into one continuous transcript.
 /// Timestamped words older than the holdback are committed once; the recent tail
@@ -29,9 +36,17 @@ public sealed class LiveCaptionStabilizer
     public string ProvisionalText { get; private set; } = string.Empty;
     public string DisplayText => MergeWithoutOverlap(ConfirmedText, ProvisionalText);
 
-    public string Update(AsrEvent result)
+    public string Update(AsrEvent result) => UpdateState(result).DisplayText;
+
+    /// <summary>
+    /// Updates the rolling transcript and exposes only the text that became
+    /// stable during this update. Consumers can send <see cref="LiveCaptionUpdate.CommittedDelta"/>
+    /// downstream without retranslating the complete rolling hypothesis.
+    /// </summary>
+    public LiveCaptionUpdate UpdateState(AsrEvent result)
     {
         ArgumentNullException.ThrowIfNull(result);
+        var previouslyConfirmed = ConfirmedText;
         var segments = result.Segments ?? (result.Segment is null ? [] : [result.Segment]);
         var units = CreateTimedUnits(segments);
         var isFinal = string.Equals(result.Event, "final", StringComparison.OrdinalIgnoreCase);
@@ -71,7 +86,9 @@ public sealed class LiveCaptionStabilizer
             UpdateFromText(result.Text ?? result.Segment?.Text ?? string.Empty, isFinal);
         }
 
-        return DisplayText;
+        var confirmed = ConfirmedText;
+        var delta = GetAppendedText(previouslyConfirmed, confirmed);
+        return new LiveCaptionUpdate(DisplayText, confirmed, delta, ProvisionalText, isFinal);
     }
 
     public void Reset()
@@ -111,6 +128,18 @@ public sealed class LiveCaptionStabilizer
         var overlap = FindBestSuffixPrefixOverlap(existing, normalized);
         var addition = overlap.NewLength > 0 ? normalized[overlap.NewLength..].Trim() : normalized;
         if (addition.Length > 0) _confirmed.Add(addition);
+    }
+
+    private static string GetAppendedText(string previous, string current)
+    {
+        if (current.Length == 0 || string.Equals(previous, current, StringComparison.Ordinal)) return string.Empty;
+        if (previous.Length == 0) return current;
+        if (current.StartsWith(previous, StringComparison.Ordinal)) return current[previous.Length..].TrimStart();
+
+        // This is only a defensive fallback for a fuzzy boundary correction.
+        // Confirmed text is append-only under normal operation.
+        var overlap = FindBestSuffixPrefixOverlap(previous, current);
+        return overlap.NewLength > 0 ? current[overlap.NewLength..].TrimStart() : current;
     }
 
     private static IReadOnlyList<TimedText> CreateTimedUnits(IReadOnlyList<AsrSegment> segments)

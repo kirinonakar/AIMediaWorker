@@ -116,6 +116,45 @@ public sealed class LlmTests
     }
 
     [Fact]
+    public async Task LiveTranslationSendsOnlyStableDeltaWithReadOnlyContext()
+    {
+        string? prompt = null;
+        var provider = new FakeProvider(value =>
+        {
+            prompt = value;
+            return "좋은 생각입니다";
+        });
+
+        var translated = await new LlmService(provider, "fake").TranslateLiveAsync(
+            "a good idea",
+            "I think this is",
+            "이건",
+            "Korean");
+
+        Assert.Equal("좋은 생각입니다", translated);
+        Assert.Contains("NEW_STABLE_TEXT:\na good idea", prompt, StringComparison.Ordinal);
+        Assert.Contains("CONTEXT_BEFORE:\nI think this is", prompt, StringComparison.Ordinal);
+        Assert.Contains("TRANSLATED_PREFIX:\n이건", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OpenAiCompatibleProviderYieldsServerSentTranslationTokens()
+    {
+        const string events = "data: {\"choices\":[{\"delta\":{\"content\":\"좋은 \"}}]}\n\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"생각\"}}]}\n\n" +
+            "data: [DONE]\n\n";
+        using var http = new HttpClient(new CaptureHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(events) })));
+        using var provider = new OllamaProvider(httpClient: http);
+        var chunks = new List<string>();
+
+        await foreach (var chunk in provider.GenerateStreamingAsync(
+            "model", "system", "user", new LlmGenerationOptions())) chunks.Add(chunk);
+
+        Assert.Equal(["좋은 ", "생각"], chunks);
+    }
+
+    [Fact]
     public async Task SummaryChunksLongTranscriptsAndRunsFinalPass()
     {
         var calls = 0;

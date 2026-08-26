@@ -1,5 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -53,6 +55,44 @@ public class OpenAiCompatibleProvider : ILlmProvider, IDisposable
         using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
         var root = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: cancellationToken).ConfigureAwait(false) ?? throw new LlmProviderException(Id, "The provider returned an empty response.");
         return root["choices"]?[0]?["message"]?["content"]?.GetValue<string>() ?? throw new LlmProviderException(Id, "The provider response did not contain generated text.");
+    }
+
+    public virtual async IAsyncEnumerable<string> GenerateStreamingAsync(
+        string model,
+        string systemPrompt,
+        string userPrompt,
+        LlmGenerationOptions options,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(model)) throw new ArgumentException("A model id is required.", nameof(model));
+        var body = new JsonObject
+        {
+            ["model"] = model,
+            ["messages"] = new JsonArray(
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = userPrompt }),
+            ["stream"] = true
+        };
+        if (Capabilities.SupportsTemperature && options.Temperature is { } temperature) body["temperature"] = temperature;
+        if (options.MaximumOutputTokens is { } maximum) body["max_tokens"] = maximum;
+        ConfigureThinking(body, options);
+
+        using var request = CreateRequest(HttpMethod.Post, "chat/completions");
+        request.Content = JsonContent.Create(body, options: LlmJson.Options);
+        using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+        {
+            if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) continue;
+            var data = line[5..].Trim();
+            if (data.Length == 0 || data == "[DONE]") continue;
+            JsonNode? root;
+            try { root = JsonNode.Parse(data); }
+            catch (JsonException) { continue; }
+            var content = root?["choices"]?[0]?["delta"]?["content"]?.GetValue<string>();
+            if (!string.IsNullOrEmpty(content)) yield return content;
+        }
     }
 
     public void Dispose() { if (_ownsClient) _httpClient.Dispose(); GC.SuppressFinalize(this); }

@@ -30,6 +30,8 @@ public sealed class NativeVideoHost : IDisposable
     private WindowProcedure? _windowProcedure;
     private bool _disposed;
     private bool _visible = true;
+    private bool _mediaVisible = true;
+    private bool _dialogVisible = true;
     private bool _cursorHidden;
     private (int X, int Y, int Width, int Height)? _lastBounds;
 
@@ -71,10 +73,23 @@ public sealed class NativeVideoHost : IDisposable
     public void SetVisible(bool visible)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _visible = visible;
+        _dialogVisible = visible;
+        ApplyVisibility();
+    }
+
+    public void SetMediaVisible(bool visible)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _mediaVisible = visible;
+        ApplyVisibility();
+    }
+
+    private void ApplyVisibility()
+    {
+        _visible = _mediaVisible && _dialogVisible;
         if (_handle == 0) return;
-        ShowWindow(_handle, visible ? 4 : 0); // SW_SHOWNOACTIVATE / SW_HIDE
-        if (visible) UpdateBounds();
+        ShowWindow(_handle, _visible ? 4 : 0); // SW_SHOWNOACTIVATE / SW_HIDE
+        if (_visible) UpdateBounds();
     }
 
     public void SetCursorHidden(bool hidden)

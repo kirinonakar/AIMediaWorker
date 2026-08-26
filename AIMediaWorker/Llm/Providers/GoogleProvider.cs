@@ -1,4 +1,7 @@
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace AIMediaWorker.Llm.Providers;
@@ -32,21 +35,51 @@ public sealed class GoogleProvider : ILlmProvider, IDisposable
 
     public async Task<string> GenerateAsync(string model, string systemPrompt, string userPrompt, LlmGenerationOptions options, CancellationToken cancellationToken = default)
     {
+        var body = CreateGenerationBody(model, systemPrompt, userPrompt, options);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"models/{Uri.EscapeDataString(model)}:generateContent?key={Uri.EscapeDataString(_apiKey)}") { Content = JsonContent.Create(body, options: LlmJson.Options) };
+        using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
+        var root = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: cancellationToken).ConfigureAwait(false);
+        return root?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.GetValue<string>() ?? throw new LlmProviderException(Id, "Google Gemini returned no generated text.");
+    }
+
+    public async IAsyncEnumerable<string> GenerateStreamingAsync(
+        string model,
+        string systemPrompt,
+        string userPrompt,
+        LlmGenerationOptions options,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var body = CreateGenerationBody(model, systemPrompt, userPrompt, options);
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"models/{Uri.EscapeDataString(model)}:streamGenerateContent?alt=sse&key={Uri.EscapeDataString(_apiKey)}")
+        { Content = JsonContent.Create(body, options: LlmJson.Options) };
+        using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+        {
+            if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) continue;
+            JsonNode? root;
+            try { root = JsonNode.Parse(line[5..].Trim()); }
+            catch (JsonException) { continue; }
+            var text = root?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.GetValue<string>();
+            if (!string.IsNullOrEmpty(text)) yield return text;
+        }
+    }
+
+    private static JsonObject CreateGenerationBody(string model, string systemPrompt, string userPrompt, LlmGenerationOptions options)
+    {
         var generation = new JsonObject();
         if (options.Temperature is { } temperature) generation["temperature"] = temperature;
         if (options.MaximumOutputTokens is { } maximum) generation["maxOutputTokens"] = maximum;
         if (options.StructuredOutput) generation["responseMimeType"] = "application/json";
         if (CreateThinkingConfig(model, options.ThinkingLevel) is { } thinking) generation["thinkingConfig"] = thinking;
-        var body = new JsonObject
+        return new JsonObject
         {
             ["systemInstruction"] = new JsonObject { ["parts"] = new JsonArray(new JsonObject { ["text"] = systemPrompt }) },
             ["contents"] = new JsonArray(new JsonObject { ["role"] = "user", ["parts"] = new JsonArray(new JsonObject { ["text"] = userPrompt }) }),
             ["generationConfig"] = generation
         };
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"models/{Uri.EscapeDataString(model)}:generateContent?key={Uri.EscapeDataString(_apiKey)}") { Content = JsonContent.Create(body, options: LlmJson.Options) };
-        using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
-        var root = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: cancellationToken).ConfigureAwait(false);
-        return root?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.GetValue<string>() ?? throw new LlmProviderException(Id, "Google Gemini returned no generated text.");
     }
 
     public void Dispose() { if (_ownsClient) _httpClient.Dispose(); }

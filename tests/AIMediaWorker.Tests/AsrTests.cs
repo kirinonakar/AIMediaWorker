@@ -97,6 +97,37 @@ public sealed class AsrTests
     }
 
     [Fact]
+    public void LiveCaptionStabilizerReturnsOnlyNewlyCommittedDelta()
+    {
+        var stabilizer = new LiveCaptionStabilizer(2_000_000);
+
+        var first = stabilizer.UpdateState(LiveEvent("partial",
+            Word("I", 500_000), Word("think", 1_500_000), Word("this", 2_500_000), Word("works", 3_500_000)));
+        var second = stabilizer.UpdateState(LiveEvent("partial",
+            Word("think", 1_500_000), Word("this", 2_500_000), Word("works", 3_500_000), Word("very", 4_500_000), Word("well.", 5_500_000)));
+
+        Assert.Equal("I think", first.CommittedDelta);
+        Assert.Equal("this works", second.CommittedDelta);
+        Assert.Equal("very well.", second.UnstableText);
+        Assert.Equal("I think this works very well.", second.DisplayText);
+    }
+
+    [Fact]
+    public void LiveCaptionStabilizerFinalCommitsUnchangedVisibleTail()
+    {
+        var stabilizer = new LiveCaptionStabilizer(2_000_000);
+        var partial = LiveEvent("partial", Word("hello", 500_000), Word("world", 1_500_000));
+        stabilizer.UpdateState(partial);
+
+        var final = stabilizer.UpdateState(LiveEvent("final", Word("hello", 500_000), Word("world", 1_500_000)));
+
+        Assert.Equal("hello world", final.DisplayText);
+        Assert.Equal("hello world", final.CommittedDelta);
+        Assert.True(final.IsFinal);
+        Assert.Empty(final.UnstableText);
+    }
+
+    [Fact]
     public void LiveCaptionStabilizerUsesFuzzyOverlapWhenTimestampsAreUnavailable()
     {
         var stabilizer = new LiveCaptionStabilizer();

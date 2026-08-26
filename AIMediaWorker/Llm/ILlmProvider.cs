@@ -1,4 +1,5 @@
 using AIMediaWorker.Settings;
+using System.Runtime.CompilerServices;
 
 namespace AIMediaWorker.Llm;
 
@@ -25,6 +26,16 @@ public interface ILlmProvider
     LlmProviderCapabilities Capabilities { get; }
     Task<IReadOnlyList<LlmModel>> GetModelsAsync(CancellationToken cancellationToken = default);
     Task<string> GenerateAsync(string model, string systemPrompt, string userPrompt, LlmGenerationOptions options, CancellationToken cancellationToken = default);
+
+    async IAsyncEnumerable<string> GenerateStreamingAsync(
+        string model,
+        string systemPrompt,
+        string userPrompt,
+        LlmGenerationOptions options,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        yield return await GenerateAsync(model, systemPrompt, userPrompt, options, cancellationToken).ConfigureAwait(false);
+    }
 }
 
 public sealed class LlmProviderException(string provider, string message, int? statusCode = null, Exception? innerException = null) : Exception(message, innerException)

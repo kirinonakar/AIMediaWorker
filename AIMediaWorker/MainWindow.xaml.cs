@@ -16,8 +16,10 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Storage.Pickers;
 using Windows.Storage;
+using Windows.Storage.Streams;
 using WinRT.Interop;
 using Windows.ApplicationModel.DataTransfer;
 using System.Runtime.InteropServices;
@@ -62,6 +64,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private string? _pendingLaunchSource;
     private string[]? _pendingDroppedFiles;
     private string? _audioTagStatusText;
+    private CancellationTokenSource? _audioArtworkCancellation;
+    private int _audioArtworkRequestId;
     private readonly TaskCompletionSource _firstUiFrameReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _playbackInitializationTask;
     private readonly PanelLayoutController _panels;
@@ -523,6 +527,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             {
                 _mediaOpenReady = false;
                 _pendingMediaOpenSource = null;
+                ResetAudioArtworkPresentation();
             }
             await aiPipelineCancellation;
             await AppLog.WriteAsync("error", "playback", "OPEN_MEDIA_ERROR", exception.Message, exception);
@@ -534,6 +539,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     {
         _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
         _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
+        ApplyAudioArtworkPresentation(IsLocalAudioSource(_currentMediaSource));
         ApplyRepeatModeToPlayback();
         UpdateWindowTitle(_currentMediaSource.DisplayName);
         _mediaNavigation.MediaOpened(_currentMediaSource, preservePlaylist, showInExplorer);
@@ -544,6 +550,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _audioTagStatusText = null;
         StatusText.Text = source;
         UpdateAudioTagStatus();
+        UpdateAudioArtwork();
         FocusPlaybackSurface();
         _mediaOpenReady = true;
         _pendingMediaOpenSource = null;
@@ -569,8 +576,112 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             });
         });
     }
+
+    private void UpdateAudioArtwork()
+    {
+        if (_currentMediaSource is not LocalMediaSource localSource || !MediaFileClassifier.IsAudio(localSource.Path)) return;
+
+        var path = localSource.Path;
+        var requestId = ++_audioArtworkRequestId;
+        var cancellation = new CancellationTokenSource();
+        var previous = _audioArtworkCancellation;
+        _audioArtworkCancellation = cancellation;
+        previous?.Cancel();
+        previous?.Dispose();
+        _ = LoadAudioArtworkAsync(path, requestId, cancellation.Token);
+    }
+
+    private async Task LoadAudioArtworkAsync(string path, int requestId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var artwork = await Task.Run(() => AudioTagReader.ReadArtwork(path), cancellationToken).ConfigureAwait(false);
+            if (artwork is null || cancellationToken.IsCancellationRequested) return;
+
+            if (!DispatcherQueue.TryEnqueue(async () =>
+            {
+                try
+                {
+                    if (!IsCurrentAudioArtwork(path, requestId, cancellationToken)) return;
+                    var image = await DecodeAudioArtworkAsync(artwork, cancellationToken);
+                    if (image is null || !IsCurrentAudioArtwork(path, requestId, cancellationToken)) return;
+                    AlbumArtImage.Source = image;
+                    AudioArtworkFallback.Visibility = Visibility.Collapsed;
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    _ = AppLog.WriteAsync("warning", "playback", "AUDIO_ARTWORK_DECODE_ERROR", exception.Message, exception);
+                }
+            })) return;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            _ = AppLog.WriteAsync("warning", "playback", "AUDIO_ARTWORK_READ_ERROR", exception.Message, exception);
+        }
+    }
+
+    private bool IsCurrentAudioArtwork(string path, int requestId, CancellationToken cancellationToken) =>
+        !cancellationToken.IsCancellationRequested &&
+        requestId == _audioArtworkRequestId &&
+        AudioArtworkSurface.Visibility == Visibility.Visible &&
+        _currentMediaSource is LocalMediaSource current &&
+        string.Equals(current.Path, path, StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<BitmapImage?> DecodeAudioArtworkAsync(AudioArtwork artwork, CancellationToken cancellationToken)
+    {
+        if (artwork.Bytes is not { Length: > 0 }) return null;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var stream = new InMemoryRandomAccessStream();
+        using (var writer = new DataWriter(stream))
+        {
+            writer.WriteBytes(artwork.Bytes);
+            await writer.StoreAsync();
+            writer.DetachStream();
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        stream.Seek(0);
+        var image = new BitmapImage { DecodePixelWidth = 1600 };
+        await image.SetSourceAsync(stream);
+        cancellationToken.ThrowIfCancellationRequested();
+        return image;
+    }
+
+    private void ApplyAudioArtworkPresentation(bool isLocalAudio)
+    {
+        AudioArtworkSurface.Visibility = isLocalAudio ? Visibility.Visible : Visibility.Collapsed;
+        VideoStatusText.Visibility = isLocalAudio ? Visibility.Collapsed : Visibility.Visible;
+        if (!isLocalAudio)
+        {
+            AlbumArtImage.Source = null;
+            AudioArtworkFallback.Visibility = Visibility.Visible;
+        }
+
+        _videoHost?.SetMediaVisible(!isLocalAudio);
+    }
+
+    private void ResetAudioArtworkPresentation()
+    {
+        ++_audioArtworkRequestId;
+        var cancellation = _audioArtworkCancellation;
+        _audioArtworkCancellation = null;
+        cancellation?.Cancel();
+        cancellation?.Dispose();
+        AlbumArtImage.Source = null;
+        AudioArtworkFallback.Visibility = Visibility.Visible;
+        ApplyAudioArtworkPresentation(false);
+    }
+
+    private static bool IsLocalAudioSource(IMediaSource source) =>
+        source is LocalMediaSource localSource && MediaFileClassifier.IsAudio(localSource.Path);
+
     private void BeginMediaOpen(string source)
     {
+        ResetAudioArtworkPresentation();
+        ApplyAudioArtworkPresentation(IsLocalAudioPath(source));
         _mediaOpenReady = false;
         _firstFrameUiReadyForMedia = false;
         _audioTagStatusText = null;
@@ -579,6 +690,9 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _firstFrameWaitSource = source;
         _firstFrameWaiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     }
+
+    private static bool IsLocalAudioPath(string source) =>
+        Path.IsPathFullyQualified(source) && MediaFileClassifier.IsAudio(source);
 
     private void UpdateWindowTitle(string displayName)
     {
@@ -1473,6 +1587,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private async Task ShutdownAsync()
     {
         _playback.StateChanged -= OnPlaybackStateChanged;
+        ResetAudioArtworkPresentation();
         ReleasePlaybackPowerRequirement();
         _windowsPowerManagement.Dispose();
         _fullscreen.Dispose();
