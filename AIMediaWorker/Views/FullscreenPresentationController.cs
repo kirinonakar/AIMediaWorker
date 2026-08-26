@@ -24,6 +24,7 @@ internal sealed class FullscreenPresentationController : IDisposable
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
     private static readonly TimeSpan CursorHideDelay = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan EdgeClickDisplayDuration = TimeSpan.FromSeconds(2);
 
     private readonly Window _window;
     private readonly AppWindow? _appWindow;
@@ -145,6 +146,47 @@ internal sealed class FullscreenPresentationController : IDisposable
         if (!IsFullscreen) return false;
         ApplyFullscreenWindowStyle();
         if (_appWindow?.Presenter.Kind != AppWindowPresenterKind.FullScreen) QueueRepair();
+        return true;
+    }
+
+    /// <summary>
+    /// Reveals the transient full-screen chrome associated with the edge under the pointer.
+    /// This is called for clicks received by the native video child window, which is outside
+    /// the XAML pointer event route.
+    /// </summary>
+    public bool RevealPanelAtCurrentPointer()
+    {
+        if (!IsFullscreen || _appWindow is null || !GetCursorPos(out var cursor)) return false;
+
+        var left = _appWindow.Position.X;
+        var top = _appWindow.Position.Y;
+        var right = left + _appWindow.Size.Width;
+        var bottom = top + _appWindow.Size.Height;
+        if (cursor.X < left || cursor.X >= right || cursor.Y < top || cursor.Y >= bottom) return false;
+
+        var now = DateTimeOffset.UtcNow;
+        var showUntil = now.Add(EdgeClickDisplayDuration);
+        var revealed = false;
+        if (cursor.Y <= top + 32)
+        {
+            _showMenuUntil = LaterOf(_showMenuUntil, showUntil);
+            revealed = true;
+        }
+        if (cursor.Y >= bottom - 32)
+        {
+            _showControlsUntil = LaterOf(_showControlsUntil, showUntil);
+            revealed = true;
+        }
+        if (cursor.X >= right - 64)
+        {
+            _showRightPanelUntil = LaterOf(_showRightPanelUntil, showUntil);
+            revealed = true;
+        }
+
+        if (!revealed) return false;
+        _cursorLastMovedAt = now;
+        SetCursorHidden(false);
+        ApplyTransientPanelVisibility(now);
         return true;
     }
 
@@ -270,16 +312,21 @@ internal sealed class FullscreenPresentationController : IDisposable
         if (inside)
         {
             if (cursor.Y <= top + 32 || _view.MainMenuBarHost.Visibility == Visibility.Visible && cursor.Y <= top + 70)
-                _showMenuUntil = now.AddSeconds(1.5);
+                _showMenuUntil = LaterOf(_showMenuUntil, now.AddSeconds(1.5));
             if (cursor.Y >= bottom - 32 || _view.PlaybackControls.Visibility == Visibility.Visible && cursor.Y >= bottom - 150)
-                _showControlsUntil = now.AddSeconds(1.5);
+                _showControlsUntil = LaterOf(_showControlsUntil, now.AddSeconds(1.5));
         }
         var verticallyAligned = cursor.Y >= top && cursor.Y < bottom;
         if (verticallyAligned &&
             (cursor.X >= right - 64 && cursor.X <= right + 24 ||
              _view.RightPanel.Visibility == Visibility.Visible && cursor.X >= right - _getRightPanelWidth() - 40 && cursor.X < right))
-            _showRightPanelUntil = now.AddSeconds(1.5);
+            _showRightPanelUntil = LaterOf(_showRightPanelUntil, now.AddSeconds(1.5));
 
+        ApplyTransientPanelVisibility(now);
+    }
+
+    private void ApplyTransientPanelVisibility(DateTimeOffset now)
+    {
         var showTopChrome = now < _showMenuUntil;
         _view.TitleBarArea.Visibility = showTopChrome ? Visibility.Visible : Visibility.Collapsed;
         _view.MainMenuBarHost.Visibility = showTopChrome ? Visibility.Visible : Visibility.Collapsed;
@@ -292,6 +339,8 @@ internal sealed class FullscreenPresentationController : IDisposable
         _view.RightPanelSplitterColumn.Width = showRight ? new GridLength(6) : new GridLength(0);
         _view.RightPanelColumn.Width = showRight ? new GridLength(_getRightPanelWidth()) : new GridLength(0);
     }
+
+    private static DateTimeOffset LaterOf(DateTimeOffset first, DateTimeOffset second) => first >= second ? first : second;
 
     private void ResetCursorIdle()
     {

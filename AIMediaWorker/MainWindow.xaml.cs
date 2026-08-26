@@ -434,6 +434,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void OnNativeVideoClicked(object? sender, EventArgs e)
         => DispatcherQueue.TryEnqueue(() =>
         {
+            _fullscreen.RevealPanelAtCurrentPointer();
             DismissOpenMenus();
             FocusPlaybackSurface();
         });
