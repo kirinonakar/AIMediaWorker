@@ -10,6 +10,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using System.Threading.Channels;
 using Windows.Graphics;
@@ -30,6 +31,11 @@ public sealed partial class WindowsCaptionWindow : Window
     private readonly LiveAsrController _liveAsr;
     private readonly Channel<string> _translationQueue = Channel.CreateUnbounded<string>();
     private readonly DispatcherQueueTimer _pendingFlushTimer;
+    private const int MaximumDisplayedCaptionItems = 5;
+    private const int MaximumDisplayedTranslationItems = 3;
+    private const double PreviousItemOpacity = 0.48;
+    private readonly List<string> _captionItems = [];
+    private readonly List<string> _translationItems = [];
     private int _pendingTranslationUpdates;
     private AppSettings _settings = new();
     private AppWindow? _appWindow;
@@ -38,6 +44,8 @@ public sealed partial class WindowsCaptionWindow : Window
     private CancellationTokenSource? _translationCancellation;
     private LlmService? _llm;
     private string _lastCaption = string.Empty;
+    private string _lastCaptionForTranslation = string.Empty;
+    private string _lastAsrText = string.Empty;
     private bool _translating;
     private bool _allowClose;
 
@@ -201,8 +209,10 @@ public sealed partial class WindowsCaptionWindow : Window
         var text = result.Text ?? result.Segment?.Text ?? string.Empty;
         if (string.IsNullOrWhiteSpace(text)) return;
         _lastCaption = text;
-        CaptionText.Text = text;
-        CaptionText.Opacity = result.Event == "partial" ? 0.72 : 1;
+        var addedText = ExtractNewCaptionText(text);
+        if (string.IsNullOrWhiteSpace(addedText)) return;
+        AddCaptionItem(addedText);
+        _lastCaptionForTranslation = addedText;
         UpdateCaptionFontSize();
         if (!_translating) return;
         // The live ASR emits rolling "partial" updates and a "final" only when
@@ -212,7 +222,8 @@ public sealed partial class WindowsCaptionWindow : Window
         {
             _pendingTranslationUpdates = 0;
             _pendingFlushTimer.Stop();
-            _translationQueue.Writer.TryWrite(text);
+            if (!string.IsNullOrWhiteSpace(_lastCaptionForTranslation))
+                _translationQueue.Writer.TryWrite(_lastCaptionForTranslation);
         }
         else
         {
@@ -224,7 +235,7 @@ public sealed partial class WindowsCaptionWindow : Window
     {
         if (!_translating || _pendingTranslationUpdates == 0) return;
         _pendingTranslationUpdates = 0;
-        if (!string.IsNullOrWhiteSpace(_lastCaption)) _translationQueue.Writer.TryWrite(_lastCaption);
+        if (!string.IsNullOrWhiteSpace(_lastCaptionForTranslation)) _translationQueue.Writer.TryWrite(_lastCaptionForTranslation);
     }
 
     private void OnTranslateClick(object sender, RoutedEventArgs e)
@@ -249,11 +260,11 @@ public sealed partial class WindowsCaptionWindow : Window
             }
             _translating = true;
             TranslateButton.Content = L("WindowsCaptionTranslateOn.Content");
-            TranslationText.Visibility = Visibility.Visible;
+            TranslationHistoryText.Visibility = Visibility.Visible;
             UpdateCaptionFontSize();
             var cancellation = _translationCancellation ??= new CancellationTokenSource();
             _translationTask ??= Task.Run(() => TranslationLoopAsync(cancellation.Token));
-            if (!string.IsNullOrWhiteSpace(_lastCaption)) _translationQueue.Writer.TryWrite(_lastCaption);
+            if (!string.IsNullOrWhiteSpace(_lastCaptionForTranslation)) _translationQueue.Writer.TryWrite(_lastCaptionForTranslation);
         }
         else
         {
@@ -261,8 +272,7 @@ public sealed partial class WindowsCaptionWindow : Window
             _pendingTranslationUpdates = 0;
             _pendingFlushTimer.Stop();
             TranslateButton.Content = L("WindowsCaptionTranslate.Content");
-            TranslationText.Text = string.Empty;
-            TranslationText.Visibility = Visibility.Collapsed;
+            ClearTranslationHistory();
             UpdateCaptionFontSize();
         }
     }
@@ -296,7 +306,7 @@ public sealed partial class WindowsCaptionWindow : Window
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     if (!_translating) return;
-                    TranslationText.Text = translated;
+                    AddTranslationItem(translated);
                     UpdateCaptionFontSize();
                 });
         }
@@ -310,9 +320,18 @@ public sealed partial class WindowsCaptionWindow : Window
 
     private void ApplyCaptionAppearance()
     {
-        CaptionText.FontFamily = new FontFamily(string.IsNullOrWhiteSpace(_settings.Subtitle.FontFamily) ? SubtitleSettings.DefaultFontFamily : _settings.Subtitle.FontFamily);
-        CaptionText.Foreground = new SolidColorBrush(ParseColor(_settings.Capture.CaptionTextColor, Color.FromArgb(255, 255, 255, 255)));
-        CaptionText.MaxLines = Math.Clamp(_settings.Capture.CaptionMaximumLines, 1, 6);
+        var fontFamily = new FontFamily(string.IsNullOrWhiteSpace(_settings.Subtitle.FontFamily) ? SubtitleSettings.DefaultFontFamily : _settings.Subtitle.FontFamily);
+        var captionColor = new SolidColorBrush(ParseColor(_settings.Capture.CaptionTextColor, Color.FromArgb(255, 255, 255, 255)));
+        var translationColor = new SolidColorBrush(Color.FromArgb(255, 255, 224, 176));
+        var maximumLines = Math.Clamp(_settings.Capture.CaptionMaximumLines, 1, 6);
+        CaptionHistoryText.FontFamily = fontFamily;
+        CaptionHistoryText.Foreground = captionColor;
+        CaptionHistoryText.MaxLines = maximumLines;
+        TranslationHistoryText.FontFamily = fontFamily;
+        TranslationHistoryText.Foreground = translationColor;
+        TranslationHistoryText.MaxLines = maximumLines;
+        RebuildHistoryText(CaptionHistoryText, _captionItems, isTranslation: false);
+        RebuildHistoryText(TranslationHistoryText, _translationItems, isTranslation: true);
         CaptionBackground.Background = new SolidColorBrush(ParseColor(_settings.Capture.CaptionBackgroundColor, Color.FromArgb(160, 0, 0, 0)));
     }
 
@@ -342,23 +361,125 @@ public sealed partial class WindowsCaptionWindow : Window
             else upper = candidate;
         }
 
-        CaptionText.FontSize = lower;
-        TranslationText.FontSize = lower * 0.85;
+        CaptionHistoryText.FontSize = lower;
+        TranslationHistoryText.FontSize = lower * 0.85;
     }
 
     private bool CaptionFits(double fontSize, double availableWidth, double availableHeight)
     {
-        CaptionText.FontSize = fontSize;
-        TranslationText.FontSize = fontSize * 0.85;
         var size = new Windows.Foundation.Size(availableWidth, double.PositiveInfinity);
-        CaptionText.Measure(size);
-        var requiredHeight = CaptionText.DesiredSize.Height;
-        if (TranslationText.Visibility == Visibility.Visible)
-        {
-            TranslationText.Measure(size);
-            requiredHeight += TranslationText.DesiredSize.Height + TranslationText.Margin.Top;
-        }
+        CaptionHistoryText.FontSize = fontSize;
+        TranslationHistoryText.FontSize = fontSize * 0.85;
+        var requiredHeight = MeasureTextBlock(CaptionHistoryText, size);
+        if (TranslationHistoryText.Visibility == Visibility.Visible)
+            requiredHeight += TranslationHistoryText.Margin.Top + MeasureTextBlock(TranslationHistoryText, size);
         return requiredHeight <= availableHeight;
+    }
+
+    private static double MeasureTextBlock(TextBlock item, Windows.Foundation.Size availableSize)
+    {
+        item.Measure(availableSize);
+        return item.DesiredSize.Height;
+    }
+
+    private string ExtractNewCaptionText(string text)
+    {
+        var current = NormalizeHistoryText(text);
+        var previous = NormalizeHistoryText(_lastAsrText);
+        _lastAsrText = current;
+        if (string.IsNullOrWhiteSpace(current)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(previous)) return text.Trim();
+        if (string.Equals(previous, current, StringComparison.Ordinal)) return string.Empty;
+        if (current.StartsWith(previous, StringComparison.Ordinal)) return current[previous.Length..].Trim();
+        if (previous.StartsWith(current, StringComparison.Ordinal)) return string.Empty;
+
+        // ASR may resend a rolling result with a small overlap. Remove the
+        // longest unchanged suffix/prefix overlap before appending it.
+        var maximumOverlap = Math.Min(previous.Length, current.Length);
+        for (var overlap = maximumOverlap; overlap > 0; overlap--)
+        {
+            if (string.Equals(previous[^overlap..], current[..overlap], StringComparison.Ordinal))
+                return current[overlap..].Trim();
+        }
+        return current;
+    }
+
+    private void AddCaptionItem(string text)
+    {
+        var uniqueText = RemoveDuplicatePart(text, _captionItems);
+        if (string.IsNullOrWhiteSpace(uniqueText)) return;
+        _captionItems.Add(uniqueText);
+        while (_captionItems.Count > MaximumDisplayedCaptionItems) _captionItems.RemoveAt(0);
+        RebuildHistoryText(CaptionHistoryText, _captionItems, isTranslation: false);
+        RebuildHistoryText(TranslationHistoryText, _translationItems, isTranslation: true);
+    }
+
+    private void AddTranslationItem(string text)
+    {
+        var uniqueText = RemoveDuplicatePart(text, _translationItems);
+        if (string.IsNullOrWhiteSpace(uniqueText)) return;
+        _translationItems.Add(uniqueText);
+        while (_translationItems.Count > MaximumDisplayedTranslationItems) _translationItems.RemoveAt(0);
+        RebuildHistoryText(TranslationHistoryText, _translationItems, isTranslation: true);
+    }
+
+    private void RebuildHistoryText(TextBlock target, IReadOnlyList<string> items, bool isTranslation)
+    {
+        target.Inlines.Clear();
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (index > 0) target.Inlines.Add(new Run { Text = " " });
+            var color = isTranslation
+                ? Color.FromArgb(255, 255, 224, 176)
+                : ParseColor(_settings.Capture.CaptionTextColor, Color.FromArgb(255, 255, 255, 255));
+            if (index < items.Count - 1)
+                color = Color.FromArgb((byte)Math.Clamp(color.A * PreviousItemOpacity, 1, 255), color.R, color.G, color.B);
+            target.Inlines.Add(new Run { Text = items[index], Foreground = new SolidColorBrush(color) });
+        }
+    }
+
+    private static string RemoveDuplicatePart(string text, IReadOnlyList<string> existingItems)
+    {
+        var current = NormalizeHistoryText(text);
+        if (string.IsNullOrWhiteSpace(current)) return string.Empty;
+        foreach (var existing in existingItems.Reverse())
+        {
+            var previous = NormalizeHistoryText(existing);
+            if (string.Equals(previous, current, StringComparison.OrdinalIgnoreCase) ||
+                previous.EndsWith(current, StringComparison.OrdinalIgnoreCase)) return string.Empty;
+            if (current.StartsWith(previous, StringComparison.OrdinalIgnoreCase))
+                return current[previous.Length..].Trim();
+
+            var maximumOverlap = Math.Min(previous.Length, current.Length);
+            for (var overlap = maximumOverlap; overlap > 0; overlap--)
+            {
+                if (string.Equals(previous[^overlap..], current[..overlap], StringComparison.OrdinalIgnoreCase))
+                    return current[overlap..].Trim();
+            }
+        }
+        return current;
+    }
+
+    private static string NormalizeHistoryText(string text) =>
+        string.Join(' ', text.Split([' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+    private void ClearCaptionHistory()
+    {
+        CaptionHistoryText.Inlines.Clear();
+        _captionItems.Clear();
+        _lastCaption = string.Empty;
+        _lastCaptionForTranslation = string.Empty;
+        _lastAsrText = string.Empty;
+        ClearTranslationHistory();
+        TranslateButton.IsChecked = false;
+        TranslationHistoryText.Visibility = Visibility.Collapsed;
+    }
+
+    private void ClearTranslationHistory()
+    {
+        TranslationHistoryText.Inlines.Clear();
+        _translationItems.Clear();
+        TranslationHistoryText.Visibility = Visibility.Collapsed;
     }
 
     private static Color ParseColor(string value, Color fallback)
