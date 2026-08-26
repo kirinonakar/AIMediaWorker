@@ -29,7 +29,6 @@ using Windows.Storage.Pickers;
 using Windows.Storage;
 using WinRT.Interop;
 using Windows.ApplicationModel.DataTransfer;
-using System.Net;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using Microsoft.UI.Dispatching;
@@ -43,6 +42,7 @@ public sealed partial class MainWindow : Window
     private readonly MpvPlaybackEngine _playback = new();
     private readonly WindowsPowerManagement _windowsPowerManagement = new();
     private readonly SubtitleCommandHistory _history = new();
+    private readonly SubtitleFileService _subtitleFiles = new();
     private readonly TimelineTransform _timelineTransform = new();
     private readonly Dictionary<Guid, string> _textBeforeEdit = [];
     private readonly Dictionary<Guid, (long Start, long End)> _timesBeforeEdit = [];
@@ -51,18 +51,6 @@ public sealed partial class MainWindow : Window
     private AppWindow? _appWindow;
     private bool _updatingPosition;
     private bool _positionSliderDragging;
-    private bool _isFullscreen;
-    private bool _changingFullscreen;
-    private bool _fullscreenRepairQueued;
-    private bool _fullscreenStyleCaptured;
-    private int _windowedStyle;
-    private RectInt32? _windowBoundsBeforeFullscreen;
-    private RectInt32? _workAreaBeforeFullscreen;
-    private bool _wasMaximizedBeforeFullscreen;
-    private bool _rightPanelVisible = true;
-    private bool _bottomPanelVisible = true;
-    private double _rightPanelWidth = 360;
-    private double _bottomPanelHeight = 160;
     private bool _initialized;
     private CameraWindow? _cameraWindow;
     private SettingsWindow? _settingsWindow;
@@ -70,8 +58,6 @@ public sealed partial class MainWindow : Window
     private readonly WindowsCredentialService _windowsCredentials = new();
     private readonly WebDavCredentialStore _webDavCredentials;
     private readonly WebDavClient _webDavClient;
-    private CancellationTokenSource? _webDavListingCancellation;
-    private Uri? _webDavPanelDirectory;
     private readonly AsrWorkerClient _asrEngine = new();
     private CancellationTokenSource? _aiOperationCancellation;
     private Task? _aiPipelineTask;
@@ -87,8 +73,8 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _seekAiRestartCancellation;
     private bool _subtitleGenerationCompletedForCurrentMedia;
     private bool _translationCompletedForCurrentMedia;
-    private readonly object _combinedAiProgressLock = new();
-    private CombinedAiProgressState? _combinedAiProgress;
+    private readonly AiProgressTracker _combinedAiProgress = new();
+    private readonly RemoteMediaDownloadService _remoteMediaDownloader = new();
     private readonly SemaphoreSlim _dialogLock = new(1, 1);
     private readonly MediaHistoryService _historyService = MediaHistoryService.CreateDefault();
     private readonly ObservableCollection<FavoriteListEntry> _favoriteEntries = [];
@@ -120,20 +106,6 @@ public sealed partial class MainWindow : Window
     private readonly List<PlaylistEntry> _playlist = [];
     private int _playlistIndex = -1;
     private RepeatMode _repeatMode;
-    private string _browserDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
-    private string? _loadedBrowserDirectory;
-    private BrowserEntry[] _browserEntries = [];
-    private WebDavEntry[] _webDavEntries = [];
-    private EntrySortMode _browserSortMode;
-    private EntrySortMode _webDavSortMode;
-    private Guid? _webDavPanelServerId;
-    private DispatcherQueueTimer? _fullscreenHoverTimer;
-    private DateTimeOffset _showFullscreenMenuUntil;
-    private DateTimeOffset _showFullscreenControlsUntil;
-    private DateTimeOffset _showFullscreenRightPanelUntil;
-    private DateTimeOffset _fullscreenCursorLastMovedAt;
-    private NativePoint? _lastFullscreenCursorPosition;
-    private bool _fullscreenCursorHidden;
     private bool _mediaOpenReady;
     private bool _firstFrameUiReadyForMedia;
     private string? _pendingMediaOpenSource;
@@ -145,6 +117,8 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _postOpenCancellation;
     private readonly TaskCompletionSource _firstUiFrameReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _playbackInitializationTask;
+    private readonly PanelLayoutController _panels;
+    private readonly FullscreenPresentationController _fullscreen;
     private readonly string _editorOverlayPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AIMediaWorker-{Environment.ProcessId}-{Guid.NewGuid():N}.ass");
 
     private sealed record SubtitleSelectionOption(string DisplayName, SubtitleDisplayMode? DisplayMode, int? TrackId);
@@ -158,12 +132,18 @@ public sealed partial class MainWindow : Window
     public MainWindow(string? initialSource, AppSettings settings)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        _browserDirectory = ResolveDefaultBrowserDirectory(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
         _webDavCredentials = new WebDavCredentialStore(_windowsCredentials);
         _webDavClient = new WebDavClient(_windowsCredentials, timeout: TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds));
         StartupProfiler.Mark("xaml-start");
         InitializeComponent();
         StartupProfiler.Mark("xaml-ready");
+        _panels = new PanelLayoutController(
+            new PanelLayoutViewElements(
+                SubtitlePanel, RightPanelSplitter, RightPanelSplitterColumn, RightPanelColumn,
+                VisualizationPanel, BottomPanelSplitter, BottomPanelSplitterRow, BottomPanelRow, StatusPanel,
+                ShowRightPanelMenuItem, ShowBottomPanelMenuItem, RightPanelToggleButton, BottomPanelToggleButton),
+            () => _settings.Window,
+            UpdatePanelToggleIcons);
         // Apply the saved font to already-created elements as well as the app resource.
         // The custom title bar is part of this visual tree and must follow the setting
         // on the first launch, not only after the Preferences window is saved.
@@ -184,6 +164,17 @@ public sealed partial class MainWindow : Window
         _pendingLaunchSource = initialSource;
         ExtendsContentIntoTitleBar = true;
         RightPanelSectionList.SelectionChanged += OnRightPanelSectionChanged;
+        MediaBrowser.DefaultDirectory = _settings.General.DefaultFolder;
+        MediaBrowser.ChooseFolderRequested += OnBrowserChooseFolderRequested;
+        MediaBrowser.MediaRequested += OnBrowserMediaRequested;
+        MediaBrowser.FavoriteRequested += OnBrowserFavoriteRequested;
+        MediaBrowser.ErrorOccurred += OnBrowserErrorOccurred;
+        _combinedAiProgress.ProgressChanged += OnCombinedAiProgressChanged;
+        WebDavBrowser.Configure(_webDavClient, _webDavCredentials);
+        WebDavBrowser.AddServerRequested += OnAddWebDavServerRequested;
+        WebDavBrowser.DeleteServerRequested += OnDeleteWebDavServerRequested;
+        WebDavBrowser.EntryRequested += OnWebDavEntryRequested;
+        WebDavBrowser.FavoriteRequested += OnWebDavFavoriteRequested;
         RefreshRightPanelSections();
         GenerateSubtitlesMenuItem.IsChecked = _settings.Asr.GenerateSubtitles;
         TranslateMenuItem.IsChecked = _settings.Llm.TranslateSubtitles;
@@ -195,6 +186,18 @@ public sealed partial class MainWindow : Window
             var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
             if (File.Exists(iconPath)) _appWindow.SetIcon(iconPath);
         }
+        _fullscreen = new FullscreenPresentationController(
+            this,
+            _appWindow,
+            new FullscreenViewElements(
+                MainMenuBarHost, AppTitleBarArea, PlaybackControls, VisualizationPanel, StatusPanel,
+                SubtitlePanel, RightPanelSplitter, RightPanelSplitterColumn, RightPanelColumn,
+                BottomPanelSplitter, BottomPanelSplitterRow, BottomPanelRow, VideoPlaceholder),
+            () => _panels.RightWidth,
+            ApplyPanelVisibility,
+            FocusPlaybackSurface,
+            hidden => _videoHost?.SetCursorHidden(hidden),
+            message => StatusText.Text = message);
         if (_appWindow is not null) { _appWindow.Closing += OnAppWindowClosing; _appWindow.Changed += OnAppWindowChanged; }
         Closed += OnWindowClosed;
         RootGrid.ActualThemeChanged += OnRootActualThemeChanged;
@@ -204,9 +207,6 @@ public sealed partial class MainWindow : Window
         PositionSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPositionSliderPointerPressed), true);
         PositionSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
         PositionSlider.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
-        _fullscreenHoverTimer = DispatcherQueue.CreateTimer();
-        _fullscreenHoverTimer.Interval = TimeSpan.FromMilliseconds(100);
-        _fullscreenHoverTimer.Tick += OnFullscreenHoverTick;
         BindDocument(new SubtitleDocument());
     }
 
@@ -261,10 +261,7 @@ public sealed partial class MainWindow : Window
     public void ApplySavedWindowPlacement(WindowLayoutSettings layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
-        _rightPanelVisible = layout.IsRightPanelVisible;
-        _bottomPanelVisible = layout.IsBottomPanelVisible;
-        _rightPanelWidth = Math.Clamp(layout.RightPanelWidth, 240, 1200);
-        _bottomPanelHeight = Math.Clamp(layout.BottomPanelHeight, WindowLayoutSettings.MinimumBottomPanelHeight, 800);
+        _panels.Load(layout);
         ApplyPanelVisibility();
         if (_appWindow is null || !layout.HasPlacement) return;
         var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary);
@@ -292,13 +289,7 @@ public sealed partial class MainWindow : Window
 
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {
-        if (!_initialized || _changingFullscreen) return;
-        if (_isFullscreen)
-        {
-            ApplyFullscreenWindowStyle();
-            if (sender.Presenter.Kind != AppWindowPresenterKind.FullScreen) QueueFullscreenRepair();
-            return;
-        }
+        if (!_initialized || _fullscreen.HandleAppWindowChanged()) return;
         if (sender.Presenter is not OverlappedPresenter presenter || presenter.State == OverlappedPresenterState.Minimized) return;
         CaptureWindowPlacement(sender, presenter);
         UpdateTitleBarDragRegion();
@@ -322,14 +313,11 @@ public sealed partial class MainWindow : Window
         UpdateTitleBarDragRegion();
         try
         {
-            _rightPanelVisible = _settings.Window.IsRightPanelVisible;
-            _bottomPanelVisible = _settings.Window.IsBottomPanelVisible;
-            _rightPanelWidth = Math.Clamp(_settings.Window.RightPanelWidth, 240, 1200);
-            _bottomPanelHeight = Math.Clamp(_settings.Window.BottomPanelHeight, WindowLayoutSettings.MinimumBottomPanelHeight, 800);
+            _panels.Load(_settings.Window);
             ClampPanelSizesToAvailable();
             ApplyPanelVisibility();
             var recentLoad = _historyService.LoadRecentAsync();
-            _ = RefreshBrowserAsync(_browserDirectory);
+            _ = MediaBrowser.InitializeAsync();
             SubtitleVisibilityMenuItem.IsChecked = _settings.Playback.ShowSubtitles;
             RateCombo.ItemsSource = new[] { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0 };
             RateCombo.SelectedItem = RateCombo.Items.Cast<double>().OrderBy(value => Math.Abs(value - _settings.Playback.PlaybackRate)).First();
@@ -571,7 +559,7 @@ public sealed partial class MainWindow : Window
         _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
         ApplyRepeatModeToPlayback();
         UpdateWindowTitle(_currentMediaSource.DisplayName);
-        if (_currentMediaSource is WebDavMediaSource webDavSource) SelectWebDavEntry(webDavSource.ServerId, webDavSource.Uri);
+        if (_currentMediaSource is WebDavMediaSource webDavSource) WebDavBrowser.SelectEntry(webDavSource.ServerId, webDavSource.Uri);
         _ = SaveHistoryAfterOpenAsync(_currentMediaSource);
         _timelineTransform.Reset();
         var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
@@ -658,51 +646,17 @@ public sealed partial class MainWindow : Window
 
     private void PrepareBrowserForOpenedFile(string fullPath, bool showInExplorer)
     {
-        if (Path.GetDirectoryName(fullPath) is not { } directory) return;
         if (showInExplorer) ShowRightPanelSection(RightPanelSection.Explorer);
-        if (AreSameDirectory(directory, _browserDirectory))
-        {
-            SelectBrowserEntry(fullPath);
-            return;
-        }
-
-        _browserDirectory = directory;
-        _loadedBrowserDirectory = null;
-        BrowserFilterBox.Text = string.Empty;
-        _browserEntries = [];
-        UpdateBrowserBreadcrumbs();
-        ApplyBrowserEntryView();
+        MediaBrowser.PrepareForOpenedFile(fullPath);
     }
 
     private async Task RefreshBrowserForOpenedFileAsync(string fullPath)
     {
         try
         {
-            if (Path.GetDirectoryName(fullPath) is not { } directory) return;
-            if (_loadedBrowserDirectory is not null && AreSameDirectory(directory, _loadedBrowserDirectory))
-            {
-                SelectBrowserEntry(fullPath);
-                return;
-            }
-            await RefreshBrowserAsync(directory, fullPath);
+            await MediaBrowser.SynchronizeOpenedFileAsync(fullPath);
         }
         catch (Exception exception) { await AppLog.WriteAsync("error", "browser", "BROWSER_SYNC_AFTER_OPEN_ERROR", exception.Message, exception); }
-    }
-
-    private static bool AreSameDirectory(string first, string second) =>
-        string.Equals(
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(first)),
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(second)),
-            StringComparison.OrdinalIgnoreCase);
-
-    private void SelectBrowserEntry(string path)
-    {
-        if (FolderEntryList.ItemsSource is not IEnumerable<BrowserEntry> entries) return;
-        var fullPath = Path.GetFullPath(path);
-        var selectedEntry = entries.FirstOrDefault(item => item.Path.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
-        if (selectedEntry is null) return;
-        FolderEntryList.SelectedItem = selectedEntry;
-        FolderEntryList.ScrollIntoView(selectedEntry);
     }
 
     private async Task OpenFilesAsPlaylistAsync(IEnumerable<string> paths)
@@ -710,15 +664,13 @@ public sealed partial class MainWindow : Window
         // Entry points normalize and validate paths on a worker thread before reaching here.
         var files = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length == 0) return;
-        if (files.Length == 1 && IsSubtitlePath(files[0])) { await LoadSubtitleFromPathAsync(files[0]); return; }
+        if (files.Length == 1 && MediaFileClassifier.IsSubtitle(files[0])) { await LoadSubtitleFromPathAsync(files[0]); return; }
         _playlist.Clear();
-        _playlist.AddRange(files.Where(path => !IsSubtitlePath(path)).Select(PlaylistEntry.FromLocal));
+        _playlist.AddRange(files.Where(path => !MediaFileClassifier.IsSubtitle(path)).Select(PlaylistEntry.FromLocal));
         if (_playlist.Count == 0) return;
         _playlistIndex = 0;
         await OpenPlaylistEntryAsync(_playlist[0]);
     }
-
-    private static bool IsSubtitlePath(string path) => Path.GetExtension(path).ToLowerInvariant() is ".srt" or ".vtt" or ".ass" or ".ssa" or ".smi";
 
     private async Task PopulateSiblingPlaylistAsync(string currentPath)
     {
@@ -727,9 +679,8 @@ public sealed partial class MainWindow : Window
             var fullPath = Path.GetFullPath(currentPath);
             var directory = Path.GetDirectoryName(fullPath);
             if (directory is null) return;
-            var siblings = _loadedBrowserDirectory is not null && AreSameDirectory(directory, _loadedBrowserDirectory)
-                ? _browserEntries.Where(entry => !entry.IsDirectory).Select(entry => entry.Path).ToArray()
-                : await Task.Run(() => Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).OrderBy(Path.GetFileName, WindowsFileNameComparer.Instance).Take(5000).Select(Path.GetFullPath).ToArray());
+            var siblings = MediaBrowser.GetLoadedMediaPaths(directory)?.ToArray()
+                ?? await Task.Run(() => Directory.EnumerateFiles(directory).Where(MediaFileClassifier.IsPlayable).OrderBy(Path.GetFileName, WindowsFileNameComparer.Instance).Take(5000).Select(Path.GetFullPath).ToArray());
             if (!string.Equals(_playback.CurrentSource, fullPath, StringComparison.OrdinalIgnoreCase)) return;
             var index = Array.FindIndex(siblings, path => path.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
             if (index < 0) return;
@@ -832,7 +783,7 @@ public sealed partial class MainWindow : Window
         await OpenMediaAsync(entry.Path, entry.HttpHeaders, entry.MediaSource, preservePlaylist: true);
         if (entry.MediaSource is WebDavMediaSource webDavSource &&
             _currentMediaSource is WebDavMediaSource currentSource &&
-            currentSource.ServerId == webDavSource.ServerId && UrisEqual(currentSource.Uri, webDavSource.Uri))
+            currentSource.ServerId == webDavSource.ServerId && WebDavUri.Equals(currentSource.Uri, webDavSource.Uri))
         {
             await TryLoadMatchingWebDavSmiAsync(webDavSource);
         }
@@ -932,13 +883,7 @@ public sealed partial class MainWindow : Window
         if (!await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"))) return;
         try
         {
-            var bytes = await File.ReadAllBytesAsync(path);
-            var text = SubtitleTextDecoder.Decode(bytes, ResolveSubtitleEncoding(), Path.GetExtension(path).Equals(".smi", StringComparison.OrdinalIgnoreCase));
-            var document = ParseSubtitle(path, text);
-            // SAMI import is editable but this application does not write SAMI. Keep it
-            // detached from the source so Save uses a supported output format instead of
-            // overwriting the .smi file with another subtitle syntax.
-            document.MarkSaved(Path.GetExtension(path).Equals(".smi", StringComparison.OrdinalIgnoreCase) ? null : path);
+            var document = await _subtitleFiles.LoadAsync(path, _settings.Subtitle.Encoding);
             BindDocument(document);
             _translationCompletedForCurrentMedia = false;
             // Keep the native player and the editable document on one subtitle track.
@@ -949,15 +894,6 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception) { await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message); }
     }
-
-    private static SubtitleDocument ParseSubtitle(string pathOrUri, string text) => Path.GetExtension(pathOrUri).ToLowerInvariant() switch
-    {
-        ".srt" => SrtParser.Parse(text),
-        ".vtt" => VttParser.Parse(text),
-        ".ass" or ".ssa" => AssParser.Parse(text),
-        ".smi" => SmiParser.Parse(text),
-        _ => throw new InvalidDataException("Unsupported subtitle format.")
-    };
 
     private async void OnSaveSubtitleClick(object sender, RoutedEventArgs e)
     {
@@ -990,19 +926,11 @@ public sealed partial class MainWindow : Window
         if (track is null) return;
         try
         {
-            var targetFormat = System.IO.Path.GetExtension(path).ToLowerInvariant() switch { ".vtt" => "vtt", ".ass" or ".ssa" => "ass", _ => "srt" };
             var displayMode = _subtitleDisplayMode ?? SubtitleDisplayMode.Original;
-            var text = targetFormat switch
-            {
-                "vtt" => VttWriter.Write(track, displayMode),
-                "ass" => AssWriter.Write(track, _settings.Subtitle.FontFamily, displayMode),
-                _ => SrtWriter.Write(track, displayMode)
-            };
-            var convertedWithStyleLoss = !track.Format.Equals(targetFormat, StringComparison.OrdinalIgnoreCase) && track.Cues.Any(cue => !string.IsNullOrWhiteSpace(cue.Style));
-            await File.WriteAllTextAsync(path, text, ResolveSubtitleEncoding());
-            track.Format = targetFormat;
+            var result = await _subtitleFiles.SaveAsync(track, path, displayMode, _settings.Subtitle.FontFamily, _settings.Subtitle.Encoding);
+            track.Format = result.TargetFormat;
             _document.MarkSaved(path);
-            StatusText.Text = convertedWithStyleLoss ? F("StatusSavedStyleLoss", path) : F("StatusSaved", path);
+            StatusText.Text = result.HasStyleLoss ? F("StatusSavedStyleLoss", path) : F("StatusSaved", path);
         }
         catch (Exception exception) { await ShowMessageAsync(L("SaveErrorTitle"), exception.Message); }
     }
@@ -1564,7 +1492,7 @@ public sealed partial class MainWindow : Window
         var alt = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         var key = e.Key.ToString();
         var playbackHasFocus = VideoFocusTarget.FocusState != FocusState.Unfocused;
-        if (e.Key == Windows.System.VirtualKey.Escape && _isFullscreen) { ExitFullscreen(); e.Handled = true; return; }
+        if (e.Key == Windows.System.VirtualKey.Escape && _fullscreen.IsFullscreen) { _fullscreen.Exit(); UpdateFullscreenButton(); e.Handled = true; return; }
         var isTextInput = e.OriginalSource is TextBox or PasswordBox;
         if (ctrl && shift && !alt && e.Key == Windows.System.VirtualKey.N) { PlayFromBeginning(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Enter) { ToggleFullscreen(); e.Handled = true; return; }
@@ -1603,8 +1531,8 @@ public sealed partial class MainWindow : Window
         else if (Is(ShortcutActions.DeleteCue)) OnDeleteCueClick(this, new RoutedEventArgs());
         else if (Is(ShortcutActions.Fullscreen)) ToggleFullscreen();
         else if (Is(ShortcutActions.ToggleSubtitles)) { SubtitleVisibilityMenuItem.IsChecked = !_playback.AreSubtitlesVisible; OnToggleSubtitleVisibilityClick(this, new RoutedEventArgs()); }
-        else if (toggleTimelinePanel) { ShowBottomPanelMenuItem.IsChecked = !_bottomPanelVisible; OnToggleBottomPanelClick(this, new RoutedEventArgs()); }
-        else if (toggleSidePanel) { ShowRightPanelMenuItem.IsChecked = !_rightPanelVisible; OnToggleRightPanelClick(this, new RoutedEventArgs()); }
+        else if (toggleTimelinePanel) { ShowBottomPanelMenuItem.IsChecked = !_panels.IsBottomVisible; OnToggleBottomPanelClick(this, new RoutedEventArgs()); }
+        else if (toggleSidePanel) { ShowRightPanelMenuItem.IsChecked = !_panels.IsRightVisible; OnToggleRightPanelClick(this, new RoutedEventArgs()); }
         else return;
         e.Handled = true;
     }
@@ -1665,186 +1593,28 @@ public sealed partial class MainWindow : Window
         if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) TryPlayback(_playback.TogglePause);
         e.Handled = true;
     }
-    private void OnToggleRightPanelClick(object sender, RoutedEventArgs e) { _rightPanelVisible = ShowRightPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
-    private void OnToggleBottomPanelClick(object sender, RoutedEventArgs e) { _bottomPanelVisible = ShowBottomPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
-    private void OnRightPanelToggleButtonClick(object sender, RoutedEventArgs e) { _rightPanelVisible = RightPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
-    private void OnBottomPanelToggleButtonClick(object sender, RoutedEventArgs e) { _bottomPanelVisible = BottomPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
+    private void OnToggleRightPanelClick(object sender, RoutedEventArgs e) { _panels.IsRightVisible = ShowRightPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
+    private void OnToggleBottomPanelClick(object sender, RoutedEventArgs e) { _panels.IsBottomVisible = ShowBottomPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
+    private void OnRightPanelToggleButtonClick(object sender, RoutedEventArgs e) { _panels.IsRightVisible = RightPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
+    private void OnBottomPanelToggleButtonClick(object sender, RoutedEventArgs e) { _panels.IsBottomVisible = BottomPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
 
     private void ToggleFullscreen()
     {
-        try
-        {
-            if (_isFullscreen) ExitFullscreen(); else EnterFullscreen();
-        }
+        try { _fullscreen.Toggle(); }
         finally { UpdateFullscreenButton(); }
     }
 
     private void UpdateFullscreenButton()
     {
-        FullscreenButton.IsChecked = _isFullscreen;
-        FullscreenButtonIcon.Glyph = _isFullscreen ? "\uE73F" : "\uE740";
-        ToolTipService.SetToolTip(FullscreenButton, L(_isFullscreen ? "TooltipExitFullscreen" : "TooltipEnterFullscreen"));
-    }
-
-    private void EnterFullscreen()
-    {
-        if (_appWindow is null || _isFullscreen) return;
-        _changingFullscreen = true;
-        try
-        {
-            var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
-            _wasMaximizedBeforeFullscreen = _appWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized };
-            if (_wasMaximizedBeforeFullscreen && _appWindow.Presenter is OverlappedPresenter presenter) presenter.Restore();
-            _windowBoundsBeforeFullscreen = new RectInt32(_appWindow.Position.X, _appWindow.Position.Y, _appWindow.Size.Width, _appWindow.Size.Height);
-            _workAreaBeforeFullscreen = display.WorkArea;
-            _isFullscreen = true;
-            MainMenuBarHost.Visibility = Visibility.Collapsed;
-            AppTitleBarArea.Visibility = Visibility.Collapsed;
-            PlaybackControls.Visibility = Visibility.Collapsed;
-            VisualizationPanel.Visibility = Visibility.Collapsed;
-            StatusPanel.Visibility = Visibility.Collapsed;
-            SubtitlePanel.Visibility = Visibility.Collapsed;
-            RightPanelSplitter.Visibility = Visibility.Collapsed;
-            RightPanelSplitterColumn.Width = new GridLength(0);
-            RightPanelColumn.Width = new GridLength(0);
-            BottomPanelSplitter.Visibility = Visibility.Collapsed;
-            BottomPanelSplitterRow.Height = new GridLength(0);
-            BottomPanelRow.Height = new GridLength(0);
-            VideoPlaceholder.Margin = new Thickness(0);
-            ApplyFullscreenWindowStyle();
-            _appWindow.MoveAndResize(display.OuterBounds);
-            _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
-            ApplyFullscreenWindowStyle();
-            ResetFullscreenCursorIdle();
-            _fullscreenHoverTimer?.Start();
-            FocusPlaybackSurface();
-        }
-        catch (Exception exception)
-        {
-            _isFullscreen = false;
-            SetFullscreenCursorHidden(false);
-            RestoreWindowStyle();
-            RestoreWindowBounds(DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest));
-            ApplyPanelVisibility();
-            StatusText.Text = exception.Message;
-        }
-        finally { _changingFullscreen = false; }
-    }
-
-    private void ExitFullscreen()
-    {
-        if (_appWindow is null || !_isFullscreen) return;
-        _changingFullscreen = true;
-        var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
-        _isFullscreen = false;
-        try
-        {
-            _appWindow.SetPresenter(AppWindowPresenterKind.Default);
-            RestoreWindowStyle();
-            RestoreWindowBounds(display);
-        }
-        finally
-        {
-            _fullscreenHoverTimer?.Stop();
-            SetFullscreenCursorHidden(false);
-            _lastFullscreenCursorPosition = null;
-            MainMenuBarHost.Visibility = Visibility.Visible;
-            AppTitleBarArea.Visibility = Visibility.Visible;
-            PlaybackControls.Visibility = Visibility.Visible;
-            VideoPlaceholder.Margin = new Thickness(8, 4, 4, 4);
-            ApplyPanelVisibility();
-            _changingFullscreen = false;
-        }
-    }
-
-    private void QueueFullscreenRepair()
-    {
-        if (_fullscreenRepairQueued || _appWindow is null) return;
-        _fullscreenRepairQueued = true;
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            _fullscreenRepairQueued = false;
-            if (!_isFullscreen || _appWindow is null) return;
-            _changingFullscreen = true;
-            try
-            {
-                var display = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
-                ApplyFullscreenWindowStyle();
-                _appWindow.MoveAndResize(display.OuterBounds);
-                _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
-                ApplyFullscreenWindowStyle();
-            }
-            catch (Exception exception) { _ = AppLog.WriteAsync("error", "fullscreen", "FULLSCREEN_REPAIR_ERROR", exception.Message, exception); }
-            finally { _changingFullscreen = false; }
-        });
-    }
-
-    private void RestoreWindowBounds(DisplayArea currentDisplay)
-    {
-        if (_appWindow is null || _windowBoundsBeforeFullscreen is not { } bounds) return;
-        if (_workAreaBeforeFullscreen is { } previousWorkArea && (previousWorkArea.X != currentDisplay.WorkArea.X || previousWorkArea.Y != currentDisplay.WorkArea.Y))
-        {
-            var width = Math.Min(bounds.Width, currentDisplay.WorkArea.Width);
-            var height = Math.Min(bounds.Height, currentDisplay.WorkArea.Height);
-            var relativeX = Math.Max(0, bounds.X - previousWorkArea.X);
-            var relativeY = Math.Max(0, bounds.Y - previousWorkArea.Y);
-            bounds = new RectInt32(
-                currentDisplay.WorkArea.X + Math.Min(relativeX, Math.Max(0, currentDisplay.WorkArea.Width - width)),
-                currentDisplay.WorkArea.Y + Math.Min(relativeY, Math.Max(0, currentDisplay.WorkArea.Height - height)),
-                width,
-                height);
-        }
-        _appWindow.MoveAndResize(bounds);
-        if (_wasMaximizedBeforeFullscreen && _appWindow.Presenter is OverlappedPresenter presenter) presenter.Maximize();
-        _windowBoundsBeforeFullscreen = null;
-        _workAreaBeforeFullscreen = null;
-        _wasMaximizedBeforeFullscreen = false;
-    }
-
-    private void ApplyFullscreenWindowStyle()
-    {
-        var handle = WindowNative.GetWindowHandle(this);
-        var style = GetWindowLong(handle, GwlStyle);
-        if (!_fullscreenStyleCaptured) { _windowedStyle = style; _fullscreenStyleCaptured = true; }
-        var framelessStyle = style & ~(WsCaption | WsThickFrame);
-        if (framelessStyle == style) return;
-        SetWindowLong(handle, GwlStyle, framelessStyle);
-        SetWindowPos(handle, 0, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpFrameChanged);
-    }
-
-    private void RestoreWindowStyle()
-    {
-        if (!_fullscreenStyleCaptured) return;
-        var handle = WindowNative.GetWindowHandle(this);
-        SetWindowLong(handle, GwlStyle, _windowedStyle);
-        SetWindowPos(handle, 0, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpFrameChanged);
-        _fullscreenStyleCaptured = false;
+        FullscreenButton.IsChecked = _fullscreen.IsFullscreen;
+        FullscreenButtonIcon.Glyph = _fullscreen.IsFullscreen ? "\uE73F" : "\uE740";
+        ToolTipService.SetToolTip(FullscreenButton, L(_fullscreen.IsFullscreen ? "TooltipExitFullscreen" : "TooltipEnterFullscreen"));
     }
 
     private void ApplyPanelVisibility()
     {
-        if (_isFullscreen) return;
-        SubtitlePanel.Visibility = _rightPanelVisible ? Visibility.Visible : Visibility.Collapsed;
-        RightPanelSplitter.Visibility = _rightPanelVisible ? Visibility.Visible : Visibility.Collapsed;
-        RightPanelSplitterColumn.Width = _rightPanelVisible ? new GridLength(6) : new GridLength(0);
-        RightPanelColumn.Width = _rightPanelVisible ? new GridLength(_rightPanelWidth) : new GridLength(0);
-        VisualizationPanel.Visibility = _bottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
-        BottomPanelSplitter.Visibility = _bottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
-        BottomPanelSplitterRow.Height = _bottomPanelVisible ? new GridLength(6) : new GridLength(0);
-        BottomPanelRow.Height = _bottomPanelVisible ? new GridLength(_bottomPanelHeight) : new GridLength(0);
-        StatusPanel.Visibility = _bottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
-        ShowRightPanelMenuItem.IsChecked = _rightPanelVisible;
-        ShowBottomPanelMenuItem.IsChecked = _bottomPanelVisible;
-        RightPanelToggleButton.IsChecked = _rightPanelVisible;
-        BottomPanelToggleButton.IsChecked = _bottomPanelVisible;
-        UpdatePanelToggleIcons();
-        if (_initialized)
-        {
-            _settings.Window.IsRightPanelVisible = _rightPanelVisible;
-            _settings.Window.IsBottomPanelVisible = _bottomPanelVisible;
-            _settings.Window.RightPanelWidth = _rightPanelWidth;
-            _settings.Window.BottomPanelHeight = _bottomPanelHeight;
-        }
+        if (_fullscreen.IsFullscreen) return;
+        _panels.Apply(_initialized);
     }
 
     private void RefreshRightPanelSections()
@@ -1872,7 +1642,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowRightPanelSection(RightPanelSection section)
     {
-        _rightPanelVisible = true;
+        _panels.IsRightVisible = true;
         ApplyPanelVisibility();
         RightPanelSectionList.SelectedIndex = (int)section;
         ApplyRightPanelSection(section);
@@ -1903,105 +1673,25 @@ public sealed partial class MainWindow : Window
 
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (_isFullscreen) return;
+        if (_fullscreen.IsFullscreen) return;
         UpdateTitleBarDragRegion();
-        var previousRightWidth = _rightPanelWidth;
-        var previousBottomHeight = _bottomPanelHeight;
-        ClampPanelSizesToAvailable();
-        if (Math.Abs(previousRightWidth - _rightPanelWidth) > 0.1 || Math.Abs(previousBottomHeight - _bottomPanelHeight) > 0.1)
-            ApplyPanelVisibility();
+        if (_panels.Clamp(MainContentGrid.ActualWidth, RootGrid.ActualHeight)) ApplyPanelVisibility();
     }
 
-    private void ClampPanelSizesToAvailable()
-    {
-        if (MainContentGrid.ActualWidth > 0)
-            _rightPanelWidth = Math.Min(_rightPanelWidth, Math.Max(240, MainContentGrid.ActualWidth - 326));
-        if (RootGrid.ActualHeight > 0)
-            _bottomPanelHeight = Math.Min(_bottomPanelHeight, Math.Max(WindowLayoutSettings.MinimumBottomPanelHeight, RootGrid.ActualHeight - 320));
-    }
+    private void ClampPanelSizesToAvailable() => _panels.Clamp(MainContentGrid.ActualWidth, RootGrid.ActualHeight);
 
     private void OnRightPanelSplitterDragDelta(object sender, DragDeltaEventArgs e)
     {
-        if (_isFullscreen || !_rightPanelVisible) return;
-        var maximum = Math.Max(240, MainContentGrid.ActualWidth - 320 - RightPanelSplitterColumn.ActualWidth);
-        _rightPanelWidth = Math.Clamp(_rightPanelWidth - e.HorizontalChange, 240, Math.Min(1200, maximum));
-        RightPanelColumn.Width = new GridLength(_rightPanelWidth);
-        if (_initialized) _settings.Window.RightPanelWidth = _rightPanelWidth;
+        if (_fullscreen.IsFullscreen || !_panels.IsRightVisible) return;
+        _panels.ResizeRight(e.HorizontalChange, MainContentGrid.ActualWidth, RightPanelSplitterColumn.ActualWidth, _initialized);
     }
 
     private void OnBottomPanelSplitterDragDelta(object sender, DragDeltaEventArgs e)
     {
-        if (_isFullscreen || !_bottomPanelVisible) return;
-        var maximum = Math.Max(WindowLayoutSettings.MinimumBottomPanelHeight, RootGrid.ActualHeight - 320);
-        _bottomPanelHeight = Math.Clamp(_bottomPanelHeight - e.VerticalChange, WindowLayoutSettings.MinimumBottomPanelHeight, Math.Min(800, maximum));
-        BottomPanelRow.Height = new GridLength(_bottomPanelHeight);
-        if (_initialized) _settings.Window.BottomPanelHeight = _bottomPanelHeight;
+        if (_fullscreen.IsFullscreen || !_panels.IsBottomVisible) return;
+        _panels.ResizeBottom(e.VerticalChange, RootGrid.ActualHeight, _initialized);
     }
 
-    private void OnFullscreenHoverTick(DispatcherQueueTimer sender, object args)
-    {
-        if (!_isFullscreen || _appWindow is null) return;
-        if (!GetCursorPos(out var cursor))
-        {
-            SetFullscreenCursorHidden(false);
-            return;
-        }
-        var left = _appWindow.Position.X;
-        var top = _appWindow.Position.Y;
-        var right = left + _appWindow.Size.Width;
-        var bottom = top + _appWindow.Size.Height;
-        var now = DateTimeOffset.UtcNow;
-        var inside = cursor.X >= left && cursor.X < right && cursor.Y >= top && cursor.Y < bottom;
-        var moved = _lastFullscreenCursorPosition is not { } previous || previous.X != cursor.X || previous.Y != cursor.Y;
-        _lastFullscreenCursorPosition = cursor;
-        if (moved || !inside)
-        {
-            _fullscreenCursorLastMovedAt = now;
-            SetFullscreenCursorHidden(false);
-        }
-        else if (now - _fullscreenCursorLastMovedAt >= FullscreenCursorHideDelay)
-        {
-            SetFullscreenCursorHidden(true);
-        }
-        if (inside)
-        {
-            // Keep the top chrome discoverable across the full custom title-bar height.
-            if (cursor.Y <= top + 32 || MainMenuBarHost.Visibility == Visibility.Visible && cursor.Y <= top + 70) _showFullscreenMenuUntil = now.AddSeconds(1.5);
-            if (cursor.Y >= bottom - 32 || PlaybackControls.Visibility == Visibility.Visible && cursor.Y >= bottom - 150) _showFullscreenControlsUntil = now.AddSeconds(1.5);
-        }
-        var verticallyAligned = cursor.Y >= top && cursor.Y < bottom;
-        if (verticallyAligned && (cursor.X >= right - 64 && cursor.X <= right + 24 || SubtitlePanel.Visibility == Visibility.Visible && cursor.X >= right - _rightPanelWidth - 40 && cursor.X < right))
-            _showFullscreenRightPanelUntil = now.AddSeconds(1.5);
-        var showTopChrome = now < _showFullscreenMenuUntil;
-        AppTitleBarArea.Visibility = showTopChrome ? Visibility.Visible : Visibility.Collapsed;
-        MainMenuBarHost.Visibility = showTopChrome ? Visibility.Visible : Visibility.Collapsed;
-        var showControls = now < _showFullscreenControlsUntil;
-        PlaybackControls.Visibility = showControls ? Visibility.Visible : Visibility.Collapsed;
-        StatusPanel.Visibility = showControls ? Visibility.Visible : Visibility.Collapsed;
-        var showRight = now < _showFullscreenRightPanelUntil;
-        SubtitlePanel.Visibility = showRight ? Visibility.Visible : Visibility.Collapsed;
-        RightPanelSplitter.Visibility = showRight ? Visibility.Visible : Visibility.Collapsed;
-        RightPanelSplitterColumn.Width = showRight ? new GridLength(6) : new GridLength(0);
-        RightPanelColumn.Width = showRight ? new GridLength(_rightPanelWidth) : new GridLength(0);
-    }
-
-    private void ResetFullscreenCursorIdle()
-    {
-        _fullscreenCursorLastMovedAt = DateTimeOffset.UtcNow;
-        _lastFullscreenCursorPosition = GetCursorPos(out var cursor) ? cursor : null;
-        SetFullscreenCursorHidden(false);
-    }
-
-    private void SetFullscreenCursorHidden(bool hidden)
-    {
-        if (_fullscreenCursorHidden == hidden)
-        {
-            if (hidden) _videoHost?.SetCursorHidden(true);
-            return;
-        }
-        _fullscreenCursorHidden = hidden;
-        _videoHost?.SetCursorHidden(hidden);
-    }
     private async void OnDiagnosticsClick(object sender, RoutedEventArgs e)
     {
         StatusText.Text = L("StatusCollectingDiagnostics");
@@ -2112,7 +1802,7 @@ public sealed partial class MainWindow : Window
 
         _aiOperationCancellation = new CancellationTokenSource();
         var combineAiProgress = generate && translate;
-        if (combineAiProgress) BeginCombinedAiProgress();
+        if (combineAiProgress) _combinedAiProgress.Begin();
         string? temporaryInput = null;
         var translating = false;
         try
@@ -2137,7 +1827,7 @@ public sealed partial class MainWindow : Window
                 if (!File.Exists(source) && _currentHttpHeaders is { Count: > 0 })
                 {
                     StatusText.Text = L("StatusPreparingRemoteAsr");
-                    temporaryInput = await DownloadAsrInputAsync(source, _currentHttpHeaders, token);
+                    temporaryInput = await _remoteMediaDownloader.DownloadAsync(source, _currentHttpHeaders, _settings.Network.Proxy, _settings.Network.TimeoutSeconds, token);
                     source = temporaryInput;
                 }
                 _translationCompletedForCurrentMedia = await GenerateSubtitlesAsync(source, startMicroseconds, token, preserveExistingSubtitles);
@@ -2165,7 +1855,7 @@ public sealed partial class MainWindow : Window
             AsrDownloadProgressBar.Visibility = Visibility.Collapsed;
             AsrDownloadProgressBar.IsIndeterminate = false;
             if (temporaryInput is not null) try { File.Delete(temporaryInput); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-            if (combineAiProgress) EndCombinedAiProgress();
+            if (combineAiProgress) _combinedAiProgress.End();
             _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null;
         }
     }
@@ -2201,7 +1891,7 @@ public sealed partial class MainWindow : Window
             ? existingDisplayMode
             : TranslateMenuItem.IsChecked ? SubtitleDisplayMode.Translation : SubtitleDisplayMode.Original;
         SetSubtitleDisplayMode(displayMode, refreshOverlay: false);
-        _rightPanelVisible = true;
+        _panels.IsRightVisible = true;
         ApplyPanelVisibility();
         ShowRightPanelSection(RightPanelSection.Subtitles);
         SetSubtitleGenerationStatus(0d);
@@ -2215,11 +1905,11 @@ public sealed partial class MainWindow : Window
                 DrawTimeline();
                 if (translateGeneratedCues)
                 {
-                    MarkCombinedSubtitleGenerationComplete();
+                    _combinedAiProgress.CompleteSubtitle();
                     var translatedCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
                     if (track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
-                        MarkCombinedTranslationComplete(translatedCount, track.Cues.Count);
-                    else if (!UpdateCombinedTranslationProgress(translatedCount, track.Cues.Count))
+                        _combinedAiProgress.CompleteTranslation(translatedCount, track.Cues.Count);
+                    else if (!_combinedAiProgress.UpdateTranslation(translatedCount, track.Cues.Count))
                         StatusText.Text = F("StatusTranslated", translatedCount);
                 }
                 else StatusText.Text = F("StatusGeneratedSubtitles", track.Cues.Count);
@@ -2257,7 +1947,7 @@ public sealed partial class MainWindow : Window
         finally
         {
             translationQueue.Writer.TryComplete();
-            if (subtitleGenerationCompleted && translateGeneratedCues) MarkCombinedSubtitleGenerationComplete();
+            if (subtitleGenerationCompleted && translateGeneratedCues) _combinedAiProgress.CompleteSubtitle();
             if (token.IsCancellationRequested)
             {
                 try { await translationTask.ConfigureAwait(false); }
@@ -2282,8 +1972,8 @@ public sealed partial class MainWindow : Window
             if (translateGeneratedCues)
             {
                 if (track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
-                    MarkCombinedTranslationComplete(completedTranslationCount, track.Cues.Count);
-                else if (!UpdateCombinedTranslationProgress(completedTranslationCount, track.Cues.Count))
+                    _combinedAiProgress.CompleteTranslation(completedTranslationCount, track.Cues.Count);
+                else if (!_combinedAiProgress.UpdateTranslation(completedTranslationCount, track.Cues.Count))
                     StatusText.Text = F("StatusTranslated", translatedCount);
             }
             else StatusText.Text = translatedCount > 0 ? F("StatusTranslated", translatedCount) : F("StatusGeneratedSubtitles", track.Cues.Count);
@@ -2432,125 +2122,34 @@ public sealed partial class MainWindow : Window
 
     private void SetSubtitleGenerationStatus(double progress)
     {
-        if (UpdateCombinedSubtitleProgress(progress)) return;
+        if (_combinedAiProgress.UpdateSubtitle(progress)) return;
         StatusText.Text = F("StatusGeneratingSubtitles", progress);
     }
 
     private void SetTranslationProgressStatus(int completed, int total)
     {
-        if (UpdateCombinedTranslationProgress(completed, total)) return;
+        if (_combinedAiProgress.UpdateTranslation(completed, total)) return;
         StatusText.Text = F("StatusTranslating", completed, total);
     }
 
-    private void BeginCombinedAiProgress()
+    private void OnCombinedAiProgressChanged(object? sender, AiProgressChangedEventArgs e)
     {
-        lock (_combinedAiProgressLock) _combinedAiProgress = new CombinedAiProgressState();
-    }
-
-    private void EndCombinedAiProgress()
-    {
-        lock (_combinedAiProgressLock) _combinedAiProgress = null;
-    }
-
-    private bool UpdateCombinedSubtitleProgress(double progress)
-    {
-        lock (_combinedAiProgressLock)
+        void Apply()
         {
-            if (_combinedAiProgress is null) return false;
-            _combinedAiProgress.SubtitleProgress = Math.Clamp(progress, 0d, 1d);
-        }
-        RefreshCombinedAiProgressStatus();
-        return true;
-    }
-
-    private bool MarkCombinedSubtitleGenerationComplete()
-    {
-        lock (_combinedAiProgressLock)
-        {
-            if (_combinedAiProgress is null) return false;
-            _combinedAiProgress.SubtitleGenerationComplete = true;
-        }
-        RefreshCombinedAiProgressStatus();
-        return true;
-    }
-
-    private bool UpdateCombinedTranslationProgress(int completed, int total)
-    {
-        lock (_combinedAiProgressLock)
-        {
-            if (_combinedAiProgress is null) return false;
-            _combinedAiProgress.TranslatedCount = Math.Max(0, completed);
-            _combinedAiProgress.TranslationTotal = Math.Max(Math.Max(0, total), _combinedAiProgress.TranslatedCount);
-        }
-        RefreshCombinedAiProgressStatus();
-        return true;
-    }
-
-    private bool MarkCombinedTranslationComplete(int completed, int total)
-    {
-        lock (_combinedAiProgressLock)
-        {
-            if (_combinedAiProgress is null) return false;
-            _combinedAiProgress.TranslatedCount = Math.Max(0, completed);
-            _combinedAiProgress.TranslationTotal = Math.Max(Math.Max(0, total), _combinedAiProgress.TranslatedCount);
-            _combinedAiProgress.TranslationComplete = true;
-        }
-        RefreshCombinedAiProgressStatus();
-        return true;
-    }
-
-    private void RefreshCombinedAiProgressStatus()
-    {
-        if (DispatcherQueue.HasThreadAccess)
-        {
-            ApplyCombinedAiProgressStatus();
-            return;
-        }
-        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, ApplyCombinedAiProgressStatus);
-    }
-
-    private void ApplyCombinedAiProgressStatus()
-    {
-        string? status;
-        lock (_combinedAiProgressLock)
-        {
-            if (_combinedAiProgress is null) return;
-            status = _combinedAiProgress.SubtitleGenerationComplete
-                ? _combinedAiProgress.TranslationComplete
+            var progress = e.Progress;
+            StatusText.Text = progress.SubtitleGenerationComplete
+                ? progress.TranslationComplete
                     ? L("StatusSubtitlesAndTranslationComplete")
-                    : F("StatusSubtitlesGeneratedAndTranslating", _combinedAiProgress.TranslatedCount, _combinedAiProgress.TranslationTotal)
-                : F("StatusGeneratingSubtitlesAndTranslating", _combinedAiProgress.SubtitleProgress, _combinedAiProgress.TranslatedCount, _combinedAiProgress.TranslationTotal);
+                    : F("StatusSubtitlesGeneratedAndTranslating", progress.TranslatedCount, progress.TranslationTotal)
+                : F("StatusGeneratingSubtitlesAndTranslating", progress.SubtitleProgress, progress.TranslatedCount, progress.TranslationTotal);
         }
-        StatusText.Text = status;
+        if (DispatcherQueue.HasThreadAccess) Apply();
+        else DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, Apply);
     }
 
     private static string FormatDownloadSize(long bytes) => bytes >= 1_073_741_824
         ? $"{bytes / 1_073_741_824d:0.00} GB"
         : $"{bytes / 1_048_576d:0.0} MB";
-
-    private async Task<string> DownloadAsrInputAsync(string source, IReadOnlyDictionary<string, string> headers, CancellationToken cancellationToken)
-    {
-        var handler = new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.All };
-        if (Uri.TryCreate(_settings.Network.Proxy, UriKind.Absolute, out var proxyUri)) { handler.Proxy = new WebProxy(proxyUri); handler.UseProxy = true; }
-        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-        using var request = new HttpRequestMessage(HttpMethod.Get, source);
-        foreach (var header in headers) request.Headers.TryAddWithoutValidation(header.Key, header.Value);
-        using var headerCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        headerCancellation.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_settings.Network.TimeoutSeconds, 5, 300)));
-        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, headerCancellation.Token);
-        response.EnsureSuccessStatusCode();
-        var extension = Path.GetExtension(new Uri(source).AbsolutePath);
-        if (extension.Length is 0 or > 12 || extension.Any(character => !char.IsLetterOrDigit(character) && character != '.')) extension = ".media";
-        var path = Path.Combine(Path.GetTempPath(), $"aimw-asr-{Guid.NewGuid():N}{extension}");
-        try
-        {
-            await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-            await input.CopyToAsync(output, cancellationToken);
-            return path;
-        }
-        catch { try { File.Delete(path); } catch (IOException) { } throw; }
-    }
 
     private void OnTranslateClick(object sender, RoutedEventArgs e)
     {
@@ -2588,8 +2187,8 @@ public sealed partial class MainWindow : Window
             ScheduleSubtitleOverlaySync(force: true);
             var existingTranslatedCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
             if (track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
-                MarkCombinedTranslationComplete(existingTranslatedCount, track.Cues.Count);
-            else if (!UpdateCombinedTranslationProgress(existingTranslatedCount, track.Cues.Count))
+                _combinedAiProgress.CompleteTranslation(existingTranslatedCount, track.Cues.Count);
+            else if (!_combinedAiProgress.UpdateTranslation(existingTranslatedCount, track.Cues.Count))
                 StatusText.Text = F("StatusTranslated", 0);
             return track.Cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
         }
@@ -2607,8 +2206,8 @@ public sealed partial class MainWindow : Window
         ScheduleSubtitleOverlaySync(force: true);
         var translatedCount = track.Cues.Count(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
         if (cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText)))
-            MarkCombinedTranslationComplete(translatedCount, track.Cues.Count);
-        else if (!UpdateCombinedTranslationProgress(translatedCount, track.Cues.Count))
+            _combinedAiProgress.CompleteTranslation(translatedCount, track.Cues.Count);
+        else if (!_combinedAiProgress.UpdateTranslation(translatedCount, track.Cues.Count))
             StatusText.Text = F("StatusTranslated", translated.Count);
         await AppLog.WriteAsync("info", "translation", "TRANSLATION_COMPLETED", $"Translated {translated.Count} cues from {startMicroseconds} microseconds using {_settings.Llm.Provider}.");
         return cues.All(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
@@ -2795,7 +2394,7 @@ public sealed partial class MainWindow : Window
     {
         return new LlmProviderFactory(new WindowsCredentialService()).Create(_settings.Llm.Provider);
     }
-    private async void OnAddWebDavServerClick(object sender, RoutedEventArgs e)
+    private async void OnAddWebDavServerRequested(object? sender, EventArgs e)
     {
         try
         {
@@ -2835,16 +2434,16 @@ public sealed partial class MainWindow : Window
             _webDavCredentials.Save(server.Id, new WebDavConnectionCredential(WebDavConnectionCredential.NormalizeAddress(parsedAddress), (int)port.Value, username.Text.Trim(), password.Password));
             _settings.Network.WebDavServers.Add(server);
             await SettingsService.CreateDefault().SaveAsync(_settings);
-            _rightPanelVisible = true;
+            _panels.IsRightVisible = true;
             ApplyPanelVisibility();
             ShowRightPanelSection(RightPanelSection.WebDav);
             RefreshWebDavServerList(server);
-            await ConnectWebDavServerAsync(server);
+            await WebDavBrowser.ConnectAsync(server);
         }
         catch (Exception exception)
         {
             await AppLog.WriteAsync("error", "webdav", "WEBDAV_ADD_ERROR", exception.Message, exception);
-            WebDavConnectionStatusText.Text = exception.Message;
+            WebDavBrowser.SetStatus(exception.Message);
         }
     }
 
@@ -2859,21 +2458,12 @@ public sealed partial class MainWindow : Window
 
     private void RefreshWebDavServerList(WebDavServerSettings? selected = null)
     {
-        WebDavServerList.ItemsSource = null;
-        WebDavServerList.ItemsSource = _settings.Network.WebDavServers;
-        WebDavEmptyServersText.Visibility = _settings.Network.WebDavServers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (selected is not null) WebDavServerList.SelectedItem = selected;
-        if (_webDavPanelDirectory is null) UpdateWebDavBreadcrumbs();
+        WebDavBrowser.SetServers(_settings.Network.WebDavServers, selected);
     }
 
-    private async void OnWebDavServerClick(object sender, ItemClickEventArgs e)
+    private async void OnDeleteWebDavServerRequested(object? sender, WebDavServerEventArgs e)
     {
-        if (e.ClickedItem is WebDavServerSettings server) await ConnectWebDavServerAsync(server);
-    }
-
-    private async void OnDeleteWebDavServerClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { DataContext: WebDavServerSettings server }) return;
+        var server = e.Server;
 
         var dialog = new ContentDialog
         {
@@ -2889,27 +2479,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var wasActive = _webDavPanelServerId == server.Id;
-            if (wasActive)
-            {
-                var listingCancellation = _webDavListingCancellation;
-                _webDavListingCancellation = null;
-                listingCancellation?.Cancel();
-                listingCancellation?.Dispose();
-                _webDavPanelServerId = null;
-                _webDavPanelDirectory = null;
-                _webDavEntries = [];
-                WebDavServerList.SelectedItem = null;
-                WebDavPanelEntryList.SelectedItem = null;
-                WebDavPanelEntryList.IsEnabled = true;
-                WebDavParentButton.IsEnabled = false;
-                WebDavRefreshButton.IsEnabled = false;
-                WebDavProgressRing.IsActive = false;
-                WebDavConnectionStatusText.Text = string.Empty;
-                ApplyWebDavEntryView();
-                UpdateWebDavBreadcrumbs();
-            }
-
+            WebDavBrowser.Disconnect(server.Id);
             _settings.Network.WebDavServers.RemoveAll(candidate => candidate.Id == server.Id);
             _webDavCredentials.Delete(server.Id);
             await SettingsService.CreateDefault().SaveAsync(_settings);
@@ -2918,172 +2488,13 @@ public sealed partial class MainWindow : Window
         catch (Exception exception)
         {
             await AppLog.WriteAsync("error", "webdav", "WEBDAV_DELETE_ERROR", exception.Message, exception);
-            WebDavConnectionStatusText.Text = exception.Message;
+            WebDavBrowser.SetStatus(exception.Message);
         }
     }
 
-    private void OnWebDavDeleteServerButtonLoaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button button) return;
-        var label = L("DeleteButtonText");
-        ToolTipService.SetToolTip(button, label);
-        AutomationProperties.SetName(button, label);
-    }
+    private Task ConnectWebDavServerAsync(WebDavServerSettings server, Uri? directory = null) =>
+        WebDavBrowser.ConnectAsync(server, directory);
 
-    private async Task ConnectWebDavServerAsync(WebDavServerSettings server, Uri? directory = null)
-    {
-        var credential = _webDavCredentials.Read(server.Id);
-        if (credential is null)
-        {
-            _webDavPanelServerId = null;
-            _webDavPanelDirectory = null;
-            _webDavEntries = [];
-            ApplyWebDavEntryView();
-            WebDavParentButton.IsEnabled = false;
-            WebDavRefreshButton.IsEnabled = false;
-            UpdateWebDavBreadcrumbs();
-            WebDavConnectionStatusText.Text = L("WebDavCredentialMissingMessage");
-            return;
-        }
-        var targetDirectory = EnsureWebDavDirectoryUri(directory ?? credential.RootUri);
-        var changedDirectory = _webDavPanelServerId != server.Id || _webDavPanelDirectory is null || !UrisEqual(_webDavPanelDirectory, targetDirectory);
-        _webDavPanelServerId = server.Id;
-        _webDavPanelDirectory = targetDirectory;
-        if (changedDirectory) WebDavFilterBox.Text = string.Empty;
-        WebDavServerList.SelectedItem = server;
-        await RefreshWebDavDirectoryAsync();
-    }
-
-    private async Task RefreshWebDavDirectoryAsync()
-    {
-        if (_webDavPanelServerId is not { } serverId || _webDavPanelDirectory is null) return;
-        var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == serverId);
-        if (server is null) return;
-
-        _webDavListingCancellation?.Cancel();
-        _webDavListingCancellation?.Dispose();
-        _webDavListingCancellation = new CancellationTokenSource();
-        var operation = _webDavListingCancellation;
-        WebDavProgressRing.IsActive = true;
-        WebDavPanelEntryList.IsEnabled = false;
-        WebDavParentButton.IsEnabled = false;
-        WebDavRefreshButton.IsEnabled = false;
-        UpdateWebDavBreadcrumbs(server);
-        WebDavConnectionStatusText.Text = F("WebDavConnectingMessage", server.Name);
-        try
-        {
-            var entries = await _webDavClient.ListAsync(server, _webDavPanelDirectory, operation.Token);
-            if (operation.IsCancellationRequested) return;
-            _webDavEntries = entries.ToArray();
-            ApplyWebDavEntryView();
-            WebDavConnectionStatusText.Text = F("WebDavConnectedMessage", server.Name, entries.Count);
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception) when (operation.IsCancellationRequested) { }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "webdav", exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_LIST_ERROR", exception.Message, exception);
-            _webDavEntries = [];
-            ApplyWebDavEntryView();
-            WebDavConnectionStatusText.Text = exception.Message;
-        }
-        finally
-        {
-            if (ReferenceEquals(_webDavListingCancellation, operation))
-            {
-                WebDavProgressRing.IsActive = false;
-                WebDavPanelEntryList.IsEnabled = true;
-                WebDavParentButton.IsEnabled = true;
-                WebDavRefreshButton.IsEnabled = true;
-            }
-        }
-    }
-
-    private async void OnWebDavParentClick(object sender, RoutedEventArgs e)
-    {
-        if (_webDavPanelServerId is not { } serverId || _webDavPanelDirectory is null) return;
-        var credential = _webDavCredentials.Read(serverId);
-        if (credential is null) return;
-        var root = EnsureWebDavDirectoryUri(credential.RootUri);
-        var parent = EnsureWebDavDirectoryUri(new Uri(_webDavPanelDirectory, "../"));
-        if (!parent.AbsoluteUri.StartsWith(root.AbsoluteUri, StringComparison.OrdinalIgnoreCase)) parent = root;
-        if (_webDavPanelDirectory is null || !UrisEqual(parent, _webDavPanelDirectory)) WebDavFilterBox.Text = string.Empty;
-        _webDavPanelDirectory = parent;
-        await RefreshWebDavDirectoryAsync();
-    }
-
-    private async void OnWebDavRefreshClick(object sender, RoutedEventArgs e) => await RefreshWebDavDirectoryAsync();
-
-    private async void OnWebDavBreadcrumbItemClick(BreadcrumbBar sender, BreadcrumbBarItemClickedEventArgs e)
-    {
-        if (e.Item is not WebDavBreadcrumbEntry entry || entry.Uri is null || entry.Uri == _webDavPanelDirectory) return;
-        if (_webDavPanelDirectory is null || !UrisEqual(entry.Uri, _webDavPanelDirectory)) WebDavFilterBox.Text = string.Empty;
-        _webDavPanelDirectory = entry.Uri;
-        await RefreshWebDavDirectoryAsync();
-    }
-
-    private void UpdateWebDavBreadcrumbs(WebDavServerSettings? server = null)
-    {
-        if (server is null || _webDavPanelDirectory is null || _webDavPanelServerId is not { } serverId)
-        {
-            WebDavBreadcrumbBar.ItemsSource = new[] { new WebDavBreadcrumbEntry(L("WebDavSelectServerMessage"), null) };
-            return;
-        }
-
-        var credential = _webDavCredentials.Read(serverId);
-        if (credential is null)
-        {
-            WebDavBreadcrumbBar.ItemsSource = new[] { new WebDavBreadcrumbEntry(server.Name, null) };
-            return;
-        }
-
-        var root = EnsureWebDavDirectoryUri(credential.RootUri);
-        var current = EnsureWebDavDirectoryUri(_webDavPanelDirectory);
-        var entries = new List<WebDavBreadcrumbEntry> { new(server.Name, root) };
-        if (!current.AbsoluteUri.StartsWith(root.AbsoluteUri, StringComparison.OrdinalIgnoreCase))
-        {
-            WebDavBreadcrumbBar.ItemsSource = entries;
-            return;
-        }
-
-        var relativePath = root.MakeRelativeUri(current).OriginalString;
-        var accumulatedPath = string.Empty;
-        foreach (var segment in relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries))
-        {
-            accumulatedPath += segment + "/";
-            entries.Add(new WebDavBreadcrumbEntry(Uri.UnescapeDataString(segment), EnsureWebDavDirectoryUri(new Uri(root, accumulatedPath))));
-        }
-        WebDavBreadcrumbBar.ItemsSource = entries;
-    }
-
-    private void OnWebDavFilterTextChanged(object sender, TextChangedEventArgs e) => ApplyWebDavEntryView();
-
-    private void OnWebDavSortClick(object sender, RoutedEventArgs e)
-    {
-        _webDavSortMode = NextSortMode(_webDavSortMode);
-        ApplyWebDavEntryView();
-    }
-
-    private void ApplyWebDavEntryView()
-    {
-        var selectedUri = (WebDavPanelEntryList.SelectedItem as WebDavEntry)?.Uri;
-        var filter = WebDavFilterBox.Text.Trim();
-        IEnumerable<WebDavEntry> filtered = string.IsNullOrEmpty(filter)
-            ? _webDavEntries
-            : _webDavEntries.Where(entry => entry.Name.Contains(filter, StringComparison.CurrentCultureIgnoreCase));
-        filtered = _webDavSortMode switch
-        {
-            EntrySortMode.Newest => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.LastModified is null).ThenByDescending(entry => entry.LastModified).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance),
-            EntrySortMode.Oldest => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.LastModified is null).ThenBy(entry => entry.LastModified).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance),
-            _ => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance)
-        };
-        var view = filtered.ToArray();
-        WebDavPanelEntryList.ItemsSource = view;
-        if (selectedUri is not null) WebDavPanelEntryList.SelectedItem = view.FirstOrDefault(entry => entry.Uri == selectedUri);
-        UpdateSortButton(WebDavSortButton, WebDavSortIcon, _webDavSortMode);
-    }
-
-    private static Uri EnsureWebDavDirectoryUri(Uri uri) => uri.AbsoluteUri.EndsWith('/') ? uri : new Uri(uri.AbsoluteUri + "/");
     private async void OnCameraClick(object sender, RoutedEventArgs e)
     {
         try
@@ -3109,6 +2520,8 @@ public sealed partial class MainWindow : Window
             _settingsWindow.SettingsSaved += (_, settings) =>
             {
                 _settings = settings;
+                MediaBrowser.DefaultDirectory = settings.General.DefaultFolder;
+                RefreshWebDavServerList();
                 LocalizationService.Apply(settings.General.Language);
                 UiFontService.Apply(settings.General.UiFontFamily, RootGrid);
                 ApplyTheme(settings.General.Theme);
@@ -3248,8 +2661,8 @@ public sealed partial class MainWindow : Window
 
     private void UpdatePanelToggleIcons()
     {
-        BottomPanelToggleIcon.Source = PanelToggleIconSource("bottom-panel", _bottomPanelVisible);
-        RightPanelToggleIcon.Source = PanelToggleIconSource("right-panel", _rightPanelVisible);
+        BottomPanelToggleIcon.Source = PanelToggleIconSource("bottom-panel", _panels.IsBottomVisible);
+        RightPanelToggleIcon.Source = PanelToggleIconSource("right-panel", _panels.IsRightVisible);
     }
 
     private SvgImageSource PanelToggleIconSource(string name, bool isOpen) => new()
@@ -3310,7 +2723,7 @@ public sealed partial class MainWindow : Window
         titleBar.SetDragRectangles([new RectInt32((int)left, (int)top, (int)dragWidth, (int)dragHeight)]);
     }
 
-    private async void OnChooseBrowserFolderClick(object sender, RoutedEventArgs e)
+    private async void OnBrowserChooseFolderRequested(object? sender, EventArgs e)
     {
         try
         {
@@ -3318,169 +2731,25 @@ public sealed partial class MainWindow : Window
             picker.FileTypeFilter.Add("*");
             InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
             var folder = await picker.PickSingleFolderAsync();
-            if (folder is not null) await RefreshBrowserAsync(folder.Path);
+            if (folder is not null) await MediaBrowser.NavigateAsync(folder.Path);
         }
         catch (Exception exception) { await ShowMessageAsync(L("FolderUnavailableTitle"), exception.Message); }
     }
 
-    private async void OnBrowserHomeClick(object sender, RoutedEventArgs e) => await RefreshBrowserAsync(ResolveDefaultBrowserDirectory(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)));
-
-    private async void OnBrowserParentClick(object sender, RoutedEventArgs e)
+    private async void OnBrowserMediaRequested(object? sender, LocalMediaBrowserEntryEventArgs e)
     {
-        var parent = Directory.GetParent(_browserDirectory);
-        if (parent is not null) await RefreshBrowserAsync(parent.FullName);
+        // Start playback before the browser materializes the sibling playlist.
+        await OpenMediaAsync(e.Path);
     }
 
-    private async void OnBrowserRefreshClick(object sender, RoutedEventArgs e) => await RefreshBrowserAsync(_browserDirectory);
-
-    private string ResolveDefaultBrowserDirectory(string fallback)
+    private async void OnBrowserFavoriteRequested(object? sender, LocalMediaBrowserEntryEventArgs e)
     {
-        var configured = _settings.General.DefaultFolder;
-        return !string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured) ? configured : fallback;
+        await AddFavoriteAsync(new LocalMediaSource(e.Path), e.IsDirectory);
     }
 
-    private async Task RefreshBrowserAsync(string directory, string? selectedPath = null)
+    private void OnBrowserErrorOccurred(object? sender, LocalMediaBrowserErrorEventArgs e)
     {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
-            {
-                directory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                if (!Directory.Exists(directory)) return;
-            }
-            var entries = await Task.Run(() =>
-            {
-                const int maximumEntries = 5000;
-                var result = new List<BrowserEntry>();
-                foreach (var path in Directory.EnumerateDirectories(directory).Take(maximumEntries).OrderBy(Path.GetFileName, WindowsFileNameComparer.Instance))
-                {
-                    try { result.Add(BrowserEntry.FromDirectory(path)); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-                }
-                var remaining = Math.Max(0, maximumEntries - result.Count);
-                foreach (var path in Directory.EnumerateFiles(directory).Where(IsPlayableMediaPath).Take(remaining).OrderBy(Path.GetFileName, WindowsFileNameComparer.Instance))
-                {
-                    try { result.Add(BrowserEntry.FromFile(path)); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-                }
-                if (selectedPath is not null && File.Exists(selectedPath) && !result.Any(item => item.Path.Equals(selectedPath, StringComparison.OrdinalIgnoreCase)))
-                {
-                    try { result.Add(BrowserEntry.FromFile(selectedPath)); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-                }
-                return result.ToArray();
-            });
-            if (!AreSameDirectory(directory, _browserDirectory)) BrowserFilterBox.Text = string.Empty;
-            _browserDirectory = Path.GetFullPath(directory);
-            _loadedBrowserDirectory = _browserDirectory;
-            UpdateBrowserBreadcrumbs();
-            _browserEntries = entries;
-            ApplyBrowserEntryView();
-            if (selectedPath is not null) SelectBrowserEntry(selectedPath);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            StatusText.Text = exception.Message;
-        }
-    }
-
-    private async void OnFolderEntryClick(object sender, ItemClickEventArgs e)
-    {
-        if (e.ClickedItem is not BrowserEntry entry) return;
-        if (entry.IsDirectory) { await RefreshBrowserAsync(entry.Path); return; }
-        // Issue loadfile before materializing a potentially large sibling playlist.
-        // CompleteMediaOpen keeps the current item available immediately, then the
-        // first-frame callback populates the rest of the folder asynchronously.
-        await OpenMediaAsync(entry.Path);
-    }
-
-    private async void OnBrowserBreadcrumbItemClick(BreadcrumbBar sender, BreadcrumbBarItemClickedEventArgs e)
-    {
-        if (e.Item is not BrowserBreadcrumbEntry entry || AreSameDirectory(entry.Path, _browserDirectory)) return;
-        await RefreshBrowserAsync(entry.Path);
-    }
-
-    private void UpdateBrowserBreadcrumbs()
-    {
-        var fullPath = Path.GetFullPath(_browserDirectory);
-        var root = Path.GetPathRoot(fullPath);
-        if (string.IsNullOrEmpty(root))
-        {
-            BrowserBreadcrumbBar.ItemsSource = new[] { new BrowserBreadcrumbEntry(fullPath, fullPath) };
-            return;
-        }
-
-        var entries = new List<BrowserBreadcrumbEntry> { new(root, root) };
-        var relativePath = Path.GetRelativePath(root, fullPath);
-        if (relativePath != ".")
-        {
-            var accumulatedPath = root;
-            foreach (var segment in relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-            {
-                if (string.IsNullOrEmpty(segment)) continue;
-                accumulatedPath = Path.Combine(accumulatedPath, segment);
-                entries.Add(new BrowserBreadcrumbEntry(segment, accumulatedPath));
-            }
-        }
-        BrowserBreadcrumbBar.ItemsSource = entries;
-    }
-
-    private void OnBrowserFilterTextChanged(object sender, TextChangedEventArgs e) => ApplyBrowserEntryView();
-
-    private void OnBrowserSortClick(object sender, RoutedEventArgs e)
-    {
-        _browserSortMode = NextSortMode(_browserSortMode);
-        ApplyBrowserEntryView();
-    }
-
-    private void ApplyBrowserEntryView()
-    {
-        var selectedPath = (FolderEntryList.SelectedItem as BrowserEntry)?.Path;
-        var filter = BrowserFilterBox.Text.Trim();
-        IEnumerable<BrowserEntry> filtered = string.IsNullOrEmpty(filter)
-            ? _browserEntries
-            : _browserEntries.Where(entry => entry.Name.Contains(filter, StringComparison.CurrentCultureIgnoreCase));
-        filtered = _browserSortMode switch
-        {
-            EntrySortMode.Newest => filtered.OrderByDescending(entry => entry.IsDirectory).ThenByDescending(entry => entry.LastModified).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance),
-            EntrySortMode.Oldest => filtered.OrderByDescending(entry => entry.IsDirectory).ThenBy(entry => entry.LastModified).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance),
-            _ => filtered.OrderByDescending(entry => entry.IsDirectory).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance)
-        };
-        var view = filtered.ToArray();
-        FolderEntryList.ItemsSource = view;
-        if (selectedPath is not null) FolderEntryList.SelectedItem = view.FirstOrDefault(entry => entry.Path.Equals(selectedPath, StringComparison.OrdinalIgnoreCase));
-        UpdateSortButton(BrowserSortButton, BrowserSortIcon, _browserSortMode);
-    }
-
-    private static EntrySortMode NextSortMode(EntrySortMode mode) => mode switch
-    {
-        EntrySortMode.Name => EntrySortMode.Newest,
-        EntrySortMode.Newest => EntrySortMode.Oldest,
-        _ => EntrySortMode.Name
-    };
-
-    private static void UpdateSortButton(AppBarButton button, FontIcon icon, EntrySortMode mode)
-    {
-        button.Label = L(mode switch
-        {
-            EntrySortMode.Newest => "SortNewest",
-            EntrySortMode.Oldest => "SortOldest",
-            _ => "SortName"
-        });
-        icon.Glyph = mode switch
-        {
-            EntrySortMode.Newest => "\uE74B",
-            EntrySortMode.Oldest => "\uE74A",
-            _ => "\uE8CB"
-        };
-    }
-
-    private void OnBrowserEntryRightTapped(object sender, RightTappedRoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { DataContext: BrowserEntry entry }) FolderEntryList.SelectedItem = entry;
-    }
-
-    private async void OnAddBrowserFavoriteClick(object sender, RoutedEventArgs e)
-    {
-        if (FolderEntryList.SelectedItem is not BrowserEntry entry) return;
-        await AddFavoriteAsync(new LocalMediaSource(entry.Path), entry.IsDirectory);
+        StatusText.Text = e.Exception.Message;
     }
 
     private async void OnPlaylistItemClick(object sender, ItemClickEventArgs e)
@@ -3494,25 +2763,16 @@ public sealed partial class MainWindow : Window
 
     private void OnClearPlaylistClick(object sender, RoutedEventArgs e) { _playlist.Clear(); _playlistIndex = -1; UpdatePlaylistButtons(); }
 
-    private async void OnWebDavPanelEntryClick(object sender, ItemClickEventArgs e)
+    private async void OnWebDavEntryRequested(object? sender, WebDavEntryEventArgs e)
     {
-        if (e.ClickedItem is not WebDavEntry entry || _webDavPanelServerId is not { } serverId) return;
-        if (entry.IsCollection)
-        {
-            var targetDirectory = EnsureWebDavDirectoryUri(entry.Uri);
-            if (_webDavPanelDirectory is null || !UrisEqual(targetDirectory, _webDavPanelDirectory)) WebDavFilterBox.Text = string.Empty;
-            _webDavPanelDirectory = targetDirectory;
-            await RefreshWebDavDirectoryAsync();
-            return;
-        }
-        var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == serverId);
-        if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("RecentServerMissingMessage")); return; }
-        if (IsSubtitlePath(Uri.UnescapeDataString(entry.Uri.AbsolutePath)))
+        var server = e.Server;
+        var entry = e.Entry;
+        if (MediaFileClassifier.IsSubtitle(Uri.UnescapeDataString(entry.Uri.AbsolutePath)))
         {
             await LoadWebDavSubtitleAsync(server, entry, confirmChanges: true, showSubtitlePanel: true);
             return;
         }
-        await OpenWebDavMediaAsync(server, entry, (WebDavPanelEntryList.ItemsSource as IEnumerable<WebDavEntry>)?.ToArray());
+        await OpenWebDavMediaAsync(server, entry, e.Siblings);
     }
 
     private async Task LoadWebDavSubtitleAsync(WebDavServerSettings server, WebDavEntry entry, bool confirmChanges, bool showSubtitlePanel, Uri? expectedMediaUri = null)
@@ -3527,10 +2787,9 @@ public sealed partial class MainWindow : Window
             var bytes = await _webDavClient.DownloadAsync(server, entry.Uri);
             if (expectedMediaUri is not null &&
                 (_currentMediaSource is not WebDavMediaSource currentSource ||
-                 currentSource.ServerId != server.Id || !UrisEqual(currentSource.Uri, expectedMediaUri))) return;
+                 currentSource.ServerId != server.Id || !WebDavUri.Equals(currentSource.Uri, expectedMediaUri))) return;
             var path = Uri.UnescapeDataString(entry.Uri.AbsolutePath);
-            var text = SubtitleTextDecoder.Decode(bytes, ResolveSubtitleEncoding(), Path.GetExtension(path).Equals(".smi", StringComparison.OrdinalIgnoreCase));
-            var document = ParseSubtitle(path, text);
+            var document = _subtitleFiles.DecodeAndParse(path, bytes, _settings.Subtitle.Encoding);
             document.MarkSaved();
             BindDocument(document);
             _translationCompletedForCurrentMedia = false;
@@ -3552,19 +2811,16 @@ public sealed partial class MainWindow : Window
             var server = _settings.Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == mediaSource.ServerId);
             if (server is null) return;
 
-            var directory = EnsureWebDavDirectoryUri(new Uri(mediaSource.Uri, "."));
+            var directory = WebDavUri.AsDirectory(new Uri(mediaSource.Uri, "."));
             IReadOnlyList<WebDavEntry> entries;
-            if (_webDavPanelServerId == mediaSource.ServerId && _webDavPanelDirectory is not null && UrisEqual(_webDavPanelDirectory, directory))
-            {
-                entries = _webDavEntries;
-            }
+            if (WebDavBrowser.TryGetEntries(mediaSource.ServerId, directory, out var displayedEntries)) entries = displayedEntries;
             else
             {
                 entries = await _webDavClient.ListAsync(server, directory);
             }
 
             if (_currentMediaSource is not WebDavMediaSource currentSource ||
-                currentSource.ServerId != mediaSource.ServerId || !UrisEqual(currentSource.Uri, mediaSource.Uri)) return;
+                currentSource.ServerId != mediaSource.ServerId || !WebDavUri.Equals(currentSource.Uri, mediaSource.Uri)) return;
 
             var sidecar = entries.FirstOrDefault(candidate =>
                 !candidate.IsCollection &&
@@ -3592,7 +2848,7 @@ public sealed partial class MainWindow : Window
             try
             {
                 siblings = await _webDavClient.ListAsync(server, new Uri(entry.Uri, "."));
-                SynchronizeWebDavPanel(server, entry.Uri, siblings);
+                WebDavBrowser.Synchronize(server, entry.Uri, siblings);
             }
             catch (Exception exception)
             {
@@ -3603,58 +2859,25 @@ public sealed partial class MainWindow : Window
         var mediaEntries = (siblings ?? [])
             .Where(IsPlayableWebDavEntry)
             .ToList();
-        if (!mediaEntries.Any(candidate => UrisEqual(candidate.Uri, entry.Uri))) mediaEntries.Add(entry);
+        if (!mediaEntries.Any(candidate => WebDavUri.Equals(candidate.Uri, entry.Uri))) mediaEntries.Add(entry);
 
         _playlist.Clear();
         _playlist.AddRange(mediaEntries.Select(candidate => PlaylistEntry.FromWebDav(server.Id, candidate, headers)));
-        _playlistIndex = _playlist.FindIndex(item => UrisEqual(new Uri(item.Path), entry.Uri));
+        _playlistIndex = _playlist.FindIndex(item => WebDavUri.Equals(new Uri(item.Path), entry.Uri));
         if (_playlistIndex < 0) _playlistIndex = 0;
         await OpenPlaylistEntryAsync(_playlist[_playlistIndex]);
     }
 
     private static bool IsPlayableWebDavEntry(WebDavEntry entry) =>
         !entry.IsCollection &&
-        (IsPlayableMediaPath(Uri.UnescapeDataString(entry.Uri.AbsolutePath)) ||
+        (MediaFileClassifier.IsPlayable(Uri.UnescapeDataString(entry.Uri.AbsolutePath)) ||
          entry.ContentType?.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) == true ||
          entry.ContentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true);
 
-    private static bool UrisEqual(Uri left, Uri right) =>
-        left.AbsoluteUri.Equals(right.AbsoluteUri, StringComparison.OrdinalIgnoreCase);
-
-    private void SynchronizeWebDavPanel(WebDavServerSettings server, Uri mediaUri, IReadOnlyList<WebDavEntry> entries)
+    private async void OnWebDavFavoriteRequested(object? sender, WebDavEntryEventArgs e)
     {
-        var directory = EnsureWebDavDirectoryUri(new Uri(mediaUri, "."));
-        var changedDirectory = _webDavPanelServerId != server.Id || _webDavPanelDirectory is null || !UrisEqual(_webDavPanelDirectory, directory);
-        _webDavPanelServerId = server.Id;
-        _webDavPanelDirectory = directory;
-        WebDavServerList.SelectedItem = server;
-        if (changedDirectory) WebDavFilterBox.Text = string.Empty;
-        _webDavEntries = entries.ToArray();
-        UpdateWebDavBreadcrumbs(server);
-        ApplyWebDavEntryView();
+        await AddFavoriteAsync(new WebDavMediaSource(e.Server.Id, e.Entry.Uri, e.Entry.Name), e.Entry.IsCollection);
     }
-
-    private void SelectWebDavEntry(Guid serverId, Uri uri)
-    {
-        if (_webDavPanelServerId != serverId || WebDavPanelEntryList.ItemsSource is not IEnumerable<WebDavEntry> entries) return;
-        var selectedEntry = entries.FirstOrDefault(entry => UrisEqual(entry.Uri, uri));
-        if (selectedEntry is null) return;
-        WebDavPanelEntryList.SelectedItem = selectedEntry;
-        WebDavPanelEntryList.ScrollIntoView(selectedEntry);
-    }
-
-    private void OnWebDavEntryRightTapped(object sender, RightTappedRoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { DataContext: WebDavEntry entry }) WebDavPanelEntryList.SelectedItem = entry;
-    }
-
-    private async void OnAddWebDavFavoriteClick(object sender, RoutedEventArgs e)
-    {
-        if (WebDavPanelEntryList.SelectedItem is not WebDavEntry entry || _webDavPanelServerId is not { } serverId) return;
-        await AddFavoriteAsync(new WebDavMediaSource(serverId, entry.Uri, entry.Name), entry.IsCollection);
-    }
-
-    private static bool IsPlayableMediaPath(string path) => Path.GetExtension(path).ToLowerInvariant() is ".mp4" or ".mkv" or ".webm" or ".avi" or ".mov" or ".wmv" or ".m4v" or ".ts" or ".m2ts" or ".mp3" or ".flac" or ".wav" or ".m4a" or ".aac" or ".ogg" or ".opus";
 
     private async Task AddFavoriteAsync(IMediaSource source, bool isFolder)
     {
@@ -3706,17 +2929,17 @@ public sealed partial class MainWindow : Window
             {
                 var server = FindWebDavServerForLocation(favorite.Location);
                 if (server is null) { await ShowMessageAsync(L("WebDavServerMissingTitle"), L("FavoriteServerMissingMessage")); return; }
-                _rightPanelVisible = true;
+                _panels.IsRightVisible = true;
                 ApplyPanelVisibility();
                 ShowRightPanelSection(RightPanelSection.WebDav);
                 await ConnectWebDavServerAsync(server, new Uri(favorite.Location));
                 return;
             }
             if (!Directory.Exists(favorite.Location)) { await ShowMessageAsync(L("FolderUnavailableTitle"), favorite.Location); return; }
-            _rightPanelVisible = true;
+            _panels.IsRightVisible = true;
             ApplyPanelVisibility();
             ShowRightPanelSection(RightPanelSection.Explorer);
-            await RefreshBrowserAsync(favorite.Location);
+            await MediaBrowser.NavigateAsync(favorite.Location);
             return;
         }
         await OpenRecentAsync(new RecentMediaItem(favorite.SourceType, favorite.DisplayName, favorite.Location, favorite.Added, 0));
@@ -3956,7 +3179,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (!_isFullscreen && sender.Presenter is OverlappedPresenter presenter && presenter.State != OverlappedPresenterState.Minimized) CaptureWindowPlacement(sender, presenter);
+        if (!_fullscreen.IsFullscreen && sender.Presenter is OverlappedPresenter presenter && presenter.State != OverlappedPresenterState.Minimized) CaptureWindowPlacement(sender, presenter);
         if (_allowClose) return;
 
         // Closed is too late for asynchronous cleanup: WinUI can stop its dispatcher before
@@ -4052,20 +3275,13 @@ public sealed partial class MainWindow : Window
 
         public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
     }
-    private System.Text.Encoding ResolveSubtitleEncoding()
-    {
-        var name = string.IsNullOrWhiteSpace(_settings.Subtitle.Encoding) ? "utf-8" : _settings.Subtitle.Encoding.Trim();
-        return name.Equals("utf-8", StringComparison.OrdinalIgnoreCase) || name.Equals("utf8", StringComparison.OrdinalIgnoreCase)
-            ? new System.Text.UTF8Encoding(false, true)
-            : System.Text.Encoding.GetEncoding(name, System.Text.EncoderFallback.ExceptionFallback, System.Text.DecoderFallback.ExceptionFallback);
-    }
     private async Task ShutdownAsync()
     {
         _playback.StateChanged -= OnPlaybackStateChanged;
+        _combinedAiProgress.ProgressChanged -= OnCombinedAiProgressChanged;
         ReleasePlaybackPowerRequirement();
         _windowsPowerManagement.Dispose();
-        _fullscreenHoverTimer?.Stop();
-        SetFullscreenCursorHidden(false);
+        _fullscreen.Dispose();
         if (_appWindow is not null)
         {
             _appWindow.Changed -= OnAppWindowChanged;
@@ -4077,7 +3293,7 @@ public sealed partial class MainWindow : Window
         _overlaySyncCancellation?.Cancel();
         CancelPendingSeekAiRestart();
         _aiOperationCancellation?.Cancel();
-        _webDavListingCancellation?.Cancel();
+        WebDavBrowser.Cancel();
 
         _settingsWindow?.Close();
         if (_cameraWindow is { } cameraWindow) await cameraWindow.CloseAsync();
@@ -4096,7 +3312,6 @@ public sealed partial class MainWindow : Window
         _postOpenCancellation?.Dispose(); _postOpenCancellation = null;
         _overlaySyncCancellation?.Dispose(); _overlaySyncCancellation = null;
         _aiOperationCancellation?.Dispose(); _aiOperationCancellation = null;
-        _webDavListingCancellation?.Dispose(); _webDavListingCancellation = null;
         _webDavClient.Dispose();
         try { await _asrEngine.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "ASR_DISPOSE_ERROR", exception.Message, exception); }
@@ -4160,65 +3375,12 @@ public sealed partial class MainWindow : Window
         public string IconGlyph => Item.IsFolder ? "\uE8B7" : "\uE8A5";
     }
 
-    private sealed record BrowserBreadcrumbEntry(string Label, string Path);
-    private sealed record WebDavBreadcrumbEntry(string Label, Uri? Uri);
-
     private sealed record RightPanelSectionEntry(string IconGlyph, string Label);
     private enum RightPanelSection { Explorer, Playlist, WebDav, Favorites, Subtitles }
 
-    private sealed class CombinedAiProgressState
-    {
-        public double SubtitleProgress { get; set; }
-        public int TranslatedCount { get; set; }
-        public int TranslationTotal { get; set; }
-        public bool SubtitleGenerationComplete { get; set; }
-        public bool TranslationComplete { get; set; }
-    }
-
     private sealed record PendingPostOpenWork(string Source, string? LocalPath, bool PopulateSiblingPlaylist, CancellationToken CancellationToken);
 
-    private sealed record BrowserEntry(string Path, bool IsDirectory, long? Length, DateTime LastModified)
-    {
-        public string Name => System.IO.Path.GetFileName(Path.TrimEnd(System.IO.Path.DirectorySeparatorChar));
-        public string IconGlyph => IsDirectory ? "\uE8B7" : "\uE8A5";
-        public string Details => IsDirectory || Length is null ? string.Empty : FormatBytes(Length.Value);
-        public static BrowserEntry FromDirectory(string path)
-        {
-            var info = new DirectoryInfo(path);
-            return new BrowserEntry(path, true, null, info.LastWriteTimeUtc);
-        }
-        public static BrowserEntry FromFile(string path)
-        {
-            var info = new FileInfo(path);
-            return new BrowserEntry(path, false, info.Length, info.LastWriteTimeUtc);
-        }
-        private static string FormatBytes(long bytes)
-        {
-            string[] units = ["B", "KB", "MB", "GB", "TB"];
-            var display = (double)Math.Max(0, bytes);
-            var unit = 0;
-            while (display >= 1024 && unit < units.Length - 1) { display /= 1024; unit++; }
-            return $"{display:0.##} {units[unit]}";
-        }
-    }
-
-    private enum EntrySortMode { Name, Newest, Oldest }
-
-    private const int GwlStyle = -16;
-    private const int WsCaption = 0x00C00000;
-    private const int WsThickFrame = 0x00040000;
-    private const uint SwpNoSize = 0x0001;
-    private const uint SwpNoMove = 0x0002;
-    private const uint SwpNoZOrder = 0x0004;
-    private const uint SwpNoActivate = 0x0010;
-    private const uint SwpFrameChanged = 0x0020;
     private static readonly TimeSpan AutomaticSubtitleStartDelay = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan FullscreenCursorHideDelay = TimeSpan.FromSeconds(2);
-    [StructLayout(LayoutKind.Sequential)] private struct NativePoint { public int X; public int Y; }
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out NativePoint point);
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)] private static extern int GetWindowLong(nint window, int index);
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)] private static extern int SetWindowLong(nint window, int index, int value);
-    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
 

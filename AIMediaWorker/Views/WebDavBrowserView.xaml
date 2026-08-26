@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AIMediaWorker.Views.WebDavBrowserView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid RowSpacing="6">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock x:Uid="WebDavServersPanelLabel" Text="Servers" FontWeight="SemiBold" Margin="4,4,4,0" />
+        <Grid Grid.Row="1" MaxHeight="150">
+            <ListView x:Name="ServerList" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnServerClick">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="6" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <FontIcon Glyph="&#xE968;" />
+                            <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            <Button Grid.Column="2" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0" Click="OnDeleteServerClick" Loaded="OnDeleteServerButtonLoaded">
+                                <SymbolIcon Symbol="Delete" />
+                            </Button>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+            <TextBlock x:Uid="WebDavNoServersText" x:Name="EmptyServersText" Text="No servers added" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" />
+        </Grid>
+        <CommandBar Grid.Row="2" DefaultLabelPosition="Collapsed">
+            <AppBarButton x:Uid="WebDavAddServerCommand" Icon="Add" Label="Add WebDAV server" Click="OnAddServerClick" />
+            <AppBarButton x:Uid="ParentButton" x:Name="ParentButton" Icon="Back" Label="Parent folder" Click="OnParentClick" IsEnabled="False" />
+            <AppBarButton x:Uid="RefreshCommand" x:Name="RefreshButton" Icon="Refresh" Label="Refresh" Click="OnRefreshClick" IsEnabled="False" />
+            <AppBarButton x:Uid="WebDavSort" x:Name="SortButton" Label="Sort by name" Click="OnSortClick">
+                <AppBarButton.Icon><FontIcon x:Name="SortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarElementContainer><ProgressRing x:Name="ProgressRing" Width="20" Height="20" Margin="8,0" IsActive="False" /></AppBarElementContainer>
+        </CommandBar>
+        <StackPanel Grid.Row="3" Margin="4,0" Spacing="2">
+            <BreadcrumbBar x:Name="BreadcrumbBar" ItemClicked="OnBreadcrumbItemClick">
+                <BreadcrumbBar.ItemTemplate><DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate></BreadcrumbBar.ItemTemplate>
+            </BreadcrumbBar>
+            <TextBlock x:Name="ConnectionStatusText" Text="" TextTrimming="CharacterEllipsis" Opacity="0.7" FontSize="11" />
+        </StackPanel>
+        <Grid Grid.Row="4" ColumnSpacing="8" Margin="4,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <SymbolIcon Symbol="Filter" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
+            <TextBox x:Uid="WebDavFilter" x:Name="FilterBox" Grid.Column="1" PlaceholderText="Filter by name" TextChanged="OnFilterTextChanged" />
+        </Grid>
+        <ListView x:Name="EntryList" Grid.Row="5" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnEntryClick">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="5" ColumnSpacing="8" RightTapped="OnEntryRightTapped">
+                        <Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddWebDavFavorite" Text="Add to favorites" Click="OnAddFavoriteClick" /></MenuFlyout></Grid.ContextFlyout>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <FontIcon Glyph="{Binding IconGlyph}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" />
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+    </Grid>
+</UserControl>

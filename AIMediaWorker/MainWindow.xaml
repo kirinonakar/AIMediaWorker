@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:AIMediaWorker"
+    xmlns:views="using:AIMediaWorker.Views"
     xmlns:primitives="using:Microsoft.UI.Xaml.Controls.Primitives"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -169,87 +170,13 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
                     <Grid>
                     <Grid x:Name="ExplorerSection">
-                        <Grid RowSpacing="6">
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                            <CommandBar DefaultLabelPosition="Collapsed">
-                                <AppBarButton x:Uid="BrowserChooseFolder" Icon="Folder" Label="Choose folder" Click="OnChooseBrowserFolderClick" />
-                                <AppBarButton x:Uid="BrowserHome" Icon="Home" Label="Home folder" Click="OnBrowserHomeClick" />
-                                <AppBarButton x:Uid="BrowserParentFolder" Icon="Back" Label="Parent folder" Click="OnBrowserParentClick" />
-                                <AppBarButton x:Uid="BrowserRefresh" Icon="Refresh" Label="Refresh" Click="OnBrowserRefreshClick" />
-                                <AppBarButton x:Uid="BrowserSort" x:Name="BrowserSortButton" Label="Sort by name" Click="OnBrowserSortClick"><AppBarButton.Icon><FontIcon x:Name="BrowserSortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon></AppBarButton>
-                            </CommandBar>
-                            <BreadcrumbBar x:Name="BrowserBreadcrumbBar" Grid.Row="1" ItemClicked="OnBrowserBreadcrumbItemClick">
-                                <BreadcrumbBar.ItemTemplate>
-                                    <DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
-                                </BreadcrumbBar.ItemTemplate>
-                            </BreadcrumbBar>
-                            <Grid Grid.Row="2" ColumnSpacing="8" Margin="4,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <SymbolIcon Symbol="Filter" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
-                                <TextBox x:Uid="BrowserFilter" x:Name="BrowserFilterBox" Grid.Column="1" PlaceholderText="Filter by name" TextChanged="OnBrowserFilterTextChanged" />
-                            </Grid>
-                            <ListView x:Name="FolderEntryList" Grid.Row="3" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnFolderEntryClick">
-                                <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnBrowserEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddBrowserFavorite" Text="Add to favorites" Click="OnAddBrowserFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding Details}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
-                            </ListView>
-                        </Grid>
+                        <views:LocalMediaBrowserView x:Name="MediaBrowser" />
                     </Grid>
                     <Grid x:Name="PlaylistSection" Visibility="Collapsed">
                         <Grid RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><TextBlock x:Name="PlaylistTitleText" Grid.Row="0" Text="Playlist" FontWeight="SemiBold" Margin="4,4,4,0" /><CommandBar Grid.Row="1" DefaultLabelPosition="Collapsed"><AppBarButton x:Uid="PlaylistAddMedia" Icon="OpenFile" Label="Add media" Click="OnOpenMediaClick" /><AppBarButton x:Uid="PlaylistClear" Icon="Delete" Label="Clear" Click="OnClearPlaylistClick" /></CommandBar><ListView x:Name="PlaylistList" Grid.Row="2" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnPlaylistItemClick"><ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding SourceIconGlyph}" VerticalAlignment="Center" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" /><TextBlock Grid.Column="1" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Path}" /></Grid></DataTemplate></ListView.ItemTemplate></ListView></Grid>
                     </Grid>
                     <Grid x:Name="WebDavSection" Visibility="Collapsed">
-                        <Grid RowSpacing="6">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
-                            <TextBlock x:Uid="WebDavServersPanelLabel" Text="Servers" FontWeight="SemiBold" Margin="4,4,4,0" />
-                            <Grid Grid.Row="1" MaxHeight="150">
-                                <ListView x:Name="WebDavServerList" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnWebDavServerClick">
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid Padding="6" ColumnSpacing="8">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                <FontIcon Glyph="&#xE968;" />
-                                                <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                                <Button Grid.Column="2" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0" Click="OnDeleteWebDavServerClick" Loaded="OnWebDavDeleteServerButtonLoaded">
-                                                    <SymbolIcon Symbol="Delete" />
-                                                </Button>
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
-                                <TextBlock x:Uid="WebDavNoServersText" x:Name="WebDavEmptyServersText" Text="No servers added" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" />
-                            </Grid>
-                            <CommandBar Grid.Row="2" DefaultLabelPosition="Collapsed">
-                                <AppBarButton x:Uid="WebDavAddServerCommand" Icon="Add" Label="Add WebDAV server" Click="OnAddWebDavServerClick" />
-                                <AppBarButton x:Uid="ParentButton" x:Name="WebDavParentButton" Icon="Back" Label="Parent folder" Click="OnWebDavParentClick" IsEnabled="False" />
-                                <AppBarButton x:Uid="RefreshCommand" x:Name="WebDavRefreshButton" Icon="Refresh" Label="Refresh" Click="OnWebDavRefreshClick" IsEnabled="False" />
-                                <AppBarButton x:Uid="WebDavSort" x:Name="WebDavSortButton" Label="Sort by name" Click="OnWebDavSortClick"><AppBarButton.Icon><FontIcon x:Name="WebDavSortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon></AppBarButton>
-                                <AppBarElementContainer>
-                                    <ProgressRing x:Name="WebDavProgressRing" Width="20" Height="20" Margin="8,0" IsActive="False" />
-                                </AppBarElementContainer>
-                            </CommandBar>
-                            <StackPanel Grid.Row="3" Margin="4,0" Spacing="2">
-                                <BreadcrumbBar x:Name="WebDavBreadcrumbBar" ItemClicked="OnWebDavBreadcrumbItemClick">
-                                    <BreadcrumbBar.ItemTemplate>
-                                        <DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
-                                    </BreadcrumbBar.ItemTemplate>
-                                </BreadcrumbBar>
-                                <TextBlock x:Name="WebDavConnectionStatusText" Text="" TextTrimming="CharacterEllipsis" Opacity="0.7" FontSize="11" />
-                            </StackPanel>
-                            <Grid Grid.Row="4" ColumnSpacing="8" Margin="4,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <SymbolIcon Symbol="Filter" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
-                                <TextBox x:Uid="WebDavFilter" x:Name="WebDavFilterBox" Grid.Column="1" PlaceholderText="Filter by name" TextChanged="OnWebDavFilterTextChanged" />
-                            </Grid>
-                            <ListView x:Name="WebDavPanelEntryList" Grid.Row="5" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnWebDavPanelEntryClick">
-                                <ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8" RightTapped="OnWebDavEntryRightTapped"><Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddWebDavFavorite" Text="Add to favorites" Click="OnAddWebDavFavoriteClick" /></MenuFlyout></Grid.ContextFlyout><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding IconGlyph}" /><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" /></Grid></DataTemplate></ListView.ItemTemplate>
-                            </ListView>
-                        </Grid>
+                        <views:WebDavBrowserView x:Name="WebDavBrowser" />
                     </Grid>
                     <Grid x:Name="FavoritesSection" Visibility="Collapsed">
                         <Grid RowSpacing="6">

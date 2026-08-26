@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AIMediaWorker.Views.LocalMediaBrowserView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid RowSpacing="6">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <CommandBar DefaultLabelPosition="Collapsed">
+            <AppBarButton x:Uid="BrowserChooseFolder" Icon="Folder" Label="Choose folder" Click="OnChooseFolderClick" />
+            <AppBarButton x:Uid="BrowserHome" Icon="Home" Label="Home folder" Click="OnHomeClick" />
+            <AppBarButton x:Uid="BrowserParentFolder" Icon="Back" Label="Parent folder" Click="OnParentClick" />
+            <AppBarButton x:Uid="BrowserRefresh" Icon="Refresh" Label="Refresh" Click="OnRefreshClick" />
+            <AppBarButton x:Uid="BrowserSort" x:Name="SortButton" Label="Sort by name" Click="OnSortClick">
+                <AppBarButton.Icon><FontIcon x:Name="SortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon>
+            </AppBarButton>
+        </CommandBar>
+        <BreadcrumbBar x:Name="BreadcrumbBar" Grid.Row="1" ItemClicked="OnBreadcrumbItemClick">
+            <BreadcrumbBar.ItemTemplate>
+                <DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
+            </BreadcrumbBar.ItemTemplate>
+        </BreadcrumbBar>
+        <Grid Grid.Row="2" ColumnSpacing="8" Margin="4,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <SymbolIcon Symbol="Filter" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
+            <TextBox x:Uid="BrowserFilter" x:Name="FilterBox" Grid.Column="1" PlaceholderText="Filter by name" TextChanged="OnFilterTextChanged" />
+        </Grid>
+        <ListView x:Name="EntryList" Grid.Row="3" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnEntryClick">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="5" ColumnSpacing="8" RightTapped="OnEntryRightTapped">
+                        <Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddBrowserFavorite" Text="Add to favorites" Click="OnAddFavoriteClick" /></MenuFlyout></Grid.ContextFlyout>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <FontIcon Glyph="{Binding IconGlyph}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Column="2" Text="{Binding Details}" Opacity="0.6" />
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+    </Grid>
+</UserControl>
