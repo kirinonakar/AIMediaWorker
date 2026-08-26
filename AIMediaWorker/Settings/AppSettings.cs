@@ -114,7 +114,7 @@ public sealed class CaptureSettings
     public double WindowsCaptionFontSize { get; set; } = 20;
     public bool WindowsCaptionTranslationOnly { get; set; }
     public bool WindowsCaptionShowPrevious { get; set; } = true;
-    public int WindowsCaptionPreviousSentenceCount { get; set; } = 2;
+    public int WindowsCaptionPreviousSentenceCount { get; set; } = 1;
 }
 
 public sealed class LlmSettings

@@ -52,7 +52,7 @@ public sealed partial class WindowsCaptionWindow : Window
     private bool _translating;
     private bool _translationOnly;
     private bool _showPrevious = true;
-    private int _previousSentenceCount = 2;
+    private int _previousSentenceCount = 1;
     private bool _initializingControls;
     private bool _allowClose;
 
