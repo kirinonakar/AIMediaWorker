@@ -19,6 +19,20 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <Target Name="UsePackageManifestVersion"
+          BeforeTargets="GetAssemblyVersion">
+    <XmlPeek XmlInputPath="$(MSBuildProjectDirectory)\Package.appxmanifest"
+             Query="/*[local-name()='Package']/*[local-name()='Identity']/@Version">
+      <Output TaskParameter="Result" PropertyName="PackageManifestVersion" />
+    </XmlPeek>
+    <PropertyGroup>
+      <Version>$(PackageManifestVersion)</Version>
+      <AssemblyVersion>$(PackageManifestVersion)</AssemblyVersion>
+      <FileVersion>$(PackageManifestVersion)</FileVersion>
+      <InformationalVersion>$(PackageManifestVersion)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+
   <ItemGroup>
     <Content Include="Assets\SplashScreen.scale-200.png" />
     <Content Include="Assets\LockScreenLogo.scale-200.png" />
