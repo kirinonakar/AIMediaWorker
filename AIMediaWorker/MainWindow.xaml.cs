@@ -8,6 +8,7 @@ using AIMediaWorker.Asr;
 using AIMediaWorker.Media;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Localization;
+using AIMediaWorker.WindowsIntegration;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -76,6 +77,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private readonly WindowDialogService _dialogs;
     private readonly AboutDialogService _aboutDialog;
     private readonly AuxiliaryWindowController _auxiliaryWindows;
+    private readonly TaskbarProgressController _taskbarProgress;
 
     private sealed record SubtitleSelectionOption(string DisplayName, SubtitleDisplayMode? DisplayMode, int? TrackId);
 
@@ -136,6 +138,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _playback.TracksChanged += OnTracksChanged;
         _playback.ErrorOccurred += OnPlaybackError;
         _playback.MediaEnded += OnMediaEnded;
+        _taskbarProgress = new TaskbarProgressController(WindowNative.GetWindowHandle(this));
         _videoHost = new NativeVideoHost(this, VideoPlaceholder);
         _videoHost.FilesDropped += OnNativeVideoFilesDropped;
         _videoHost.Clicked += OnNativeVideoClicked;
@@ -1009,6 +1012,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             _subtitleOverlay.InvalidateGeneratedCue();
         }
         RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
+        UpdateTaskbarProgress();
     });
 
     private void UpdatePlaybackPowerRequirement(PlaybackState state)
@@ -1113,11 +1117,25 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             var positionMicroseconds = Math.Max(0, position.Ticks / 10);
             _subtitleEditor.UpdatePlaybackPosition(positionMicroseconds);
             RefreshGeneratedSubtitleOsd(positionMicroseconds);
+            UpdateTaskbarProgress();
         }
         finally { Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 0); }
     }
+    private void UpdateTaskbarProgress()
+    {
+        var source = _playback.CurrentSource;
+        if (_playback.State is not (PlaybackState.Loading or PlaybackState.Playing or PlaybackState.Paused) ||
+            string.IsNullOrEmpty(source))
+        {
+            _taskbarProgress.Clear();
+            return;
+        }
+
+        _taskbarProgress.Update(_playback.State, _playback.Position, _playback.Duration);
+    }
     private void OnMediaEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(async () =>
     {
+        _taskbarProgress.Clear();
         if (_repeatMode == RepeatMode.AutoAdvance) await _mediaNavigation.AutoAdvanceAsync();
     });
     private void OnTracksChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
@@ -1589,6 +1607,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _playback.StateChanged -= OnPlaybackStateChanged;
         ResetAudioArtworkPresentation();
         ReleasePlaybackPowerRequirement();
+        _taskbarProgress.Dispose();
         _windowsPowerManagement.Dispose();
         _fullscreen.Dispose();
         if (_appWindow is not null)
@@ -1637,6 +1656,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
         ReleasePlaybackPowerRequirement();
+        _taskbarProgress.Dispose();
         _windowsPowerManagement.Dispose();
         if (_appWindow is not null)
         {
