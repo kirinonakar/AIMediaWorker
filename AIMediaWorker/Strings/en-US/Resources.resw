@@ -144,4 +144,26 @@
   <data name="PauseRecording.Content"><value>Pause</value></data><data name="PauseRecordingText"><value>Pause</value></data><data name="ResumeRecordingText"><value>Resume</value></data><data name="RecordingPausedTitle"><value>Recording paused</value></data><data name="RecordingPausedMessage"><value>Recording paused. Click Resume to continue.</value></data><data name="RecordingResumedTitle"><value>Recording resumed</value></data><data name="RecordingResumedMessage"><value>Recording continued.</value></data>
 <data name="WindowsCaptions.Text"><value>Windows captions…</value></data><data name="WindowsCaptionWindow.Title"><value>Windows captions</value></data><data name="WindowsCaptionStart.Content"><value>Start captions</value></data><data name="WindowsCaptionStop.Content"><value>Stop captions</value></data><data name="WindowsCaptionTranslate.Content"><value>Translate</value></data><data name="WindowsCaptionTranslateOn.Content"><value>Translate: on</value></data><data name="WindowsCaptionListening.Title"><value>Listening</value></data><data name="WindowsCaptionListening.Message"><value>Capturing system audio. Captions appear in real time.</value></data><data name="WindowsCaptionStopped.Title"><value>Stopped</value></data><data name="WindowsCaptionStopped.Message"><value>Captions stopped. Click Start captions to listen again.</value></data><data name="WindowsCaptionErrorTitle"><value>Windows captions error</value></data>
 <data name="WindowsCaptionTranslationOnly.Content"><value>Translation only</value></data><data name="WindowsCaptionShowPrevious.Content"><value>Show previous</value></data><data name="WindowsCaptionFontSize.Text"><value>Text size</value></data>
+<data name="CaptureRecorder.Text"><value>Capture &amp; record…</value></data>
+<data name="CaptureRecorderTitle"><value>Capture &amp; record</value></data>
+<data name="CaptureRecorderErrorTitle"><value>Capture &amp; record error</value></data>
+<data name="CaptureModeToggle.Content"><value>Capture</value></data>
+<data name="RecordModeToggle.Content"><value>Record</value></data>
+<data name="AreaFullscreen.Content"><value>Full screen</value></data>
+<data name="AreaWindow.Content"><value>Window</value></data>
+<data name="AreaRegion.Content"><value>Region</value></data>
+<data name="OcrAction.Content"><value>OCR</value></data>
+<data name="OcrTooltip"><value>Extract text from a selected area</value></data>
+<data name="RecordPause.Content"><value>Pause</value></data>
+<data name="RecordResume.Content"><value>Resume</value></data>
+<data name="RecordStop.Content"><value>Stop</value></data>
+<data name="RegionHint.Text"><value>Drag to select an area. Press Esc to cancel.</value></data>
+<data name="WindowHint.Text"><value>Click a window to select it. Press Esc to cancel.</value></data>
+<data name="StatusSavedFormat"><value>Saved: {0}</value></data>
+<data name="StatusOcrCopiedFormat"><value>Recognized text copied ({0} characters)</value></data>
+<data name="StatusOcrNoText"><value>No text was recognized.</value></data>
+<data name="ErrorNoOcrEngine"><value>No OCR engine is available. Install a Windows language pack.</value></data>
+
+<data name="RecordingErrorTitle"><value>Recording failed</value></data>
+<data name="CloseTooltip"><value>Close</value></data>
 </root>

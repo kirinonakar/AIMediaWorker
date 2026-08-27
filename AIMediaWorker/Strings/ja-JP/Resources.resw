@@ -144,4 +144,26 @@
   <data name="PauseRecording.Content"><value>一時停止</value></data><data name="PauseRecordingText"><value>一時停止</value></data><data name="ResumeRecordingText"><value>再開</value></data><data name="RecordingPausedTitle"><value>録画を一時停止</value></data><data name="RecordingPausedMessage"><value>録画を一時停止しました。再開するには[再開]をクリックしてください。</value></data><data name="RecordingResumedTitle"><value>録画を再開</value></data><data name="RecordingResumedMessage"><value>録画を再開しました。</value></data>
 <data name="WindowsCaptions.Text"><value>Windows キャプション…</value></data><data name="WindowsCaptionWindow.Title"><value>Windows キャプション</value></data><data name="WindowsCaptionStart.Content"><value>字幕を生成</value></data><data name="WindowsCaptionStop.Content"><value>字幕を停止</value></data><data name="WindowsCaptionTranslate.Content"><value>翻訳</value></data><data name="WindowsCaptionTranslateOn.Content"><value>翻訳: オン</value></data><data name="WindowsCaptionListening.Title"><value>録音中</value></data><data name="WindowsCaptionListening.Message"><value>システムオーディオをキャプチャしています。字幕がリアルタイムで表示されます。</value></data><data name="WindowsCaptionStopped.Title"><value>停止</value></data><data name="WindowsCaptionStopped.Message"><value>字幕を停止しました。再開するには[字幕を生成]をクリックしてください。</value></data><data name="WindowsCaptionErrorTitle"><value>Windows キャプションエラー</value></data>
 <data name="WindowsCaptionTranslationOnly.Content"><value>翻訳のみ</value></data><data name="WindowsCaptionShowPrevious.Content"><value>前の文を表示</value></data><data name="WindowsCaptionFontSize.Text"><value>文字サイズ</value></data>
+<data name="CaptureRecorder.Text"><value>キャプチャと録画…</value></data>
+<data name="CaptureRecorderTitle"><value>キャプチャと録画</value></data>
+<data name="CaptureRecorderErrorTitle"><value>キャプチャと録画エラー</value></data>
+<data name="CaptureModeToggle.Content"><value>キャプチャ</value></data>
+<data name="RecordModeToggle.Content"><value>録画</value></data>
+<data name="AreaFullscreen.Content"><value>全画面</value></data>
+<data name="AreaWindow.Content"><value>ウィンドウ</value></data>
+<data name="AreaRegion.Content"><value>範囲</value></data>
+<data name="OcrAction.Content"><value>OCR</value></data>
+<data name="OcrTooltip"><value>選択した範囲からテキストを抽出します</value></data>
+<data name="RecordPause.Content"><value>一時停止</value></data>
+<data name="RecordResume.Content"><value>再開</value></data>
+<data name="RecordStop.Content"><value>停止</value></data>
+<data name="RegionHint.Text"><value>ドラッグで範囲を選択します。Esc でキャンセルします。</value></data>
+<data name="WindowHint.Text"><value>キャプチャするウィンドウをクリックします。Esc でキャンセルします。</value></data>
+<data name="StatusSavedFormat"><value>保存しました: {0}</value></data>
+<data name="StatusOcrCopiedFormat"><value>認識したテキストをクリップボードにコピーしました ({0} 文字)</value></data>
+<data name="StatusOcrNoText"><value>テキストは認識されませんでした。</value></data>
+<data name="ErrorNoOcrEngine"><value>利用可能な OCR エンジンがありません。Windows 言語パックをインストールしてください。</value></data>
+
+<data name="RecordingErrorTitle"><value>録画に失敗しました</value></data>
+<data name="CloseTooltip"><value>閉じる</value></data>
 </root>

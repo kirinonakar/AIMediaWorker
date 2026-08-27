@@ -18,6 +18,7 @@ internal sealed class AuxiliaryWindowController
     private CameraWindow? _cameraWindow;
     private WindowsCaptionWindow? _captionWindow;
     private SettingsWindow? _settingsWindow;
+    private CaptureRecorderOverlayWindow? _captureRecorderWindow;
 
     public AuxiliaryWindowController(
         Window owner,
@@ -81,6 +82,29 @@ internal sealed class AuxiliaryWindowController
         }
     }
 
+    public async Task ShowCaptureRecorderAsync()
+    {
+        try
+        {
+            if (_captureRecorderWindow is not null)
+            {
+                _captureRecorderWindow.Activate();
+                return;
+            }
+            _ownerAppWindow?.Hide();
+            _captureRecorderWindow = new CaptureRecorderOverlayWindow(_owner);
+            _captureRecorderWindow.Closed += OnCaptureRecorderClosed;
+            _captureRecorderWindow.Activate();
+        }
+        catch (Exception exception)
+        {
+            _captureRecorderWindow = null;
+            _ownerAppWindow?.Show();
+            await AppLog.WriteAsync("error", "capture", "CAPTURE_RECORDER_WINDOW_ERROR", exception.Message, exception);
+            await _dialogs.ShowMessageAsync(L("CaptureRecorderErrorTitle"), exception.Message);
+        }
+    }
+
     public async Task ShowSettingsAsync()
     {
         try
@@ -110,6 +134,7 @@ internal sealed class AuxiliaryWindowController
         _settingsWindow?.Close();
         if (_cameraWindow is { } cameraWindow) await cameraWindow.CloseAsync();
         if (_captionWindow is { } captionWindow) await captionWindow.CloseAsync();
+        _captureRecorderWindow?.Close();
     }
 
     private void OnCameraClosed(object sender, WindowEventArgs args)
@@ -122,6 +147,15 @@ internal sealed class AuxiliaryWindowController
     {
         if (_captionWindow is not null) _captionWindow.Closed -= OnCaptionClosed;
         _captionWindow = null;
+        if (_isOwnerClosing()) return;
+        _ownerAppWindow?.Show();
+        _owner.Activate();
+    }
+
+    private void OnCaptureRecorderClosed(object sender, WindowEventArgs args)
+    {
+        if (_captureRecorderWindow is not null) _captureRecorderWindow.Closed -= OnCaptureRecorderClosed;
+        _captureRecorderWindow = null;
         if (_isOwnerClosing()) return;
         _ownerAppWindow?.Show();
         _owner.Activate();

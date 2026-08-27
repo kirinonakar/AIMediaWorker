@@ -1411,6 +1411,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private async void OnWindowsCaptionsClick(object sender, RoutedEventArgs e) =>
         await _auxiliaryWindows.ShowWindowsCaptionsAsync();
 
+    private async void OnCaptureRecorderClick(object sender, RoutedEventArgs e) =>
+        await _auxiliaryWindows.ShowCaptureRecorderAsync();
     private async void OnSettingsClick(object sender, RoutedEventArgs e) =>
         await _auxiliaryWindows.ShowSettingsAsync();
 
