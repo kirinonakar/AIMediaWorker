@@ -30,7 +30,7 @@ internal static class ScreenCaptureInterop
 {
     private const uint SourceCopy = 0x00CC0020;
     private const uint MonitorDefaultToNearest = 2;
-    private const uint GaRoot = 2;
+    private const uint DwmwaCloaked = 14;
     private const uint WindowDisplayAffinityNone = 0x0;
     private const uint WindowDisplayAffinityExcludeFromCapture = 0x11;
     private const int SmXVirtualScreen = 76;
@@ -76,6 +76,8 @@ internal static class ScreenCaptureInterop
         public uint BiClrImportant;
     }
 
+    private delegate bool EnumWindowsProc(IntPtr windowHandle, IntPtr parameter);
+
     [DllImport("user32.dll")]
     private static extern IntPtr GetDC(IntPtr windowHandle);
 
@@ -95,10 +97,8 @@ internal static class ScreenCaptureInterop
     private static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr WindowFromPoint(POINT point);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetAncestor(IntPtr windowHandle, uint flags);
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr windowHandle, out RECT rect);
@@ -107,10 +107,16 @@ internal static class ScreenCaptureInterop
     private static extern bool IsWindowVisible(IntPtr windowHandle);
 
     [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr windowHandle);
+
+    [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr windowHandle, out uint processId);
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowDisplayAffinity(IntPtr windowHandle, uint affinity);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr windowHandle, uint attribute, out int value, uint valueSize);
 
     [DllImport("gdi32.dll")]
     private static extern IntPtr CreateCompatibleDC(IntPtr deviceContext);
@@ -162,19 +168,25 @@ internal static class ScreenCaptureInterop
     }
 
     /// <summary>
-    /// Finds the visible top-level window at a screen point, excluding windows owned by the
-    /// current process so the capture overlay and selector never highlight themselves.
+    /// Finds the first visible top-level window at a screen point in Z order, excluding windows
+    /// owned by the current process so a full-screen selector can see the window beneath itself.
     /// </summary>
     public static IntPtr FindTopLevelWindowAtPoint(int x, int y)
     {
-        var handle = WindowFromPoint(new POINT(x, y));
-        if (handle == IntPtr.Zero) return IntPtr.Zero;
-        var root = GetAncestor(handle, GaRoot);
-        if (root == IntPtr.Zero) root = handle;
-        if (!IsWindowVisible(root)) return IntPtr.Zero;
-        GetWindowThreadProcessId(root, out var processId);
-        if (processId == Environment.ProcessId) return IntPtr.Zero;
-        return TryGetWindowBounds(root, out _) ? root : IntPtr.Zero;
+        var selected = IntPtr.Zero;
+        EnumWindows((handle, _) =>
+        {
+            if (!IsWindowVisible(handle) || IsIconic(handle)) return true;
+            GetWindowThreadProcessId(handle, out var processId);
+            if (processId == Environment.ProcessId) return true;
+            if (DwmGetWindowAttribute(handle, DwmwaCloaked, out var cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
+            if (!TryGetWindowBounds(handle, out var bounds)) return true;
+            if (x < bounds.Left || x >= bounds.Right || y < bounds.Top || y >= bounds.Bottom) return true;
+
+            selected = handle;
+            return false;
+        }, IntPtr.Zero);
+        return selected;
     }
 
     /// <summary>Makes a window invisible to screen captures (GDI BitBlt, PrintScreen, and similar).</summary>

@@ -4,12 +4,17 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Select area">
-    <Grid x:Name="Root" Background="#33000000"
+    <Grid x:Name="Root" Background="#FF000000" SizeChanged="OnRootSizeChanged"
           PointerPressed="OnRootPointerPressed" PointerMoved="OnRootPointerMoved"
           PointerReleased="OnRootPointerReleased">
+        <Image x:Name="FrozenScreenImage" Stretch="Fill" IsHitTestVisible="False" />
         <Canvas>
-            <Rectangle x:Name="HoverHighlight" Stroke="#FF60CDFF" StrokeThickness="2" Fill="#220078D4" Visibility="Collapsed" />
-            <Rectangle x:Name="SelectionBand" Stroke="#FFFFFFFF" StrokeThickness="2" Fill="#200078D4" Visibility="Collapsed" />
+            <Rectangle x:Name="DimTop" Fill="#80000000" IsHitTestVisible="False" />
+            <Rectangle x:Name="DimLeft" Fill="#80000000" IsHitTestVisible="False" />
+            <Rectangle x:Name="DimRight" Fill="#80000000" IsHitTestVisible="False" />
+            <Rectangle x:Name="DimBottom" Fill="#80000000" IsHitTestVisible="False" />
+            <Rectangle x:Name="HoverHighlight" Stroke="#FF60CDFF" StrokeThickness="3" Fill="Transparent" IsHitTestVisible="False" Visibility="Collapsed" />
+            <Rectangle x:Name="SelectionBand" Stroke="#FFFFFFFF" StrokeThickness="2" Fill="Transparent" IsHitTestVisible="False" Visibility="Collapsed" />
         </Canvas>
         <Border x:Name="HintBorder" CornerRadius="8" Background="#E61F1F1F" Padding="14,8" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,20,0,0">
             <TextBlock x:Name="HintText" Foreground="#FFFFFFFF" FontSize="13" />

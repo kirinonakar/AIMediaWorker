@@ -4,7 +4,7 @@
 
 AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 10, libmpv, FFmpeg, and the prebuilt CrispASR native runtime loaded directly from C#.
 
-It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures still video frames; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
+It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures screenshots and records the desktop with system audio; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
 Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs; Explorer and WebDAV entries support name filtering and cyclic name/newest/oldest sorting.
 
@@ -162,6 +162,17 @@ Open **Tools → Camera and live captions**:
 
 Microphone audio is captured through WASAPI, resampled to 16 kHz mono PCM, and passed through bounded drop-oldest channels. Partial captions are visually dimmed; final captions are fully opaque. Windows loopback captions decode a rolling window every second, keep the recent ASR tail editable, and send only newly committed clause-sized deltas to the translation model. Streaming translation tokens are rendered immediately; an idle flush handles stable text that has not yet reached punctuation. Font, size, colors, position, and maximum lines are configurable under Capture defaults. Windows camera/microphone privacy settings must permit desktop access.
 
+## Screen capture and recording
+
+Open **Tools → Capture & record**, then choose **Capture** or **Record** and a
+**Full screen**, **Window**, or **Region** target. The draggable overlay provides
+recording pause/resume and stop controls; press `Esc` to cancel target selection.
+
+Screenshots are saved as PNG. Recordings are saved as H.264 MP4 files with AAC
+stereo audio from the default Windows playback device. OCR recognizes a selected
+area and copies its text to the clipboard. Files are written to the default folder
+configured in Settings.
+
 ## LLM providers
 
 Supported provider profiles:
@@ -218,7 +229,7 @@ AIMediaWorker uses, links to, or can download third-party software, native runti
 | [Microsoft Windows App SDK](https://github.com/microsoft/WindowsAppSDK) 2.4.0 and related Microsoft SDK packages | WinUI runtime and Windows integration | Microsoft Software License Terms plus the package `license.txt` and `NOTICE.txt` files. |
 | [Microsoft Windows SDK Build Tools](https://aka.ms/WinSDKProjectURL) 10.0.28000.2526 | Build and packaging | Microsoft Windows SDK license terms. |
 | [System.Security.Cryptography.ProtectedData](https://github.com/dotnet/dotnet) 10.0.0 | Windows Credential Manager protection | MIT. |
-| [NAudio](https://github.com/naudio/NAudio) 2.2.1 | WASAPI microphone capture | MIT; see the package `license.txt`. |
+| [NAudio](https://github.com/naudio/NAudio) 2.2.1 | WASAPI microphone and system-audio loopback capture | MIT; see the package `license.txt`. |
 | [mpv/libmpv](https://github.com/mpv-player/mpv) | Media playback | GPLv2 or later by default. The exact binary distribution and its bundled libraries may carry additional notices. |
 | [FFmpeg](https://ffmpeg.org/legal.html) / FFprobe | ASR audio extraction | LGPLv2.1 or later by default; optional GPL components can change the terms. Follow the license files included with the downloaded build. |
 | [CrispASR](https://github.com/CrispStrobe/CrispASR) native runtime | Qwen3 ASR and forced alignment | CrispASR itself is MIT; its bundled dependencies and notices remain separately licensed. |

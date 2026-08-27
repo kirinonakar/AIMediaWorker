@@ -1,10 +1,12 @@
-using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.WindowsRuntime;
 using AIMediaWorker.Capture;
 using AIMediaWorker.Localization;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Shapes;
 using Windows.Graphics;
 using Windows.System;
 using WinRT.Interop;
@@ -24,10 +26,6 @@ internal enum CaptureSelectorMode
 /// </summary>
 internal sealed partial class CaptureRegionSelectorWindow : Window
 {
-    private const int GwlExStyle = -20;
-    private const nint WsExLayered = 0x00080000;
-    private const uint LwaAlpha = 0x02;
-
     private readonly AppWindow? _appWindow;
     private TaskCompletionSource<RECT?>? _completion;
     private CaptureSelectorMode _mode;
@@ -35,13 +33,13 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
     private bool _dragging;
     private Windows.Foundation.Point _pressPoint;
     private RECT? _hoverBounds;
+    private Windows.Foundation.Rect? _dimHole;
 
     public CaptureRegionSelectorWindow()
     {
         InitializeComponent();
         Title = "AIMediaWorker";
         var handle = WindowNative.GetWindowHandle(this);
-        EnableDimTranslucency(handle);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
         if (_appWindow is not null)
         {
@@ -58,6 +56,14 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         }
 
         Closed += (_, _) => Complete(null);
+        var escape = new KeyboardAccelerator { Key = VirtualKey.Escape, ScopeOwner = Root };
+        escape.Invoked += (_, args) =>
+        {
+            args.Handled = true;
+            Complete(null);
+        };
+        FocusSink.KeyboardAccelerators.Add(escape);
+        ToolTipService.SetToolTip(FocusSink, null);
     }
 
     /// <summary>Shows the selector over the given monitor and completes with the chosen physical-pixel rect, or null when cancelled.</summary>
@@ -68,12 +74,14 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         _completion = completion;
         _mode = mode;
         _monitor = monitorBounds;
+        FrozenScreenImage.Source = CaptureFrozenScreen(monitorBounds);
         _dragging = false;
         _hoverBounds = null;
         HintText.Text = mode == CaptureSelectorMode.Window ? L("WindowHint.Text") : string.Empty;
         HintBorder.Visibility = mode == CaptureSelectorMode.Region ? Visibility.Collapsed : Visibility.Visible;
         HoverHighlight.Visibility = Visibility.Collapsed;
         SelectionBand.Visibility = Visibility.Collapsed;
+        UpdateDimMask(null);
         PositionOver(monitorBounds);
         Activate();
         _appWindow?.Show();
@@ -82,6 +90,8 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
     }
 
     private double Scale => Root.XamlRoot?.RasterizationScale ?? 1.0;
+
+    private void OnRootSizeChanged(object sender, SizeChangedEventArgs e) => UpdateDimMask(_dimHole);
 
     private void PositionOver(RECT monitorBounds)
     {
@@ -105,6 +115,7 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
     {
         if (_mode == CaptureSelectorMode.Window)
         {
+            UpdateHoverHighlight(e.GetCurrentPoint(Root).Position);
             if (_hoverBounds is { } bounds) Complete(bounds);
             return;
         }
@@ -137,6 +148,7 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         if (bounds.Width < 8 || bounds.Height < 8)
         {
             SelectionBand.Visibility = Visibility.Collapsed;
+            UpdateDimMask(null);
             return;
         }
 
@@ -150,6 +162,11 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         Canvas.SetTop(SelectionBand, Math.Min(start.Y, end.Y));
         SelectionBand.Width = Math.Abs(end.X - start.X);
         SelectionBand.Height = Math.Abs(end.Y - start.Y);
+        UpdateDimMask(new Windows.Foundation.Rect(
+            Math.Min(start.X, end.X),
+            Math.Min(start.Y, end.Y),
+            Math.Abs(end.X - start.X),
+            Math.Abs(end.Y - start.Y)));
     }
 
     private void UpdateHoverHighlight(Windows.Foundation.Point position)
@@ -162,15 +179,56 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         {
             HoverHighlight.Visibility = Visibility.Collapsed;
             _hoverBounds = null;
+            UpdateDimMask(null);
             return;
         }
 
         _hoverBounds = clip;
+        var left = (clip.Left - _monitor.Left) / Scale;
+        var top = (clip.Top - _monitor.Top) / Scale;
+        var width = clip.Width / Scale;
+        var height = clip.Height / Scale;
         HoverHighlight.Visibility = Visibility.Visible;
-        Canvas.SetLeft(HoverHighlight, (clip.Left - _monitor.Left) / Scale);
-        Canvas.SetTop(HoverHighlight, (clip.Top - _monitor.Top) / Scale);
-        HoverHighlight.Width = clip.Width / Scale;
-        HoverHighlight.Height = clip.Height / Scale;
+        Canvas.SetLeft(HoverHighlight, left);
+        Canvas.SetTop(HoverHighlight, top);
+        HoverHighlight.Width = width;
+        HoverHighlight.Height = height;
+        UpdateDimMask(new Windows.Foundation.Rect(left, top, width, height));
+    }
+
+    private void UpdateDimMask(Windows.Foundation.Rect? hole)
+    {
+        _dimHole = hole;
+        var width = Root.ActualWidth;
+        var height = Root.ActualHeight;
+        if (width <= 0 || height <= 0) return;
+
+        if (hole is not { } target || target.Width <= 0 || target.Height <= 0)
+        {
+            SetDimRectangle(DimTop, 0, 0, width, height);
+            SetDimRectangle(DimLeft, 0, 0, 0, 0);
+            SetDimRectangle(DimRight, 0, 0, 0, 0);
+            SetDimRectangle(DimBottom, 0, 0, 0, 0);
+            return;
+        }
+
+        var left = Math.Clamp(target.X, 0, width);
+        var top = Math.Clamp(target.Y, 0, height);
+        var right = Math.Clamp(target.Right, left, width);
+        var bottom = Math.Clamp(target.Bottom, top, height);
+        SetDimRectangle(DimTop, 0, 0, width, top);
+        SetDimRectangle(DimBottom, 0, bottom, width, height - bottom);
+        SetDimRectangle(DimLeft, 0, top, left, bottom - top);
+        SetDimRectangle(DimRight, right, top, width - right, bottom - top);
+    }
+
+    private static void SetDimRectangle(Rectangle rectangle, double left, double top, double width, double height)
+    {
+        rectangle.Visibility = width > 0 && height > 0 ? Visibility.Visible : Visibility.Collapsed;
+        Canvas.SetLeft(rectangle, left);
+        Canvas.SetTop(rectangle, top);
+        rectangle.Width = Math.Max(0, width);
+        rectangle.Height = Math.Max(0, height);
     }
 
     private RECT ToPhysicalRect(Windows.Foundation.Point start, Windows.Foundation.Point end)
@@ -198,37 +256,22 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         _completion = null;
         _dragging = false;
         _appWindow?.Hide();
+        FrozenScreenImage.Source = null;
         completion.TrySetResult(bounds);
     }
 
-    /// <summary>Makes the whole window uniformly translucent so the screen shows through the dim layer.</summary>
-    private void EnableDimTranslucency(nint handle)
+    private static WriteableBitmap? CaptureFrozenScreen(RECT bounds)
     {
-        var previousStyle = GetWindowLong(handle, GwlExStyle);
-        SetWindowLong(handle, GwlExStyle, previousStyle | WsExLayered);
-        SetLayeredWindowAttributes(handle, 0, 112, LwaAlpha);
+        var pixels = ScreenCaptureInterop.CaptureRegion(bounds);
+        if (pixels is null) return null;
+        for (var index = 3; index < pixels.Length; index += 4) pixels[index] = 255;
+
+        var bitmap = new WriteableBitmap(bounds.Width, bounds.Height);
+        using var stream = bitmap.PixelBuffer.AsStream();
+        stream.Write(pixels, 0, pixels.Length);
+        bitmap.Invalidate();
+        return bitmap;
     }
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-    private static extern nint GetWindowLongPtr64(nint windowHandle, int index);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
-    private static extern int GetWindowLong32(nint windowHandle, int index);
-
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
-    private static extern nint SetWindowLongPtr64(nint windowHandle, int index, nint value);
-
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
-    private static extern int SetWindowLong32(nint windowHandle, int index, int value);
-
-    [DllImport("user32.dll")]
-    private static extern bool SetLayeredWindowAttributes(nint windowHandle, uint colorKey, byte alpha, uint flags);
-
-    private static nint GetWindowLong(nint windowHandle, int index)
-        => IntPtr.Size == 8 ? GetWindowLongPtr64(windowHandle, index) : GetWindowLong32(windowHandle, index);
-
-    private static nint SetWindowLong(nint windowHandle, int index, nint value)
-        => IntPtr.Size == 8 ? SetWindowLongPtr64(windowHandle, index, value) : SetWindowLong32(windowHandle, index, (int)value);
 
     private static string L(string key) => LocalizationService.Get(key);
 }

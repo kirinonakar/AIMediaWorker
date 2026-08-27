@@ -96,9 +96,6 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             StatusText.Visibility = Visibility.Collapsed;
         };
 
-        var escape = new KeyboardAccelerator { Key = VirtualKey.Escape };
-        escape.Invoked += (_, _) => _ = CloseAsync();
-        Root.KeyboardAccelerators.Add(escape);
         Closed += (_, _) =>
         {
             _elapsedTimer.Stop();
@@ -147,6 +144,13 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     }
 
     private double Scale => Root.XamlRoot?.RasterizationScale ?? 1.0;
+
+    private void OnRootKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Escape) return;
+        e.Handled = true;
+        _ = CloseAsync();
+    }
 
     private void OnContentSizeChanged(object sender, SizeChangedEventArgs e) => AdjustWindowSize();
 
