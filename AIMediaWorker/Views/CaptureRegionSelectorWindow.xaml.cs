@@ -58,9 +58,6 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         }
 
         Closed += (_, _) => Complete(null);
-        var escape = new KeyboardAccelerator { Key = VirtualKey.Escape };
-        escape.Invoked += (_, _) => Complete(null);
-        Root.KeyboardAccelerators.Add(escape);
     }
 
     /// <summary>Shows the selector over the given monitor and completes with the chosen physical-pixel rect, or null when cancelled.</summary>
@@ -73,7 +70,7 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         _monitor = monitorBounds;
         _dragging = false;
         _hoverBounds = null;
-        HintText.Text = L(mode == CaptureSelectorMode.Region ? "RegionHint.Text" : "WindowHint.Text");
+        HintText.Text = mode == CaptureSelectorMode.Window ? L("WindowHint.Text") : string.Empty;
         HintBorder.Visibility = mode == CaptureSelectorMode.Region ? Visibility.Collapsed : Visibility.Visible;
         HoverHighlight.Visibility = Visibility.Collapsed;
         SelectionBand.Visibility = Visibility.Collapsed;

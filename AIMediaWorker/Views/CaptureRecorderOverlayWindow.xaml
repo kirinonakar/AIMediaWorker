@@ -19,7 +19,10 @@
                     Width="24"
                     Background="Transparent"
                     CornerRadius="5"
-                    PointerPressed="OnDragHandlePointerPressed">
+                    PointerPressed="OnDragHandlePointerPressed"
+                    PointerMoved="OnDragHandlePointerMoved"
+                    PointerReleased="OnDragHandlePointerReleased"
+                    PointerCaptureLost="OnDragHandlePointerCaptureLost">
                 <TextBlock Text="⋮⋮"
                            FontSize="16"
                            Opacity="0.55"
@@ -63,7 +66,10 @@
                     Height="32"
                     Background="Transparent"
                     CornerRadius="5"
-                    PointerPressed="OnDragHandlePointerPressed">
+                    PointerPressed="OnDragHandlePointerPressed"
+                    PointerMoved="OnDragHandlePointerMoved"
+                    PointerReleased="OnDragHandlePointerReleased"
+                    PointerCaptureLost="OnDragHandlePointerCaptureLost">
                 <TextBlock Text="⋮⋮"
                            FontSize="16"
                            Opacity="0.55"

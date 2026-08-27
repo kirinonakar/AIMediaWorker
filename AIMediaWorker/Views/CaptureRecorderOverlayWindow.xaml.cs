@@ -31,10 +31,16 @@ internal enum CaptureRecorderMode
 /// </summary>
 public sealed partial class CaptureRecorderOverlayWindow : Window
 {
-    private const uint WmNcLButtonDown = 0x00A1;
-    private const nint HtCaption = 2;
+    private const int GwlStyle = -16;
+    private const nint WsBorder = 0x00800000;
+    private const nint WsDlgFrame = 0x00400000;
+    private const nint WsThickFrame = 0x00040000;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpFrameChanged = 0x0020;
     private const uint DwmwaBorderColor = 34;
-    private const uint DwmColorDefault = 0xFFFFFFFF;
     private const uint DwmColorNone = 0xFFFFFFFE;
 
     private readonly AppWindow? _appWindow;
@@ -49,6 +55,9 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private Task? _shutdownTask;
     private bool _allowClose;
     private bool _hasUserPosition;
+    private bool _isDraggingOverlay;
+    private ScreenCaptureInterop.POINT _dragStartCursor;
+    private PointInt32 _dragStartWindowPosition;
 
     public CaptureRecorderOverlayWindow(Window owner)
     {
@@ -70,6 +79,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
                 presenter.SetBorderAndTitleBar(false, false);
             }
 
+            RemoveNativeWindowFrame();
             _appWindow.ResizeClient(new SizeInt32(640, 50));
             _appWindow.Closing += OnAppWindowClosing;
         }
@@ -89,8 +99,6 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         var escape = new KeyboardAccelerator { Key = VirtualKey.Escape };
         escape.Invoked += (_, _) => _ = CloseAsync();
         Root.KeyboardAccelerators.Add(escape);
-        Root.ActualThemeChanged += OnRootActualThemeChanged;
-
         Closed += (_, _) =>
         {
             _elapsedTimer.Stop();
@@ -116,7 +124,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             AppTheme.Dark => ElementTheme.Dark,
             _ => ElementTheme.Default
         };
-        UpdateWindowBorder();
+        RemoveNativeWindowFrame();
         ApplyLocalizedTexts();
         OcrButton.IsEnabled = true;
         AdjustWindowSize();
@@ -178,22 +186,59 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     {
         if (sender is not UIElement dragSurface || !e.GetCurrentPoint(dragSurface).Properties.IsLeftButtonPressed) return;
         _hasUserPosition = true;
-        ReleaseCapture();
-        SendMessage(_selfHandle, WmNcLButtonDown, HtCaption, 0);
+        _isDraggingOverlay = true;
+        _dragStartCursor = ScreenCaptureInterop.GetCursorPosition();
+        _dragStartWindowPosition = _appWindow?.Position ?? default;
+        dragSurface.CapturePointer(e.Pointer);
         e.Handled = true;
     }
 
-    private void OnRootActualThemeChanged(FrameworkElement sender, object args) => UpdateWindowBorder();
-
-    private void UpdateWindowBorder()
+    private void OnDragHandlePointerMoved(object sender, PointerRoutedEventArgs e)
     {
-        var color = Root.ActualTheme == ElementTheme.Dark ? DwmColorNone : DwmColorDefault;
+        if (!_isDraggingOverlay || _appWindow is null) return;
+        if (!e.GetCurrentPoint(sender as UIElement).Properties.IsLeftButtonPressed)
+        {
+            EndOverlayDrag(sender as UIElement, e);
+            return;
+        }
+
+        var cursor = ScreenCaptureInterop.GetCursorPosition();
+        _appWindow.Move(new PointInt32(
+            _dragStartWindowPosition.X + cursor.X - _dragStartCursor.X,
+            _dragStartWindowPosition.Y + cursor.Y - _dragStartCursor.Y));
+        e.Handled = true;
+    }
+
+    private void OnDragHandlePointerReleased(object sender, PointerRoutedEventArgs e)
+        => EndOverlayDrag(sender as UIElement, e);
+
+    private void OnDragHandlePointerCaptureLost(object sender, PointerRoutedEventArgs e)
+        => _isDraggingOverlay = false;
+
+    private void EndOverlayDrag(UIElement? dragSurface, PointerRoutedEventArgs e)
+    {
+        if (!_isDraggingOverlay) return;
+        _isDraggingOverlay = false;
+        dragSurface?.ReleasePointerCapture(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void RemoveNativeWindowFrame()
+    {
+        var style = GetWindowLong(_selfHandle, GwlStyle);
+        var framelessStyle = style & ~(WsBorder | WsDlgFrame | WsThickFrame);
+        if (framelessStyle != style) SetWindowLong(_selfHandle, GwlStyle, framelessStyle);
+        SetWindowPos(_selfHandle, 0, 0, 0, 0, 0,
+            SwpNoSize | SwpNoMove | SwpNoZOrder | SwpNoActivate | SwpFrameChanged);
+
+        var color = DwmColorNone;
         DwmSetWindowAttribute(_selfHandle, DwmwaBorderColor, ref color, sizeof(uint));
     }
 
     private void ShowOverlay()
     {
         _appWindow?.Show();
+        RemoveNativeWindowFrame();
         Activate();
         FocusSink.Focus(FocusState.Programmatic);
     }
@@ -487,12 +532,27 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private static string F(string key, params object[] arguments)
         => string.Format(CultureInfo.CurrentCulture, L(key), arguments);
 
-    [DllImport("user32.dll")]
-    private static extern bool ReleaseCapture();
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern nint GetWindowLongPtr64(nint windowHandle, int index);
 
-    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
-    private static extern nint SendMessage(nint windowHandle, uint message, nint wParam, nint lParam);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    private static extern int GetWindowLong32(nint windowHandle, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern nint SetWindowLongPtr64(nint windowHandle, int index, nint value);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+    private static extern int SetWindowLong32(nint windowHandle, int index, int value);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(nint windowHandle, nint insertAfter, int x, int y, int width, int height, uint flags);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint windowHandle, uint attribute, ref uint value, uint valueSize);
+
+    private static nint GetWindowLong(nint windowHandle, int index)
+        => IntPtr.Size == 8 ? GetWindowLongPtr64(windowHandle, index) : GetWindowLong32(windowHandle, index);
+
+    private static nint SetWindowLong(nint windowHandle, int index, nint value)
+        => IntPtr.Size == 8 ? SetWindowLongPtr64(windowHandle, index, value) : SetWindowLong32(windowHandle, index, (int)value);
 }
