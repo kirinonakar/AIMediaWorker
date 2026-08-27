@@ -74,6 +74,7 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         _dragging = false;
         _hoverBounds = null;
         HintText.Text = L(mode == CaptureSelectorMode.Region ? "RegionHint.Text" : "WindowHint.Text");
+        HintBorder.Visibility = mode == CaptureSelectorMode.Region ? Visibility.Collapsed : Visibility.Visible;
         HoverHighlight.Visibility = Visibility.Collapsed;
         SelectionBand.Visibility = Visibility.Collapsed;
         PositionOver(monitorBounds);

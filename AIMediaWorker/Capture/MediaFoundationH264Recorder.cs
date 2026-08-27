@@ -1,6 +1,11 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using NAudio.MediaFoundation;
 using static AIMediaWorker.Capture.MediaFoundationInterop;
+using MfMediaBuffer = NAudio.MediaFoundation.IMFMediaBuffer;
+using MfMediaType = NAudio.MediaFoundation.IMFMediaType;
+using MfSample = NAudio.MediaFoundation.IMFSample;
+using MfSinkWriter = NAudio.MediaFoundation.IMFSinkWriter;
 
 namespace AIMediaWorker.Capture;
 
@@ -21,7 +26,6 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
     private static readonly Guid FrameSizeAttribute = new("1652c33d-d6b2-4012-b834-72030849a37d");
     private static readonly Guid InterlaceModeAttribute = new("e2724bb8-e676-4806-b4b2-a8d6efb44ccd");
 
-    private const int MfVersion = 0x00020070;
     private const uint MfVideoInterlaceProgressive = 2;
     private const long HundredNanosecondsPerSecond = 10_000_000;
     private const uint CoinitMultithreaded = 0x0;
@@ -118,7 +122,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
     private void Run(CancellationToken cancellation)
     {
         var comInitialized = false;
-        IMFSinkWriter? writer = null;
+        MfSinkWriter? writer = null;
         try
         {
             var coInitializeResult = CoInitializeEx(IntPtr.Zero, CoinitMultithreaded);
@@ -126,14 +130,12 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
 
             lock (StartupGate)
             {
-                if (_startupCount++ == 0 && MFStartup(MfVersion, 0) < 0)
-                {
-                    _startupCount--;
-                    throw new InvalidOperationException("Media Foundation could not be initialized.");
-                }
+                if (_startupCount == 0) MediaFoundationApi.Startup();
+                _startupCount++;
             }
 
-            MFCreateSinkWriterFromURL(_outputPath, IntPtr.Zero, null, out writer).ThrowOnError();
+            NAudio.MediaFoundation.MediaFoundationInterop.MFCreateSinkWriterFromURL(
+                _outputPath, null!, null!, out writer);
 
             var targetType = CreateVideoType(VideoFormatH264, ComputeBitrate(_width, _height, _frameRate), target: true);
             try
@@ -146,7 +148,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
                     writer.BeginWriting();
                     WriteFrames(writer, streamIndex, cancellation);
                     writer.Flush(streamIndex);
-                    writer.Finalize();
+                    writer.DoFinalize();
                 }
                 finally
                 {
@@ -167,13 +169,13 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
             ReleaseComObject(writer);
             lock (StartupGate)
             {
-                if (_startupCount > 0 && --_startupCount == 0) MFShutdown();
+                if (_startupCount > 0 && --_startupCount == 0) MediaFoundationApi.Shutdown();
             }
             if (comInitialized) CoUninitialize();
         }
     }
 
-    private void WriteFrames(IMFSinkWriter writer, uint streamIndex, CancellationToken cancellation)
+    private void WriteFrames(MfSinkWriter writer, int streamIndex, CancellationToken cancellation)
     {
         var stride = _width * 4;
         var frameBytes = stride * _height;
@@ -202,7 +204,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
         }
     }
 
-    private void WriteFrame(IMFSinkWriter writer, uint streamIndex, byte[] destination, byte[] source, int stride, long frameIndex)
+    private void WriteFrame(MfSinkWriter writer, int streamIndex, byte[] destination, byte[] source, int stride, long frameIndex)
     {
         // Media Foundation expects RGB32 input bottom-up while GDI hands us top-down rows.
         for (var row = 0; row < _height; row++)
@@ -210,7 +212,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
             Buffer.BlockCopy(source, row * stride, destination, (_height - 1 - row) * stride, stride);
         }
 
-        MFCreateMemoryBuffer(destination.Length, out var buffer);
+        MfMediaBuffer buffer = MediaFoundationApi.CreateMemoryBuffer(destination.Length);
         try
         {
             buffer.Lock(out var pointer, out _, out _);
@@ -222,9 +224,9 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
             {
                 buffer.Unlock();
             }
-            buffer.SetCurrentLength((uint)destination.Length);
+            buffer.SetCurrentLength(destination.Length);
 
-            MFCreateSample(out var sample);
+            MfSample sample = MediaFoundationApi.CreateSample();
             try
             {
                 sample.AddBuffer(buffer);
@@ -243,19 +245,20 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
         }
     }
 
-    private IMFMediaType CreateVideoType(Guid subtype, uint bitrate, bool target)
+    private MfMediaType CreateVideoType(Guid subtype, uint bitrate, bool target)
     {
-        MFCreateMediaType(out var type);
+        var type = MediaFoundationApi.CreateMediaType();
         type.SetGUID(MajorTypeAttribute, MediaTypeVideo);
         type.SetGUID(SubtypeAttribute, subtype);
         type.SetUINT64(FrameSizeAttribute, PackPair(_width, _height));
         type.SetUINT64(FrameRateAttribute, PackPair(_frameRate, 1));
-        type.SetUINT32(InterlaceModeAttribute, MfVideoInterlaceProgressive);
-        if (target) type.SetUINT32(AvgBitrateAttribute, bitrate);
+        type.SetUINT32(InterlaceModeAttribute, (int)MfVideoInterlaceProgressive);
+        if (target) type.SetUINT32(AvgBitrateAttribute, (int)bitrate);
         return type;
     }
 
-    private static ulong PackPair(int high, int low) => ((ulong)(uint)high << 32) | (uint)low;
+    private static long PackPair(int high, int low)
+        => unchecked((long)(((ulong)(uint)high << 32) | (uint)low));
 
     private static uint ComputeBitrate(int width, int height, int frameRate)
         => (uint)Math.Clamp((long)(width * height * frameRate * 0.12), 2_000_000, 20_000_000);
@@ -283,134 +286,9 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
 
 internal static class MediaFoundationInterop
 {
-    [DllImport("mfplat.dll")]
-    internal static extern int MFStartup(int version, uint flags);
-
-    [DllImport("mfplat.dll")]
-    internal static extern int MFShutdown();
-
-    [DllImport("mfplat.dll")]
-    internal static extern int MFCreateMediaType(out IMFMediaType mediaType);
-
-    [DllImport("mfplat.dll")]
-    internal static extern int MFCreateSample(out IMFSample sample);
-
-    [DllImport("mfplat.dll")]
-    internal static extern int MFCreateMemoryBuffer(int maxLength, out IMFMediaBuffer buffer);
-
-    [DllImport("mfreadwrite.dll")]
-    internal static extern int MFCreateSinkWriterFromURL(
-        [MarshalAs(UnmanagedType.LPWStr)] string url,
-        IntPtr byteStream,
-        IMFAttributes? attributes,
-        out IMFSinkWriter writer);
-
     [DllImport("ole32.dll")]
     internal static extern int CoInitializeEx(IntPtr reserved, uint coInit);
 
     [DllImport("ole32.dll")]
     internal static extern void CoUninitialize();
-
-    internal static void ThrowOnError(this int hr)
-    {
-        if (hr < 0) Marshal.ThrowExceptionForHR(hr);
-    }
 }
-
-[ComImport]
-[Guid("2CD2D921-C447-44A7-A13C-4ADABFC247E3")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IMFAttributes
-{
-    void GetItem(ref Guid key, IntPtr value);
-    void GetItemType(ref Guid key, IntPtr type);
-    void CompareItem(ref Guid key, IntPtr value, IntPtr result);
-    void Compare(IMFAttributes other, uint matchType, IntPtr result);
-    void GetUINT32(ref Guid key, out uint value);
-    void GetUINT64(ref Guid key, out ulong value);
-    void GetString(ref Guid key, IntPtr buffer, uint bufferSize, IntPtr length);
-    void GetAllocatedString(ref Guid key, out IntPtr value, out uint length);
-    void GetBlobSize(ref Guid key, out uint size);
-    void GetBlob(ref Guid key, IntPtr buffer, uint bufferSize, IntPtr copied);
-    void GetAllocatedBlob(ref Guid key, out IntPtr buffer, out uint size);
-    void GetUnknown(ref Guid key, ref Guid interfaceId, out IntPtr unknown);
-    void SetItem(ref Guid key, IntPtr value);
-    void DeleteItem(ref Guid key);
-    void DeleteAllItems();
-    void SetUINT32(ref Guid key, uint value);
-    void SetUINT64(ref Guid key, ulong value);
-    void SetDouble(ref Guid key, double value);
-    void SetGUID(ref Guid key, ref Guid value);
-    void SetString(ref Guid key, [MarshalAs(UnmanagedType.LPWStr)] string value);
-    void SetBlob(ref Guid key, IntPtr buffer, uint size);
-    void SetUnknown(ref Guid key, [MarshalAs(UnmanagedType.IUnknown)] object value);
-    void LockStore();
-    void UnlockStore();
-    void GetCount(out uint count);
-    void GetItemByIndex(uint index, out Guid key, IntPtr value);
-    void CopyAllItems(IMFAttributes destination);
-}
-
-[ComImport]
-[Guid("44AE0FA8-EA31-4109-8D2E-4CAE4997C555")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IMFMediaType : IMFAttributes
-{
-    void GetMajorType(out Guid majorType);
-    void IsCompressedFormat(out int compressed);
-    void IsEqual(IMFMediaType mediaType, out uint comparisonFlags);
-    void CopyFrom(IMFMediaType mediaType);
-    void GetRepresentation(Guid representation, out IntPtr data);
-    void FreeRepresentation(Guid representation, IntPtr data);
-}
-
-[ComImport]
-[Guid("045FA593-8799-42B8-BC8D-8968C6453507")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IMFMediaBuffer
-{
-    void Lock(out IntPtr buffer, out uint maximumLength, out uint currentLength);
-    void Unlock();
-    void GetCurrentLength(out uint currentLength);
-    void SetCurrentLength(uint currentLength);
-    void GetMaxLength(out uint maxLength);
-}
-
-[ComImport]
-[Guid("C40A00F2-B93A-4D80-AE8C-5A1C634F58E4")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IMFSample : IMFAttributes
-{
-    void GetBufferCount(out uint bufferCount);
-    void GetBufferByIndex(uint index, out IMFMediaBuffer buffer);
-    void ConvertToContiguousBuffer(out IMFMediaBuffer buffer);
-    void AddBuffer(IMFMediaBuffer buffer);
-    void RemoveBufferByIndex(uint index);
-    void RemoveAllBuffers();
-    void GetTotalLength(out uint totalLength);
-    void CopyToBuffer(IMFMediaBuffer buffer);
-    void SetSampleTime(long sampleTime);
-    void GetSampleTime(out long sampleTime);
-    void SetSampleDuration(long sampleDuration);
-    void GetSampleDuration(out long sampleDuration);
-}
-
-#pragma warning disable CS0465
-[ComImport]
-[Guid("3137F1CD-FE5E-4805-A5D8-FB477448CB3D")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IMFSinkWriter
-{
-    void AddStream(IMFMediaType targetType, out uint streamIndex);
-    void SetInputMediaType(uint streamIndex, IMFMediaType inputMediaType, IMFAttributes? encodingParameters);
-    void BeginWriting();
-    void WriteSample(uint streamIndex, IMFSample sample);
-    void SendStreamTick(uint streamIndex, long timestamp);
-    void PlaceMarker(uint streamIndex, IntPtr context);
-    void NotifyEndOfSegment(uint streamIndex);
-    void Flush(uint streamIndex);
-    void Finalize();
-    void GetServiceForStream(uint streamIndex, ref Guid service, ref Guid interfaceId, out IntPtr serviceObject);
-    void GetStatistics(uint streamIndex, IntPtr statistics);
-}
-#pragma warning restore CS0465

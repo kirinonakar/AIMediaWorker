@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using AIMediaWorker.Capture;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Localization;
@@ -10,7 +11,6 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.System;
@@ -26,11 +26,17 @@ internal enum CaptureRecorderMode
 
 /// <summary>
 /// Always-on-top toolbar shown while the main window is hidden. Offers a capture/record mode
-/// toggle plus fullscreen/window/region targets and OCR extraction, and switches to a compact
+/// selector plus grouped fullscreen/window/region/OCR actions, and switches to a compact
 /// recording state with elapsed time, pause, and stop controls. Closing it restores the main window.
 /// </summary>
 public sealed partial class CaptureRecorderOverlayWindow : Window
 {
+    private const uint WmNcLButtonDown = 0x00A1;
+    private const nint HtCaption = 2;
+    private const uint DwmwaBorderColor = 34;
+    private const uint DwmColorDefault = 0xFFFFFFFF;
+    private const uint DwmColorNone = 0xFFFFFFFE;
+
     private readonly AppWindow? _appWindow;
     private readonly nint _selfHandle;
     private readonly DispatcherQueueTimer _elapsedTimer;
@@ -42,6 +48,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private RECT? _targetMonitor;
     private Task? _shutdownTask;
     private bool _allowClose;
+    private bool _hasUserPosition;
 
     public CaptureRecorderOverlayWindow(Window owner)
     {
@@ -63,7 +70,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
                 presenter.SetBorderAndTitleBar(false, false);
             }
 
-            _appWindow.ResizeClient(new SizeInt32(380, 50));
+            _appWindow.ResizeClient(new SizeInt32(640, 50));
             _appWindow.Closing += OnAppWindowClosing;
         }
 
@@ -82,6 +89,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         var escape = new KeyboardAccelerator { Key = VirtualKey.Escape };
         escape.Invoked += (_, _) => _ = CloseAsync();
         Root.KeyboardAccelerators.Add(escape);
+        Root.ActualThemeChanged += OnRootActualThemeChanged;
 
         Closed += (_, _) =>
         {
@@ -108,6 +116,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             AppTheme.Dark => ElementTheme.Dark,
             _ => ElementTheme.Default
         };
+        UpdateWindowBorder();
         ApplyLocalizedTexts();
         OcrButton.IsEnabled = true;
         AdjustWindowSize();
@@ -124,7 +133,9 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         PauseResumeButton.Content = L("RecordPause.Content");
         StopRecordButton.Content = L("RecordStop.Content");
         ToolTipService.SetToolTip(CloseOverlayButton, L("CloseTooltip"));
-        UpdateModeButton();
+        CaptureModeButton.Content = L("CaptureModeToggle.Content");
+        RecordModeButton.Content = L("RecordModeToggle.Content");
+        UpdateModeButtons();
     }
 
     private double Scale => Root.XamlRoot?.RasterizationScale ?? 1.0;
@@ -147,7 +158,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
 
     private void RepositionToTarget()
     {
-        if (_appWindow is null || Root.ActualWidth <= 0) return;
+        if (_appWindow is null || Root.ActualWidth <= 0 || _hasUserPosition) return;
         if (_targetMonitor is not { } monitor)
         {
             var cursor = ScreenCaptureInterop.GetCursorPosition();
@@ -161,6 +172,23 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         var x = monitor.Left + Math.Max(0, (monitor.Width - widthPixels) / 2);
         var y = monitor.Top + (int)Math.Round(18 * scale);
         _appWindow.Move(new PointInt32(x, y));
+    }
+
+    private void OnDragHandlePointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is not UIElement dragSurface || !e.GetCurrentPoint(dragSurface).Properties.IsLeftButtonPressed) return;
+        _hasUserPosition = true;
+        ReleaseCapture();
+        SendMessage(_selfHandle, WmNcLButtonDown, HtCaption, 0);
+        e.Handled = true;
+    }
+
+    private void OnRootActualThemeChanged(FrameworkElement sender, object args) => UpdateWindowBorder();
+
+    private void UpdateWindowBorder()
+    {
+        var color = Root.ActualTheme == ElementTheme.Dark ? DwmColorNone : DwmColorDefault;
+        DwmSetWindowAttribute(_selfHandle, DwmwaBorderColor, ref color, sizeof(uint));
     }
 
     private void ShowOverlay()
@@ -180,25 +208,27 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         _statusHideTimer.Start();
     }
 
-    private void OnModeToggleClick(object sender, RoutedEventArgs e)
+    private void OnCaptureModeClick(object sender, RoutedEventArgs e)
     {
-        _mode = _mode == CaptureRecorderMode.Capture ? CaptureRecorderMode.Record : CaptureRecorderMode.Capture;
-        OcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture;
-        UpdateModeButton();
+        SetMode(CaptureRecorderMode.Capture);
     }
 
-    private void UpdateModeButton()
+    private void OnRecordModeClick(object sender, RoutedEventArgs e)
     {
-        var isRecord = _mode == CaptureRecorderMode.Record;
-        ModeToggleButton.Content = L(isRecord ? "RecordModeToggle.Content" : "CaptureModeToggle.Content");
-        if (isRecord)
-        {
-            ModeToggleButton.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 196, 43, 28));
-        }
-        else
-        {
-            ModeToggleButton.ClearValue(Button.BackgroundProperty);
-        }
+        SetMode(CaptureRecorderMode.Record);
+    }
+
+    private void SetMode(CaptureRecorderMode mode)
+    {
+        _mode = mode;
+        OcrButton.IsEnabled = mode == CaptureRecorderMode.Capture;
+        UpdateModeButtons();
+    }
+
+    private void UpdateModeButtons()
+    {
+        CaptureModeButton.IsChecked = _mode == CaptureRecorderMode.Capture;
+        RecordModeButton.IsChecked = _mode == CaptureRecorderMode.Record;
     }
 
     private async void OnFullscreenClick(object sender, RoutedEventArgs e)
@@ -456,4 +486,13 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
 
     private static string F(string key, params object[] arguments)
         => string.Format(CultureInfo.CurrentCulture, L(key), arguments);
+
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern nint SendMessage(nint windowHandle, uint message, nint wParam, nint lParam);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(nint windowHandle, uint attribute, ref uint value, uint valueSize);
 }
