@@ -20,6 +20,8 @@ internal enum CaptureSelectorMode
     Window
 }
 
+internal readonly record struct CaptureSelection(RECT Bounds, nint WindowHandle);
+
 /// <summary>
 /// Dimmed full-monitor overlay used to pick a capture target: free-form drag selection or
 /// click-to-select the window under the cursor. Esc cancels and completes with null.
@@ -41,12 +43,13 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
 
     private readonly AppWindow? _appWindow;
     private readonly nint _selfHandle;
-    private TaskCompletionSource<RECT?>? _completion;
+    private TaskCompletionSource<CaptureSelection?>? _completion;
     private CaptureSelectorMode _mode;
     private RECT _monitor;
     private bool _dragging;
     private Windows.Foundation.Point _pressPoint;
     private RECT? _hoverBounds;
+    private nint _hoverWindowHandle;
     private Windows.Foundation.Rect? _dimHole;
 
     public CaptureRegionSelectorWindow()
@@ -81,17 +84,18 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         ToolTipService.SetToolTip(FocusSink, null);
     }
 
-    /// <summary>Shows the selector over the given monitor and completes with the chosen physical-pixel rect, or null when cancelled.</summary>
-    internal async Task<RECT?> SelectAsync(CaptureSelectorMode mode, RECT monitorBounds)
+    /// <summary>Shows the selector and returns the chosen bounds plus its native window handle when applicable.</summary>
+    internal async Task<CaptureSelection?> SelectAsync(CaptureSelectorMode mode, RECT monitorBounds)
     {
         if (_completion is not null) return null;
-        var completion = new TaskCompletionSource<RECT?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<CaptureSelection?>(TaskCreationOptions.RunContinuationsAsynchronously);
         _completion = completion;
         _mode = mode;
         _monitor = monitorBounds;
         FrozenScreenImage.Source = CaptureFrozenScreen(monitorBounds);
         _dragging = false;
         _hoverBounds = null;
+        _hoverWindowHandle = 0;
         HintText.Text = mode == CaptureSelectorMode.Window ? L("WindowHint.Text") : string.Empty;
         HintBorder.Visibility = mode == CaptureSelectorMode.Region ? Visibility.Collapsed : Visibility.Visible;
         HoverHighlight.Visibility = Visibility.Collapsed;
@@ -144,7 +148,7 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         if (_mode == CaptureSelectorMode.Window)
         {
             UpdateHoverHighlight(e.GetCurrentPoint(Root).Position);
-            if (_hoverBounds is { } bounds) Complete(bounds);
+            if (_hoverBounds is { } bounds) Complete(new CaptureSelection(bounds, _hoverWindowHandle));
             return;
         }
 
@@ -180,7 +184,7 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
             return;
         }
 
-        Complete(bounds);
+        Complete(new CaptureSelection(bounds, 0));
     }
 
     private void UpdateSelectionBand(Windows.Foundation.Point start, Windows.Foundation.Point end)
@@ -207,11 +211,13 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         {
             HoverHighlight.Visibility = Visibility.Collapsed;
             _hoverBounds = null;
+            _hoverWindowHandle = 0;
             UpdateDimMask(null);
             return;
         }
 
         _hoverBounds = clip;
+        _hoverWindowHandle = handle;
         var left = (clip.Left - _monitor.Left) / Scale;
         var top = (clip.Top - _monitor.Top) / Scale;
         var width = clip.Width / Scale;
@@ -277,7 +283,7 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         Bottom = Math.Min(bounds.Bottom, _monitor.Bottom)
     };
 
-    private void Complete(RECT? bounds)
+    private void Complete(CaptureSelection? selection)
     {
         if (_completion is null) return;
         var completion = _completion;
@@ -285,7 +291,7 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         _dragging = false;
         _appWindow?.Hide();
         FrozenScreenImage.Source = null;
-        completion.TrySetResult(bounds);
+        completion.TrySetResult(selection);
     }
 
     private static WriteableBitmap? CaptureFrozenScreen(RECT bounds)

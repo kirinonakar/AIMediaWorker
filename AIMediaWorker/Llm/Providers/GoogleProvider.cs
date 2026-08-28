@@ -42,6 +42,36 @@ public sealed class GoogleProvider : ILlmProvider, IDisposable
         return root?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.GetValue<string>() ?? throw new LlmProviderException(Id, "Google Gemini returned no generated text.");
     }
 
+    public async Task<string> GenerateWithImageAsync(
+        string model,
+        string systemPrompt,
+        string userPrompt,
+        ReadOnlyMemory<byte> imageBytes,
+        string imageMediaType,
+        LlmGenerationOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        if (imageBytes.IsEmpty) throw new ArgumentException("Image data is required.", nameof(imageBytes));
+        var body = CreateGenerationBody(model, systemPrompt, userPrompt, options);
+        body["contents"]![0]!["parts"] = new JsonArray(
+            new JsonObject { ["text"] = userPrompt },
+            new JsonObject
+            {
+                ["inlineData"] = new JsonObject
+                {
+                    ["mimeType"] = imageMediaType,
+                    ["data"] = Convert.ToBase64String(imageBytes.Span)
+                }
+            });
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"models/{Uri.EscapeDataString(model)}:generateContent?key={Uri.EscapeDataString(_apiKey)}")
+        { Content = JsonContent.Create(body, options: LlmJson.Options) };
+        using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
+        var root = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: cancellationToken).ConfigureAwait(false);
+        return root?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.GetValue<string>()
+            ?? throw new LlmProviderException(Id, "Google Gemini returned no generated text.");
+    }
+
     public async IAsyncEnumerable<string> GenerateStreamingAsync(
         string model,
         string systemPrompt,

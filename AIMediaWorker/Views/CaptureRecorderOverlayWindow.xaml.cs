@@ -140,9 +140,11 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         SetButtonDescription(RecordModeButton, L("RecordModeToggle.Content"));
         SetButtonDescription(FullscreenButton, L("AreaFullscreen.Content"));
         SetButtonDescription(WindowAreaButton, L("AreaWindow.Content"));
+        SetButtonDescription(ScrollCaptureButton, L("ScrollCaptureTooltip"));
         SetButtonDescription(RegionButton, L("AreaRegion.Content"));
         SetButtonDescription(OcrButton, L("OcrTooltip"));
         SetButtonDescription(TranslateOcrButton, L("OcrTranslateTooltip"));
+        SetButtonDescription(VlmOcrButton, L("OcrVlmTooltip"));
         SetButtonDescription(StopRecordButton, L("RecordStop.Content"));
         SetButtonDescription(CloseOverlayButton, L("CloseTooltip"));
         UpdatePauseResumeButton(false);
@@ -289,7 +291,9 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     {
         _mode = mode;
         OcrButton.IsEnabled = mode == CaptureRecorderMode.Capture;
-        TranslateOcrButton.IsEnabled = mode == CaptureRecorderMode.Capture;
+        TranslateOcrButton.IsEnabled = mode == CaptureRecorderMode.Capture && VlmOcrButton.IsChecked != true;
+        VlmOcrButton.IsEnabled = mode == CaptureRecorderMode.Capture;
+        ScrollCaptureButton.IsEnabled = mode == CaptureRecorderMode.Capture;
         UpdateModeButtons();
     }
 
@@ -325,16 +329,34 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         }
     }
 
+    private void OnVlmOcrClick(object sender, RoutedEventArgs e)
+    {
+        if (VlmOcrButton.IsChecked == true)
+        {
+            try
+            {
+                _ = GetOcrTranslator();
+            }
+            catch (Exception exception)
+            {
+                VlmOcrButton.IsChecked = false;
+                ShowStatus(exception.Message);
+            }
+        }
+
+        TranslateOcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture && VlmOcrButton.IsChecked != true;
+    }
+
     private async Task SelectThenExecuteAsync(CaptureSelectorMode selectorMode)
     {
         var cursor = ScreenCaptureInterop.GetCursorPosition();
         var monitor = ScreenCaptureInterop.GetMonitorBounds(cursor.X, cursor.Y);
         HideOverlay();
-        RECT? bounds;
+        CaptureSelection? selection;
         try
         {
             _selector ??= new CaptureRegionSelectorWindow();
-            bounds = await _selector.SelectAsync(selectorMode, monitor);
+            selection = await _selector.SelectAsync(selectorMode, monitor);
         }
         catch (Exception exception)
         {
@@ -343,13 +365,21 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             return;
         }
 
-        if (bounds is null)
+        if (selection is null)
         {
             ShowOverlay();
             return;
         }
 
-        await ExecuteForBoundsAsync(bounds.Value);
+        if (_mode == CaptureRecorderMode.Capture &&
+            selectorMode == CaptureSelectorMode.Window &&
+            ScrollCaptureButton.IsChecked == true)
+        {
+            await ExecuteScrollingCaptureAsync(selection.Value);
+            return;
+        }
+
+        await ExecuteForBoundsAsync(selection.Value.Bounds);
     }
 
     private async Task ExecuteForBoundsAsync(RECT bounds)
@@ -380,9 +410,33 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     {
         var pixels = ScreenCaptureInterop.CaptureRegion(bounds)
             ?? throw new InvalidOperationException(L("CaptureErrorTitle"));
+        await SaveCaptureAsync(pixels, bounds.Width, bounds.Height);
+    }
+
+    private async Task ExecuteScrollingCaptureAsync(CaptureSelection selection)
+    {
+        HideOverlay();
+        await Task.Delay(150);
+        try
+        {
+            var capture = await ScrollingCaptureService.CaptureAsync(selection.WindowHandle, selection.Bounds);
+            await SaveCaptureAsync(capture.Pixels, capture.Width, capture.Height);
+        }
+        catch (Exception exception)
+        {
+            await HandleActionErrorAsync(L("CaptureErrorTitle"), "CAPTURE_SCROLL_ERROR", exception);
+        }
+        finally
+        {
+            ShowOverlay();
+        }
+    }
+
+    private async Task SaveCaptureAsync(byte[] pixels, int width, int height)
+    {
         var directory = ScreenCaptureService.ResolveHomeDirectory(_settings.Capture.CaptureFolder);
         var path = ScreenCaptureService.BuildUniqueFilePath(directory, $"AIMediaWorker_Capture_{DateTime.Now:yyyyMMdd_HHmmss}", ".png");
-        await ScreenCaptureService.SavePngAsync(pixels, bounds.Width, bounds.Height, path);
+        await ScreenCaptureService.SavePngAsync(pixels, width, height, path);
         await CopyImageToClipboardAsync(path);
         ShowStatus(F("StatusCaptureSavedAndCopiedFormat", path));
     }
@@ -470,11 +524,11 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         HideOverlay();
         try
         {
-            RECT? bounds;
+            CaptureSelection? selection;
             try
             {
                 _selector ??= new CaptureRegionSelectorWindow();
-                bounds = await _selector.SelectAsync(CaptureSelectorMode.Region, monitor);
+                selection = await _selector.SelectAsync(CaptureSelectorMode.Region, monitor);
             }
             catch (Exception exception)
             {
@@ -482,11 +536,28 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
                 return;
             }
 
-            if (bounds is null) return;
+            if (selection is null) return;
             await Task.Delay(120);
-            var pixels = ScreenCaptureInterop.CaptureRegion(bounds.Value)
+            var bounds = selection.Value.Bounds;
+            var pixels = ScreenCaptureInterop.CaptureRegion(bounds)
                 ?? throw new InvalidOperationException(L("CaptureErrorTitle"));
-            var text = await ScreenCaptureService.RecognizeTextAsync(pixels, bounds.Value.Width, bounds.Value.Height);
+            if (VlmOcrButton.IsChecked == true)
+            {
+                OcrButton.IsEnabled = false;
+                TranslateOcrButton.IsEnabled = false;
+                VlmOcrButton.IsEnabled = false;
+                ShowOverlay();
+                ShowStatus(L("StatusOcrVlmProcessing"));
+                var pngBytes = await ScreenCaptureService.EncodePngAsync(pixels, bounds.Width, bounds.Height);
+                var result = await GetOcrTranslator().RecognizeAndTranslateImageAsync(
+                    pngBytes,
+                    _settings.Llm.TranslationLanguage);
+                CopyTextToClipboard(OcrClipboardFormatter.Compose(result.SourceText, result.Translation));
+                ShowStatus(L("StatusOcrVlmCopied"));
+                return;
+            }
+
+            var text = await ScreenCaptureService.RecognizeTextAsync(pixels, bounds.Width, bounds.Height);
             if (text is null)
             {
                 ShowStatus(L("ErrorNoOcrEngine"));
@@ -521,10 +592,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
                 }
             }
 
-            var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-            package.SetText(OcrClipboardFormatter.Compose(text, translation));
-            Clipboard.SetContent(package);
-            Clipboard.Flush();
+            CopyTextToClipboard(OcrClipboardFormatter.Compose(text, translation));
             ShowStatus(translation is null
                 ? F("StatusOcrCopiedFormat", text.Length)
                 : L("StatusOcrTranslationCopied"));
@@ -536,9 +604,18 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         finally
         {
             OcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture;
-            TranslateOcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture;
+            TranslateOcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture && VlmOcrButton.IsChecked != true;
+            VlmOcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture;
             ShowOverlay();
         }
+    }
+
+    private static void CopyTextToClipboard(string text)
+    {
+        var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+        package.SetText(text);
+        Clipboard.SetContent(package);
+        Clipboard.Flush();
     }
 
     private LlmService GetOcrTranslator()

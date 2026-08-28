@@ -57,19 +57,29 @@
                     <Button x:Name="FullscreenButton" Width="30" Height="30" Padding="0" Click="OnFullscreenClick">
                         <FontIcon Glyph="&#xE740;" FontSize="14" />
                     </Button>
-                    <Button x:Name="WindowAreaButton" Width="30" Height="30" Padding="0" Click="OnWindowAreaClick">
-                        <FontIcon Glyph="&#xE737;" FontSize="14" />
-                    </Button>
+                    <StackPanel Orientation="Horizontal" Spacing="3">
+                        <Button x:Name="WindowAreaButton" Width="30" Height="30" Padding="0" Click="OnWindowAreaClick">
+                            <FontIcon Glyph="&#xE737;" FontSize="14" />
+                        </Button>
+                        <ToggleButton x:Name="ScrollCaptureButton" Width="30" Height="30" Padding="0">
+                            <TextBlock Text="↕" FontSize="15" FontWeight="SemiBold" />
+                        </ToggleButton>
+                    </StackPanel>
                     <Button x:Name="RegionButton" Width="30" Height="30" Padding="0" Click="OnRegionClick">
                         <FontIcon Glyph="&#xE7A8;" FontSize="14" />
                     </Button>
-                    <StackPanel Orientation="Horizontal" Spacing="3">
+                    <StackPanel Orientation="Horizontal" Spacing="3" Margin="8,0,0,0">
                         <Button x:Name="OcrButton" Width="30" Height="30" Padding="0" Click="OnOcrClick">
                             <FontIcon Glyph="&#xE721;" FontSize="14" />
                         </Button>
-                        <ToggleButton x:Name="TranslateOcrButton" Width="30" Height="30" Padding="0" Click="OnTranslateOcrClick">
-                            <FontIcon Glyph="&#xE8C1;" FontSize="14" />
-                        </ToggleButton>
+                        <StackPanel Orientation="Horizontal" Spacing="3">
+                            <ToggleButton x:Name="TranslateOcrButton" Width="30" Height="30" Padding="0" Click="OnTranslateOcrClick">
+                                <FontIcon Glyph="&#xE8C1;" FontSize="14" />
+                            </ToggleButton>
+                            <ToggleButton x:Name="VlmOcrButton" Width="38" Height="30" Padding="0" Click="OnVlmOcrClick">
+                                <TextBlock Text="VLM" FontSize="10" FontWeight="SemiBold" />
+                            </ToggleButton>
+                        </StackPanel>
                     </StackPanel>
                 </StackPanel>
             </Border>

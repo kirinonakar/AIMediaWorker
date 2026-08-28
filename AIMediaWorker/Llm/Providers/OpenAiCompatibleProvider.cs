@@ -57,6 +57,45 @@ public class OpenAiCompatibleProvider : ILlmProvider, IDisposable
         return root["choices"]?[0]?["message"]?["content"]?.GetValue<string>() ?? throw new LlmProviderException(Id, "The provider response did not contain generated text.");
     }
 
+    public virtual async Task<string> GenerateWithImageAsync(
+        string model,
+        string systemPrompt,
+        string userPrompt,
+        ReadOnlyMemory<byte> imageBytes,
+        string imageMediaType,
+        LlmGenerationOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(model)) throw new ArgumentException("A model id is required.", nameof(model));
+        if (imageBytes.IsEmpty) throw new ArgumentException("Image data is required.", nameof(imageBytes));
+        var dataUrl = $"data:{imageMediaType};base64,{Convert.ToBase64String(imageBytes.Span)}";
+        var body = new JsonObject
+        {
+            ["model"] = model,
+            ["messages"] = new JsonArray(
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray(
+                        new JsonObject { ["type"] = "text", ["text"] = userPrompt },
+                        new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = dataUrl } })
+                }),
+            ["stream"] = false
+        };
+        if (Capabilities.SupportsTemperature && options.Temperature is { } temperature) body["temperature"] = temperature;
+        if (options.MaximumOutputTokens is { } maximum) body["max_tokens"] = maximum;
+        if (Capabilities.SupportsStructuredOutput && options.StructuredOutput) body["response_format"] = new JsonObject { ["type"] = "json_object" };
+        ConfigureThinking(body, options);
+        using var request = CreateRequest(HttpMethod.Post, "chat/completions");
+        request.Content = JsonContent.Create(body, options: LlmJson.Options);
+        using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
+        var root = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: cancellationToken).ConfigureAwait(false)
+            ?? throw new LlmProviderException(Id, "The provider returned an empty response.");
+        return root["choices"]?[0]?["message"]?["content"]?.GetValue<string>()
+            ?? throw new LlmProviderException(Id, "The provider response did not contain generated text.");
+    }
+
     public virtual async IAsyncEnumerable<string> GenerateStreamingAsync(
         string model,
         string systemPrompt,

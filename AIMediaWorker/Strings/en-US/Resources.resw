@@ -151,11 +151,15 @@
 <data name="RecordModeToggle.Content"><value>Record</value></data>
 <data name="AreaFullscreen.Content"><value>Full screen</value></data>
 <data name="AreaWindow.Content"><value>Window</value></data>
+<data name="ScrollCaptureTooltip"><value>Scroll and stitch the full window contents when capturing a window</value></data>
 <data name="AreaRegion.Content"><value>Region</value></data>
 <data name="OcrAction.Content"><value>OCR</value></data>
 <data name="OcrTooltip"><value>Extract text from a selected area</value></data>
 <data name="OcrTranslateAction.Content"><value>Translate</value></data>
 <data name="OcrTranslateTooltip"><value>Copy the recognized text and its translation together</value></data>
+<data name="OcrVlmTooltip"><value>Recognize text from the image with a VLM and translate it directly</value></data>
+<data name="StatusOcrVlmProcessing"><value>Recognizing and translating the image with the VLM…</value></data>
+<data name="StatusOcrVlmCopied"><value>VLM-extracted text and translation copied to the clipboard</value></data>
 <data name="RecordPause.Content"><value>Pause</value></data>
 <data name="RecordResume.Content"><value>Resume</value></data>
 <data name="RecordStop.Content"><value>Stop</value></data>

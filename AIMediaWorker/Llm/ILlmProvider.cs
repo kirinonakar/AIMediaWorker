@@ -27,6 +27,16 @@ public interface ILlmProvider
     Task<IReadOnlyList<LlmModel>> GetModelsAsync(CancellationToken cancellationToken = default);
     Task<string> GenerateAsync(string model, string systemPrompt, string userPrompt, LlmGenerationOptions options, CancellationToken cancellationToken = default);
 
+    Task<string> GenerateWithImageAsync(
+        string model,
+        string systemPrompt,
+        string userPrompt,
+        ReadOnlyMemory<byte> imageBytes,
+        string imageMediaType,
+        LlmGenerationOptions options,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException($"{DisplayName} does not support image input.");
+
     async IAsyncEnumerable<string> GenerateStreamingAsync(
         string model,
         string systemPrompt,

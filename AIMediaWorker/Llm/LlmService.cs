@@ -8,9 +8,41 @@ namespace AIMediaWorker.Llm;
 public enum SummaryKind { Short, Detailed }
 public sealed record TranslationProgress(int Completed, int Total);
 public sealed record TranslationBatch(IReadOnlyDictionary<Guid, string> Items, int Completed, int Total);
+public sealed record VisionTranslation(string SourceText, string Translation);
 
 public sealed class LlmService(ILlmProvider provider, string model, Settings.ThinkingLevel thinkingLevel = Settings.ThinkingLevel.Default)
 {
+    public async Task<VisionTranslation> RecognizeAndTranslateImageAsync(
+        ReadOnlyMemory<byte> pngBytes,
+        string targetLanguage,
+        CancellationToken cancellationToken = default)
+    {
+        if (pngBytes.IsEmpty) throw new ArgumentException("Image data is required.", nameof(pngBytes));
+        if (string.IsNullOrWhiteSpace(targetLanguage)) throw new ArgumentException("A target language is required.", nameof(targetLanguage));
+
+        var prompt = $"""
+            Read every visible text element in the supplied screenshot in natural reading order, then translate it to {targetLanguage}.
+            Preserve meaningful paragraph boundaries and line breaks. Do not describe the image or infer text that is not visible.
+            Return one JSON object with exactly these string properties: "sourceText" and "translation".
+            "sourceText" must contain the extracted original text and "translation" must contain its {targetLanguage} translation.
+            """;
+        var response = await provider.GenerateWithImageAsync(
+            model,
+            $"You are a precise visual text recognizer and translator. Return only valid JSON and translate into {targetLanguage}.",
+            prompt,
+            pngBytes,
+            "image/png",
+            new LlmGenerationOptions(thinkingLevel, 0.1, true, 4_096),
+            cancellationToken).ConfigureAwait(false);
+
+        using var document = JsonDocument.Parse(ExtractJson(response));
+        var sourceText = document.RootElement.TryGetProperty("sourceText", out var source) ? source.GetString()?.Trim() : null;
+        var translation = document.RootElement.TryGetProperty("translation", out var translated) ? translated.GetString()?.Trim() : null;
+        if (string.IsNullOrWhiteSpace(sourceText)) throw new JsonException("The visual recognition response did not contain source text.");
+        if (string.IsNullOrWhiteSpace(translation)) throw new JsonException("The visual recognition response did not contain a translation.");
+        return new VisionTranslation(sourceText, translation);
+    }
+
     public async Task<string> TranslateTextAsync(
         string sourceText,
         string targetLanguage,

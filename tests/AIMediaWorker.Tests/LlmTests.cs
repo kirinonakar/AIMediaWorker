@@ -28,6 +28,65 @@ public sealed class LlmTests
     }
 
     [Fact]
+    public async Task VlmRecognitionSendsImageAndReturnsSourceWithTranslation()
+    {
+        var provider = new VisionFakeProvider("{\"sourceText\":\"Hello\",\"translation\":\"안녕하세요\"}");
+
+        var result = await new LlmService(provider, "vision-model").RecognizeAndTranslateImageAsync(
+            new byte[] { 1, 2, 3 },
+            "Korean");
+
+        Assert.Equal("Hello", result.SourceText);
+        Assert.Equal("안녕하세요", result.Translation);
+        Assert.Equal(new byte[] { 1, 2, 3 }, provider.ImageBytes);
+        Assert.Contains("Korean", provider.UserPrompt);
+    }
+
+    [Fact]
+    public async Task OpenAiCompatibleVisionRequestUsesImageDataUrl()
+    {
+        string? body = null;
+        using var http = new HttpClient(new CaptureHandler(async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}")
+            };
+        }));
+        using var provider = new OllamaProvider(httpClient: http);
+
+        await provider.GenerateWithImageAsync(
+            "vision-model", "system", "read image", new byte[] { 1, 2, 3 }, "image/png", new LlmGenerationOptions());
+
+        Assert.Contains("data:image/png;base64,AQID", body);
+        Assert.Contains("image_url", body);
+        Assert.Contains("read image", body);
+    }
+
+    [Fact]
+    public async Task GoogleVisionRequestUsesInlineImageData()
+    {
+        string? body = null;
+        using var http = new HttpClient(new CaptureHandler(async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}")
+            };
+        }));
+        using var provider = new GoogleProvider("test-key", http);
+
+        await provider.GenerateWithImageAsync(
+            "gemini-test", "system", "read image", new byte[] { 1, 2, 3 }, "image/png", new LlmGenerationOptions());
+
+        Assert.Contains("inlineData", body);
+        Assert.Contains("\"mimeType\":\"image/png\"", body);
+        Assert.Contains("\"data\":\"AQID\"", body);
+    }
+
+    [Fact]
     public async Task TranslationMapsByIdWithoutChangingTimestamps()
     {
         var first = new SubtitleCue { StartMicroseconds = 1_000_000, EndMicroseconds = 2_000_000, Text = "One" };
@@ -384,6 +443,23 @@ public sealed class LlmTests
         public LlmProviderCapabilities Capabilities => new(false, false, false, false, true, true);
         public Task<IReadOnlyList<LlmModel>> GetModelsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<LlmModel>>([]);
         public Task<string> GenerateAsync(string model, string systemPrompt, string userPrompt, LlmGenerationOptions options, CancellationToken cancellationToken = default) => Task.FromResult(generate(userPrompt));
+    }
+
+    private sealed class VisionFakeProvider(string response) : ILlmProvider
+    {
+        public string Id => "vision-fake";
+        public string DisplayName => "Vision Fake";
+        public LlmProviderCapabilities Capabilities => new(false, false, false, false, true, true);
+        public byte[]? ImageBytes { get; private set; }
+        public string? UserPrompt { get; private set; }
+        public Task<IReadOnlyList<LlmModel>> GetModelsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<LlmModel>>([]);
+        public Task<string> GenerateAsync(string model, string systemPrompt, string userPrompt, LlmGenerationOptions options, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<string> GenerateWithImageAsync(string model, string systemPrompt, string userPrompt, ReadOnlyMemory<byte> imageBytes, string imageMediaType, LlmGenerationOptions options, CancellationToken cancellationToken = default)
+        {
+            ImageBytes = imageBytes.ToArray();
+            UserPrompt = userPrompt;
+            return Task.FromResult(response);
+        }
     }
 
     private sealed class CaptureHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> handler) : HttpMessageHandler

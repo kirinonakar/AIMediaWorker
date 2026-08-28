@@ -12,16 +12,16 @@ internal static class ScreenCaptureService
     /// <summary>Saves BGRA pixel data as a PNG file.</summary>
     public static async Task SavePngAsync(byte[] bgraPixels, int width, int height, string path)
     {
+        var pngBytes = await EncodePngAsync(bgraPixels, width, height);
+        await File.WriteAllBytesAsync(path, pngBytes);
+    }
+
+    /// <summary>Encodes BGRA pixel data as PNG bytes for clipboard and multimodal model requests.</summary>
+    public static async Task<byte[]> EncodePngAsync(byte[] bgraPixels, int width, int height)
+    {
         var stream = new InMemoryRandomAccessStream();
         try
         {
-            var writer = new DataWriter(stream);
-            writer.WriteBytes(bgraPixels);
-            await writer.StoreAsync().AsTask();
-            writer.DetachStream();
-            writer.Dispose();
-
-            stream.Seek(0);
             var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
             encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, (uint)width, (uint)height, 96, 96, bgraPixels);
             await encoder.FlushAsync().AsTask();
@@ -32,7 +32,7 @@ internal static class ScreenCaptureService
             await reader.LoadAsync(size).AsTask();
             var pngBytes = new byte[size];
             reader.ReadBytes(pngBytes);
-            await File.WriteAllBytesAsync(path, pngBytes);
+            return pngBytes;
         }
         finally
         {
