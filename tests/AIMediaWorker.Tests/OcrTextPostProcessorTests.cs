@@ -101,4 +101,21 @@ public sealed class OcrTextPostProcessorTests
             "AI will either be the greatest equalizer ever invented, or the\r\nworst source of injustice.",
             result);
     }
+
+    [Fact]
+    public void SelectBestNormalizesPredominantlyEnglishTextEvenWhenOnlyKoreanProfileIsAvailable()
+    {
+        var result = OcrTextPostProcessor.SelectBest([
+            new OcrTextCandidate(
+                "시 will either be the greatest equalizer ever invented, orthe\r\n" +
+                "worst source Of inJl-lStice.",
+                OcrLanguageKind.Korean,
+                true)
+        ]);
+
+        Assert.Equal(
+            "AI will either be the greatest equalizer ever invented, or the\r\n" +
+            "worst source of injustice.",
+            result);
+    }
 }

@@ -50,12 +50,16 @@ internal static class OcrTextPostProcessor
             selected = profile ?? populated.MaxBy(candidate => CountSignificantCharacters(candidate.Text))!;
         }
 
-        return selected.Language switch
-        {
-            OcrLanguageKind.Japanese => RemoveInsertedJapaneseSpaces(selected.Text),
-            OcrLanguageKind.English => NormalizeEnglishText(selected.Text),
-            _ => selected.Text
-        };
+        var normalized = selected.Language == OcrLanguageKind.Japanese
+            ? RemoveInsertedJapaneseSpaces(selected.Text)
+            : selected.Text;
+
+        // The profile recognizer can return a mostly-English result while labeling it as
+        // Korean (for example, "AI" becomes "시"). Detect the actual output script so the
+        // English cleanup is not accidentally skipped because of the engine label.
+        return selected.Language == OcrLanguageKind.English || IsPredominantlyLatinText(normalized)
+            ? NormalizeEnglishText(normalized)
+            : normalized;
     }
 
     public static string NormalizeEnglishText(string text)
@@ -71,6 +75,16 @@ internal static class OcrTextPostProcessor
             normalized,
             @"\b(?:ofthe)\b",
             "of the",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        normalized = System.Text.RegularExpressions.Regex.Replace(
+            normalized,
+            @"(?<![\p{L}\p{N}])시(?=[ \t]+(?:will|is|has|can|may|must|should|would|could)\b)",
+            "AI",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        normalized = System.Text.RegularExpressions.Regex.Replace(
+            normalized,
+            @"\binjl-lstice\b",
+            "injustice",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"(?<=[a-z])([ \t]+)Of\b", "$1of");
         normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+([,.;:!?])", "$1");
@@ -109,6 +123,13 @@ internal static class OcrTextPostProcessor
         char.IsLetterOrDigit(character) || IsCjkIdeograph(character));
 
     private static int CountLatinCharacters(string text) => text.Count(IsLatinLetter);
+
+    private static bool IsPredominantlyLatinText(string text)
+    {
+        var latinCharacters = CountLatinCharacters(text);
+        var otherLetters = text.Count(char.IsLetter) - latinCharacters;
+        return latinCharacters >= 8 && latinCharacters >= otherLetters * 4;
+    }
 
     private static int CountNativeCharacters(OcrTextCandidate candidate) => candidate.Language switch
     {
