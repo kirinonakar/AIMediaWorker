@@ -11,8 +11,8 @@ namespace AIMediaWorker.Views;
 
 public sealed partial class WebDavServerWindow : Window
 {
-    private const int PreferredWidth = 680;
-    private const int PreferredHeight = 760;
+    private const int PreferredWidth = 450;
+    private const int PreferredHeight = 550;
     private readonly Window _owner;
     private readonly nint _ownerHandle;
     private readonly nint _selfHandle;
