@@ -10,6 +10,7 @@ using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
@@ -85,7 +86,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             }
 
             RemoveNativeWindowFrame();
-            _appWindow.ResizeClient(new SizeInt32(520, 46));
+            _appWindow.ResizeClient(new SizeInt32(340, 42));
             _appWindow.Closing += OnAppWindowClosing;
         }
 
@@ -135,19 +136,29 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
 
     private void ApplyLocalizedTexts()
     {
-        FullscreenButton.Content = L("AreaFullscreen.Content");
-        WindowAreaButton.Content = L("AreaWindow.Content");
-        RegionButton.Content = L("AreaRegion.Content");
-        OcrButton.Content = L("OcrAction.Content");
-        ToolTipService.SetToolTip(OcrButton, L("OcrTooltip"));
-        TranslateOcrButton.Content = L("OcrTranslateAction.Content");
-        ToolTipService.SetToolTip(TranslateOcrButton, L("OcrTranslateTooltip"));
-        PauseResumeButton.Content = L("RecordPause.Content");
-        StopRecordButton.Content = L("RecordStop.Content");
-        ToolTipService.SetToolTip(CloseOverlayButton, L("CloseTooltip"));
-        CaptureModeButton.Content = L("CaptureModeToggle.Content");
-        RecordModeButton.Content = L("RecordModeToggle.Content");
+        SetButtonDescription(CaptureModeButton, L("CaptureModeToggle.Content"));
+        SetButtonDescription(RecordModeButton, L("RecordModeToggle.Content"));
+        SetButtonDescription(FullscreenButton, L("AreaFullscreen.Content"));
+        SetButtonDescription(WindowAreaButton, L("AreaWindow.Content"));
+        SetButtonDescription(RegionButton, L("AreaRegion.Content"));
+        SetButtonDescription(OcrButton, L("OcrTooltip"));
+        SetButtonDescription(TranslateOcrButton, L("OcrTranslateTooltip"));
+        SetButtonDescription(StopRecordButton, L("RecordStop.Content"));
+        SetButtonDescription(CloseOverlayButton, L("CloseTooltip"));
+        UpdatePauseResumeButton(false);
         UpdateModeButtons();
+    }
+
+    private static void SetButtonDescription(FrameworkElement button, string description)
+    {
+        ToolTipService.SetToolTip(button, description);
+        AutomationProperties.SetName(button, description);
+    }
+
+    private void UpdatePauseResumeButton(bool isPaused)
+    {
+        PauseResumeIcon.Glyph = isPaused ? "\uE768" : "\uE769";
+        SetButtonDescription(PauseResumeButton, L(isPaused ? "RecordResume.Content" : "RecordPause.Content"));
     }
 
     private double Scale => Root.XamlRoot?.RasterizationScale ?? 1.0;
@@ -390,7 +401,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             StatusText.Visibility = Visibility.Collapsed;
             PauseResumeButton.IsEnabled = true;
             StopRecordButton.IsEnabled = true;
-            PauseResumeButton.Content = L("RecordPause.Content");
+            UpdatePauseResumeButton(false);
             RecordingElapsedText.Text = FormatElapsed(TimeSpan.Zero);
             AdjustWindowSize();
             _elapsedTimer.Start();
@@ -417,12 +428,12 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         if (_recorder.IsPaused)
         {
             _recorder.Resume();
-            PauseResumeButton.Content = L("RecordPause.Content");
+            UpdatePauseResumeButton(false);
         }
         else
         {
             _recorder.Pause();
-            PauseResumeButton.Content = L("RecordResume.Content");
+            UpdatePauseResumeButton(true);
         }
     }
 
