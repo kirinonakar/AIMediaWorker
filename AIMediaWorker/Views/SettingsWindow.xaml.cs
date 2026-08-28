@@ -205,7 +205,7 @@ public sealed partial class SettingsWindow : Window
         HardwareCombo.SelectedItem = _settings.Playback.HardwareDecoder; RtxCombo.SelectedItem = _settings.Playback.RtxVideoSuperResolution; VolumeBox.Value = _settings.Playback.DefaultVolume; SeekBox.Value = _settings.Playback.SeekIntervalSeconds;
         RendererBox.Text = _settings.Playback.Renderer; AudioLanguageBox.Text = _settings.Playback.DefaultAudioLanguage ?? string.Empty; SubtitleLanguageBox.Text = _settings.Playback.DefaultSubtitleLanguage ?? string.Empty;
         SubtitleFontButton.Content = _settings.Subtitle.FontFamily; SubtitleSizeBox.Value = _settings.Subtitle.FontSize; CueDurationBox.Value = _settings.Subtitle.Segmentation.MaximumCueSeconds; SetColorPicker(SubtitleColorPicker, SubtitleColorPreview, SubtitleColorValue, _settings.Subtitle.Color, Color.FromArgb(255, 255, 255, 255)); SetColorPicker(SubtitleBackgroundPicker, SubtitleBackgroundPreview, SubtitleBackgroundValue, _settings.Subtitle.Background, Color.FromArgb(128, 0, 0, 0)); OutlineBox.Value = _settings.Subtitle.Outline; BottomMarginBox.Value = _settings.Subtitle.BottomMargin; EncodingBox.Text = _settings.Subtitle.Encoding; MinCueDurationBox.Value = _settings.Subtitle.Segmentation.MinimumCueSeconds; MaxLinesBox.Value = _settings.Subtitle.Segmentation.MaximumLines; TargetCharsBox.Value = _settings.Subtitle.Segmentation.TargetCharactersPerLine; SilenceSplitBox.Value = _settings.Subtitle.Segmentation.SilenceSplitSeconds; MaximumCpsBox.Value = _settings.Subtitle.Segmentation.MaximumCharactersPerSecond;
-        AsrModelBox.Text = AsrSettings.DefaultModelId; AlignerBox.Text = AsrSettings.DefaultAlignerId; AsrWorkerFolderBox.Text = _settings.Asr.WorkerDirectory ?? string.Empty; CrispAsrRuntimeBox.Text = _settings.Asr.CrispAsrRuntimeDirectory; AsrModelFolderBox.Text = AsrRuntimePaths.ModelsDirectory; AsrDeviceCombo.SelectedItem = _settings.Asr.Device; PrecisionCombo.SelectedItem = _settings.Asr.Precision; VadCheck.IsChecked = _settings.Asr.UseVad; AsrLanguageBox.Text = _settings.Asr.Language; ChunkDurationBox.Value = _settings.Asr.ChunkDurationSeconds;
+        AsrModelBox.Text = AsrSettings.DefaultModelId; AlignerBox.Text = AsrSettings.DefaultAlignerId; AsrWorkerFolderBox.Text = _settings.Asr.WorkerDirectory ?? string.Empty; CrispAsrRuntimeBox.Text = _settings.Asr.CrispAsrRuntimeDirectory; AsrModelFolderBox.Text = AsrRuntimePaths.WorkerDirectory; AsrDeviceCombo.SelectedItem = _settings.Asr.Device; PrecisionCombo.SelectedItem = _settings.Asr.Precision; VadCheck.IsChecked = _settings.Asr.UseVad; AsrLanguageBox.Text = _settings.Asr.Language; ChunkDurationBox.Value = _settings.Asr.ChunkDurationSeconds;
         NetworkTimeoutBox.Value = _settings.Network.TimeoutSeconds; ProxyBox.Text = _settings.Network.Proxy ?? string.Empty; CaptureFolderBox.Text = _settings.Capture.CaptureFolder ?? string.Empty; CameraIdBox.Text = _settings.Capture.CameraDeviceId ?? string.Empty; MicrophoneIdBox.Text = _settings.Capture.MicrophoneDeviceId ?? string.Empty; CaptureWidthBox.Value = _settings.Capture.Width; CaptureHeightBox.Value = _settings.Capture.Height; CaptureFpsBox.Value = _settings.Capture.FrameRate; SetColorPicker(CaptionTextColorPicker, CaptionTextColorPreview, CaptionTextColorValue, _settings.Capture.CaptionTextColor, Color.FromArgb(255, 255, 255, 255)); SetColorPicker(CaptionBackgroundPicker, CaptionBackgroundPreview, CaptionBackgroundValue, _settings.Capture.CaptionBackgroundColor, Color.FromArgb(160, 0, 0, 0)); CaptionSizeBox.Value = _settings.Capture.CaptionFontSize; CaptionPositionCombo.SelectedItem = _settings.Capture.CaptionPosition; CaptionLinesBox.Value = _settings.Capture.CaptionMaximumLines;
         ProviderCombo.SelectedItem = _settings.Llm.Provider.Equals("Unsloth", StringComparison.OrdinalIgnoreCase) ? "Unsloth Desktop" : _settings.Llm.Provider; ModelBox.Text = _settings.Llm.Model ?? string.Empty; ThinkingCombo.SelectedItem = _settings.Llm.ThinkingLevel; TranslationLanguageBox.Text = _settings.Llm.TranslationLanguage;
         var rtx = new GraphicsCapabilityService().DetectRtxVideoSuperResolution();
@@ -390,7 +390,7 @@ public sealed partial class SettingsWindow : Window
             AsrRuntimePaths.SetWorkerDirectory(workerDirectory);
             _settings.Asr.WorkerDirectory = EmptyToNull(AsrWorkerFolderBox.Text);
             CrispAsrRuntimeBox.Text = AsrRuntimePaths.CrispAsrRuntimeDirectory;
-            AsrModelFolderBox.Text = AsrRuntimePaths.ModelsDirectory;
+            AsrModelFolderBox.Text = AsrRuntimePaths.WorkerDirectory;
             _settings.Asr.CrispAsrRuntimeDirectory = AsrRuntimePaths.CrispAsrRuntimeDirectory;
             _settings.Asr.ModelPath = AsrSettings.DefaultModelId;
             _settings.Asr.AlignerPath = AsrSettings.DefaultAlignerId;
@@ -581,7 +581,7 @@ public sealed partial class SettingsWindow : Window
         {
             var workerDirectory = AsrRuntimePaths.ResolveWorkerDirectory(AsrWorkerFolderBox.Text);
             CrispAsrRuntimeBox.Text = Path.Combine(workerDirectory, "crispasr");
-            AsrModelFolderBox.Text = Path.Combine(workerDirectory, "models");
+            AsrModelFolderBox.Text = workerDirectory;
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or System.Security.SecurityException or IOException) { }
     }
