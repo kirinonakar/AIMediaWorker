@@ -251,19 +251,20 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             SetProperty("http-header-fields", string.Join(',', httpHeaders.Select(header => $"{header.Key}: {header.Value}")));
         }
         ConfigureSourceBuffering(source);
-        // When subtitles are hidden, avoid selecting an embedded ASS track during the
-        // initial demux. This is particularly useful for Matroska files carrying fonts
-        // as attachments; enabling subtitles later restores normal track selection.
-        if (!AreSubtitlesVisible) TrySetProperty("sid", "no");
+        // Keep mpv's automatically selected subtitle track attached even when it is
+        // hidden. That lets libass prepare ASS data and embedded fonts as part of the
+        // normal file load, so showing subtitles later is only a visibility change and
+        // cannot interrupt active playback with first-time track initialization.
         // Clear the previous file's video selection before replacement. Pass vid=auto
-        // as a file-local load option so the new video or attached picture is selected
-        // during initial track selection. Restoring vid from FileLoaded is too late:
+        // and sid=auto as file-local load options so the new video and hidden subtitle
+        // tracks are selected during initial track selection. Restoring them from
+        // FileLoaded is too late:
         // loadfile completes asynchronously and can leave a one-frame cover-art track
         // displaying the previous file's already-presented frame.
         TrySetProperty("vid", "no");
         _loadfileIssued = true;
         StartupProfiler.Mark("loadfile-command");
-        MpvInterop.CommandAsync(_context, NextCommandId(), "loadfile", source, "replace", "-1", "vid=auto");
+        MpvInterop.CommandAsync(_context, NextCommandId(), "loadfile", source, "replace", "-1", "vid=auto,sid=auto");
         // A synchronous write here waits behind loadfile until playback is ready. Preserve the
         // required order without waiting for it to finish.
         MpvInterop.CommandAsync(_context, NextCommandId(), "set", "pause", "no");
@@ -332,8 +333,8 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         // Do not rewrite mpv's embeddedfonts property here. Setting it to "yes" for
         // the first time can synchronously initialize libass's system-font provider,
         // which blocks startup for tens of seconds on machines with a large font set.
-        // mpv already defaults embeddedfonts to enabled, while OpenCore prevents a
-        // hidden embedded subtitle track from being selected during initial loading.
+        // mpv already defaults embeddedfonts to enabled. Hidden tracks stay selected
+        // and prepared; sub-visibility alone controls whether they are rendered.
         SetProperty("sub-visibility", visible ? "yes" : "no");
         AreSubtitlesVisible = visible;
     }
@@ -482,7 +483,10 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             var trackId = FindSubtitleTrackId(preferredTrackId);
             if (trackId is not { } selectedTrackId) return false;
             SetProperty("secondary-sid", "no");
-            SetProperty("sid", selectedTrackId.ToString(CultureInfo.InvariantCulture));
+            // Reassigning an already selected ASS track can make mpv rebuild libass
+            // state. Keep the prepared track intact when visibility is the only change.
+            if (GetInt("sid") != selectedTrackId)
+                SetProperty("sid", selectedTrackId.ToString(CultureInfo.InvariantCulture));
             RestoreSubtitleVisibility();
             return true;
         }
