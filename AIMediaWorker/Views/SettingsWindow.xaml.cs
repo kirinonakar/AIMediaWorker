@@ -4,9 +4,11 @@ using AIMediaWorker.Settings;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 using Windows.Storage.Pickers;
+using Windows.System;
 using Windows.UI;
 using WinRT.Interop;
 using AIMediaWorker.Diagnostics;
@@ -59,6 +61,7 @@ public sealed partial class SettingsWindow : Window
     public SettingsWindow(Window owner)
     {
         InitializeComponent();
+        AddEscapeShortcut();
         StabilizeSettingsControlHeights(Root);
         Title = L("SettingsWindow.Title");
         WindowOwner.Attach(this, owner);
@@ -76,6 +79,18 @@ public sealed partial class SettingsWindow : Window
         ThemeCombo.SelectionChanged += OnThemeComboChanged;
         Root.ActualThemeChanged += OnRootActualThemeChanged;
         Closed += (_, _) => _asrInstallCancellation?.Cancel();
+    }
+
+    private void AddEscapeShortcut()
+    {
+        Root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;
+        var escape = new KeyboardAccelerator { Key = VirtualKey.Escape, ScopeOwner = Root };
+        escape.Invoked += (_, args) =>
+        {
+            args.Handled = true;
+            Close();
+        };
+        Root.KeyboardAccelerators.Add(escape);
     }
 
     private static void StabilizeSettingsControlHeights(DependencyObject element)

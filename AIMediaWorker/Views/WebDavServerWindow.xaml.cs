@@ -4,7 +4,9 @@ using AIMediaWorker.Network;
 using AIMediaWorker.Settings;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Input;
 using Windows.Graphics;
+using Windows.System;
 using WinRT.Interop;
 
 namespace AIMediaWorker.Views;
@@ -23,6 +25,7 @@ public sealed partial class WebDavServerWindow : Window
     {
         _owner = owner ?? throw new ArgumentNullException(nameof(owner));
         InitializeComponent();
+        AddEscapeShortcut();
         Root.RequestedTheme = theme switch
         {
             AppTheme.Light => ElementTheme.Light,
@@ -37,6 +40,18 @@ public sealed partial class WebDavServerWindow : Window
         ConfigureWindow();
         Root.ActualThemeChanged += OnRootActualThemeChanged;
         Closed += OnClosed;
+    }
+
+    private void AddEscapeShortcut()
+    {
+        Root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;
+        var escape = new KeyboardAccelerator { Key = VirtualKey.Escape, ScopeOwner = Root };
+        escape.Invoked += (_, args) =>
+        {
+            args.Handled = true;
+            Close();
+        };
+        Root.KeyboardAccelerators.Add(escape);
     }
 
     internal static Task<WebDavServerInput?> ShowAsync(Window owner, AppTheme theme) =>
