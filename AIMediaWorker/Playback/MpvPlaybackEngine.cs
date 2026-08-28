@@ -329,10 +329,11 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public void SetMute(bool muted) { IsMuted = muted; SetProperty("mute", muted ? "yes" : "no"); }
     public void SetSubtitleVisibility(bool visible)
     {
-        // Keep embedded-font parsing aligned with the visibility preference. When the
-        // user turns subtitles back on, MainWindow restores the selected track after
-        // this property is enabled.
-        TrySetProperty("embeddedfonts", visible ? "yes" : "no");
+        // Do not rewrite mpv's embeddedfonts property here. Setting it to "yes" for
+        // the first time can synchronously initialize libass's system-font provider,
+        // which blocks startup for tens of seconds on machines with a large font set.
+        // mpv already defaults embeddedfonts to enabled, while OpenCore prevents a
+        // hidden embedded subtitle track from being selected during initial loading.
         SetProperty("sub-visibility", visible ? "yes" : "no");
         AreSubtitlesVisible = visible;
     }
