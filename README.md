@@ -4,7 +4,7 @@
 
 AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 10, libmpv, FFmpeg, and the prebuilt CrispASR native runtime loaded directly from C#.
 
-It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures screenshots and records the desktop with system audio; creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
+It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures screenshots and records the desktop with system audio (optional capture only launch); creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
 Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs; Explorer and WebDAV entries support name filtering and cyclic name/newest/oldest sorting.
 
@@ -173,6 +173,20 @@ stereo audio from the default Windows playback device. OCR recognizes a selected
 area and copies its text to the clipboard. Files are written to the default folder
 configured in Settings.
 
+### Scroll capture
+
+Enable **Scroll capture** on the overlay and choose a **Window** target:
+AIMediaWorker scrolls the window from the top, captures newly exposed areas,
+and stitches them into a single tall PNG, then restores the scroll position.
+
+### VLM OCR
+
+Enable **VLM OCR** to recognize text with a vision language model instead of
+the local OCR engine. The selected region is sent to the LLM provider and
+model configured in Settings, and the recognized text with its translation is
+copied to the clipboard. VLM OCR and **Translate OCR** are mutually exclusive.
+
+### Capture only launch
 To launch only the capture and recording overlay, run:
 
 ```powershell

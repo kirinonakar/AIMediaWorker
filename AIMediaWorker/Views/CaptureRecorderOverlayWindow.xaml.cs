@@ -86,7 +86,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             }
 
             RemoveNativeWindowFrame();
-            _appWindow.ResizeClient(new SizeInt32(340, 42));
+            _appWindow.ResizeClient(new SizeInt32(460, 42));
             _appWindow.Closing += OnAppWindowClosing;
         }
 

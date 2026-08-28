@@ -23,6 +23,7 @@
     <Compile Include="..\AIMediaWorker\Capture\OcrTextPostProcessor.cs" Link="Capture\OcrTextPostProcessor.cs" />
     <Compile Include="..\AIMediaWorker\Capture\OcrImagePreprocessor.cs" Link="Capture\OcrImagePreprocessor.cs" />
     <Compile Include="..\AIMediaWorker\Capture\OcrClipboardFormatter.cs" Link="Capture\OcrClipboardFormatter.cs" />
+    <Compile Include="..\AIMediaWorker\Capture\ScrollingCaptureService.cs" Link="Capture\ScrollingCaptureService.cs" />
   </ItemGroup>
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">

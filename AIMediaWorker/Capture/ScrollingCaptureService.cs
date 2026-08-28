@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace AIMediaWorker.Capture;
 
+#if WINDOWS
 internal sealed record ScrollingCaptureResult(byte[] Pixels, int Width, int Height);
 
 /// <summary>Scrolls a selected window and joins newly exposed rows into one tall capture.</summary>
@@ -11,8 +12,10 @@ internal static class ScrollingCaptureService
     private const uint WmMouseWheel = 0x020A;
     private const nuint SbTop = 6;
     private const uint GaRoot = 2;
+    private const uint SmtoAbortIfHung = 0x0002;
     private const int WheelDelta = 120;
-    private const int MaximumFrames = 60;
+    private const int ScrollNotchesPerStep = 4;
+    private const int MaximumFrames = 180;
     private const int MaximumPixels = 80_000_000;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -22,9 +25,15 @@ internal static class ScrollingCaptureService
         public int Y;
     }
 
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool PostMessage(nint windowHandle, uint message, nuint wParam, nint lParam);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern nint SendMessageTimeout(
+        nint windowHandle,
+        uint message,
+        nuint wParam,
+        nint lParam,
+        uint flags,
+        uint timeoutMilliseconds,
+        out nuint result);
 
     [DllImport("user32.dll")]
     private static extern nint WindowFromPoint(POINT point);
@@ -46,53 +55,98 @@ internal static class ScrollingCaptureService
         if (recipient == 0 || GetAncestor(recipient, GaRoot) != windowHandle) recipient = windowHandle;
         var pointParameter = MakePointParameter(centerX, centerY);
 
-        // Standard controls honor SB_TOP; custom/browser surfaces usually honor the wheel fallback.
-        PostMessage(windowHandle, WmVScroll, SbTop, 0);
-        for (var index = 0; index < 12; index++)
-            PostMessage(recipient, WmMouseWheel, MakeWheelParameter(WheelDelta * 4), pointParameter);
-        await Task.Delay(220, cancellationToken).ConfigureAwait(false);
-
-        var previous = ScreenCaptureInterop.CaptureRegion(bounds)
-            ?? throw new InvalidOperationException("The selected window could not be captured.");
-        var segments = new List<byte[]> { previous };
-        var totalHeight = bounds.Height;
-        var maximumHeight = Math.Min(32_000, Math.Max(bounds.Height, MaximumPixels / bounds.Width));
-
-        for (var frame = 1; frame < MaximumFrames && totalHeight < maximumHeight; frame++)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            for (var notch = 0; notch < 5; notch++)
-                PostMessage(recipient, WmMouseWheel, MakeWheelParameter(-WheelDelta * 2), pointParameter);
-            await Task.Delay(180, cancellationToken).ConfigureAwait(false);
+            await ScrollToTopAsync(windowHandle, recipient, pointParameter, cancellationToken).ConfigureAwait(false);
+            var previous = await CaptureStableFrameAsync(bounds, cancellationToken).ConfigureAwait(false);
+            var segments = new List<byte[]> { previous };
+            var totalHeight = bounds.Height;
+            var maximumHeight = Math.Max(bounds.Height, Math.Min(60_000, MaximumPixels / bounds.Width));
+            var unchangedSteps = 0;
 
-            var current = ScreenCaptureInterop.CaptureRegion(bounds)
-                ?? throw new InvalidOperationException("The selected window could not be captured while scrolling.");
-            if (ScrollingCaptureStitcher.AreEquivalent(previous, current, bounds.Width, bounds.Height)) break;
+            for (var frame = 1; frame < MaximumFrames && totalHeight < maximumHeight; frame++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                SendWheelStep(recipient, pointParameter, -WheelDelta);
+                var current = await CaptureStableFrameAsync(bounds, cancellationToken).ConfigureAwait(false);
+                if (ScrollingCaptureStitcher.AreEquivalent(previous, current, bounds.Width, bounds.Height))
+                {
+                    // A browser may drop one synthetic wheel message while compositing. Confirm
+                    // the end on a second attempt instead of ending the capture immediately.
+                    if (++unchangedSteps >= 2) break;
+                    continue;
+                }
 
-            var shift = ScrollingCaptureStitcher.FindVerticalShift(previous, current, bounds.Width, bounds.Height);
-            if (shift <= 0) break;
-            shift = Math.Min(shift, maximumHeight - totalHeight);
-            segments.Add(ScrollingCaptureStitcher.CopyBottomRows(current, bounds.Width, bounds.Height, shift));
-            totalHeight += shift;
-            previous = current;
+                unchangedSteps = 0;
+                var shift = ScrollingCaptureStitcher.FindVerticalShift(previous, current, bounds.Width, bounds.Height);
+                if (shift <= 0) break;
+                shift = Math.Min(shift, maximumHeight - totalHeight);
+                segments.Add(ScrollingCaptureStitcher.CopyBottomRows(current, bounds.Width, bounds.Height, shift));
+                totalHeight += shift;
+                previous = current;
+            }
+
+            var result = new byte[checked(bounds.Width * totalHeight * 4)];
+            var offset = 0;
+            foreach (var segment in segments)
+            {
+                Buffer.BlockCopy(segment, 0, result, offset, segment.Length);
+                offset += segment.Length;
+            }
+
+            return new ScrollingCaptureResult(result, bounds.Width, totalHeight);
         }
-
-        var result = new byte[checked(bounds.Width * totalHeight * 4)];
-        var offset = 0;
-        foreach (var segment in segments)
+        finally
         {
-            Buffer.BlockCopy(segment, 0, result, offset, segment.Length);
-            offset += segment.Length;
+            // Do not leave the selected browser parked at the bottom after a full-page capture.
+            await ScrollToTopAsync(windowHandle, recipient, pointParameter, CancellationToken.None).ConfigureAwait(false);
         }
-
-        return new ScrollingCaptureResult(result, bounds.Width, totalHeight);
     }
+
+    private static async Task ScrollToTopAsync(
+        nint windowHandle,
+        nint recipient,
+        nint pointParameter,
+        CancellationToken cancellationToken)
+    {
+        SendMessage(windowHandle, WmVScroll, SbTop, 0);
+        for (var index = 0; index < 64; index++)
+            if (!SendMessage(recipient, WmMouseWheel, MakeWheelParameter(WheelDelta * 8), pointParameter)) break;
+        await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void SendWheelStep(nint recipient, nint pointParameter, int delta)
+    {
+        for (var notch = 0; notch < ScrollNotchesPerStep; notch++)
+            if (!SendMessage(recipient, WmMouseWheel, MakeWheelParameter(delta), pointParameter)) break;
+    }
+
+    private static async Task<byte[]> CaptureStableFrameAsync(RECT bounds, CancellationToken cancellationToken)
+    {
+        var latest = Capture(bounds);
+        for (var attempt = 0; attempt < 6; attempt++)
+        {
+            await Task.Delay(70, cancellationToken).ConfigureAwait(false);
+            var next = Capture(bounds);
+            if (ScrollingCaptureStitcher.AreEquivalent(latest, next, bounds.Width, bounds.Height)) return next;
+            latest = next;
+        }
+
+        return latest;
+    }
+
+    private static byte[] Capture(RECT bounds) => ScreenCaptureInterop.CaptureRegion(bounds)
+        ?? throw new InvalidOperationException("The selected window could not be captured while scrolling.");
+
+    private static bool SendMessage(nint windowHandle, uint message, nuint wParam, nint lParam)
+        => SendMessageTimeout(windowHandle, message, wParam, lParam, SmtoAbortIfHung, 100, out _) != 0;
 
     private static nuint MakeWheelParameter(int delta) => unchecked((nuint)(delta << 16));
 
     private static nint MakePointParameter(int x, int y) =>
         unchecked((nint)(((y & 0xffff) << 16) | (x & 0xffff)));
 }
+#endif
 
 /// <summary>Pixel matching kept separate from Win32 scrolling so its behavior is deterministic.</summary>
 internal static class ScrollingCaptureStitcher
@@ -117,7 +171,7 @@ internal static class ScrollingCaptureStitcher
     {
         Validate(previous, current, width, height);
         var minimumShift = Math.Max(12, height / 60);
-        var maximumShift = Math.Max(minimumShift, height * 3 / 4);
+        var maximumShift = Math.Max(minimumShift, height * 2 / 3);
         var bestShift = 0;
         var bestScore = 0.0;
         for (var shift = minimumShift; shift <= maximumShift; shift += 4)
@@ -138,7 +192,7 @@ internal static class ScrollingCaptureStitcher
             bestShift = shift;
         }
 
-        return bestScore >= 0.58 ? bestShift : 0;
+        return bestScore >= 0.52 ? bestShift : 0;
     }
 
     public static byte[] CopyBottomRows(byte[] pixels, int width, int height, int rowCount)
@@ -152,7 +206,9 @@ internal static class ScrollingCaptureStitcher
 
     private static double ScoreShift(byte[] previous, byte[] current, int width, int height, int shift)
     {
-        var topMargin = Math.Max(4, height / 12);
+        // Browser tabs, address bars, and sticky page headers do not move. Ignore the upper
+        // part of the window and pixels that stayed fixed at the same screen coordinate.
+        var topMargin = Math.Max(4, height / 6);
         var bottom = height - shift - Math.Max(4, height / 16);
         var left = Math.Max(2, width / 10);
         var right = width - left;
@@ -161,6 +217,8 @@ internal static class ScrollingCaptureStitcher
         for (var y = topMargin; y < bottom; y += 7)
         for (var x = left; x < right; x += 14)
         {
+            var sameIndex = (y * width + x) * 4;
+            if (ColorDistance(previous, sameIndex, current, sameIndex) < 18) continue;
             var previousIndex = ((y + shift) * width + x) * 4;
             var neighborIndex = ((y + shift) * width + Math.Max(0, x - 2)) * 4;
             if (ColorDistance(previous, previousIndex, previous, neighborIndex) < 24) continue;
@@ -169,7 +227,7 @@ internal static class ScrollingCaptureStitcher
             if (ColorDistance(previous, previousIndex, current, currentIndex) <= 36) matches++;
         }
 
-        return informative < 40 ? 0 : matches / (double)informative;
+        return informative < 25 ? 0 : matches / (double)informative;
     }
 
     private static int ColorDistance(byte[] first, int firstIndex, byte[] second, int secondIndex) =>
