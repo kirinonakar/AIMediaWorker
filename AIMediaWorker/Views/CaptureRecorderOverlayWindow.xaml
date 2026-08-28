@@ -53,7 +53,10 @@
                     <Button x:Name="FullscreenButton" MinWidth="82" Height="32" Padding="8,0" Click="OnFullscreenClick" />
                     <Button x:Name="WindowAreaButton" MinWidth="64" Height="32" Padding="8,0" Click="OnWindowAreaClick" />
                     <Button x:Name="RegionButton" MinWidth="60" Height="32" Padding="8,0" Click="OnRegionClick" />
-                    <Button x:Name="OcrButton" MinWidth="48" Height="32" Padding="8,0" Click="OnOcrClick" />
+                    <StackPanel Orientation="Horizontal" Spacing="3">
+                        <Button x:Name="OcrButton" MinWidth="48" Height="32" Padding="8,0" Click="OnOcrClick" />
+                        <ToggleButton x:Name="TranslateOcrButton" MinWidth="52" Height="32" Padding="7,0" Click="OnTranslateOcrClick" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

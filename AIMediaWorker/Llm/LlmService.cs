@@ -11,6 +11,31 @@ public sealed record TranslationBatch(IReadOnlyDictionary<Guid, string> Items, i
 
 public sealed class LlmService(ILlmProvider provider, string model, Settings.ThinkingLevel thinkingLevel = Settings.ThinkingLevel.Default)
 {
+    public async Task<string> TranslateTextAsync(
+        string sourceText,
+        string targetLanguage,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourceText)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(targetLanguage)) throw new ArgumentException("A target language is required.", nameof(targetLanguage));
+
+        var prompt = $"""
+            Translate SOURCE_TEXT to {targetLanguage}.
+            Preserve paragraph boundaries and line breaks where they carry meaning.
+            Return only the translated text, without labels, quotes, markdown fences, commentary, or the source text.
+
+            SOURCE_TEXT:
+            {sourceText}
+            """;
+        var translated = await provider.GenerateAsync(
+            model,
+            $"You are a precise OCR text translator. Translate faithfully into {targetLanguage} and return only the translation.",
+            prompt,
+            new LlmGenerationOptions(thinkingLevel, 0.1, false, 2_048),
+            cancellationToken).ConfigureAwait(false);
+        return translated.Trim();
+    }
+
     public async Task<string> TranslateLiveAsync(
         string stableSourceDelta,
         string sourceContext,

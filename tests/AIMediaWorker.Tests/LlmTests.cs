@@ -9,6 +9,25 @@ namespace AIMediaWorker.Tests;
 public sealed class LlmTests
 {
     [Fact]
+    public async Task OcrTextTranslationPreservesSourceAndTargetInstructions()
+    {
+        string? capturedPrompt = null;
+        var provider = new FakeProvider(prompt =>
+        {
+            capturedPrompt = prompt;
+            return "번역된 첫 줄\n번역된 둘째 줄";
+        });
+
+        var result = await new LlmService(provider, "fake").TranslateTextAsync(
+            "First line\nSecond line",
+            "Korean");
+
+        Assert.Equal("번역된 첫 줄\n번역된 둘째 줄", result);
+        Assert.Contains("First line\nSecond line", capturedPrompt);
+        Assert.Contains("Korean", capturedPrompt);
+    }
+
+    [Fact]
     public async Task TranslationMapsByIdWithoutChangingTimestamps()
     {
         var first = new SubtitleCue { StartMicroseconds = 1_000_000, EndMicroseconds = 2_000_000, Text = "One" };

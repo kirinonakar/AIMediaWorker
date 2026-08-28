@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using AIMediaWorker.Capture;
 using AIMediaWorker.Diagnostics;
+using AIMediaWorker.Llm;
 using AIMediaWorker.Localization;
+using AIMediaWorker.Network;
 using AIMediaWorker.Settings;
 using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
 using Microsoft.UI.Dispatching;
@@ -13,6 +15,8 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
+using Windows.Storage;
+using Windows.Storage.Streams;
 using Windows.System;
 using WinRT.Interop;
 
@@ -50,6 +54,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private AppSettings _settings = new();
     private CaptureRecorderMode _mode = CaptureRecorderMode.Capture;
     private MediaFoundationH264Recorder? _recorder;
+    private LlmService? _ocrTranslator;
     private CaptureRegionSelectorWindow? _selector;
     private RECT? _targetMonitor;
     private Task? _shutdownTask;
@@ -135,6 +140,8 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         RegionButton.Content = L("AreaRegion.Content");
         OcrButton.Content = L("OcrAction.Content");
         ToolTipService.SetToolTip(OcrButton, L("OcrTooltip"));
+        TranslateOcrButton.Content = L("OcrTranslateAction.Content");
+        ToolTipService.SetToolTip(TranslateOcrButton, L("OcrTranslateTooltip"));
         PauseResumeButton.Content = L("RecordPause.Content");
         StopRecordButton.Content = L("RecordStop.Content");
         ToolTipService.SetToolTip(CloseOverlayButton, L("CloseTooltip"));
@@ -271,6 +278,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     {
         _mode = mode;
         OcrButton.IsEnabled = mode == CaptureRecorderMode.Capture;
+        TranslateOcrButton.IsEnabled = mode == CaptureRecorderMode.Capture;
         UpdateModeButtons();
     }
 
@@ -291,6 +299,20 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private async void OnRegionClick(object sender, RoutedEventArgs e) => await SelectThenExecuteAsync(CaptureSelectorMode.Region);
 
     private async void OnOcrClick(object sender, RoutedEventArgs e) => await SelectAndRecognizeAsync();
+
+    private void OnTranslateOcrClick(object sender, RoutedEventArgs e)
+    {
+        if (TranslateOcrButton.IsChecked != true) return;
+        try
+        {
+            _ = GetOcrTranslator();
+        }
+        catch (Exception exception)
+        {
+            TranslateOcrButton.IsChecked = false;
+            ShowStatus(exception.Message);
+        }
+    }
 
     private async Task SelectThenExecuteAsync(CaptureSelectorMode selectorMode)
     {
@@ -350,7 +372,8 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         var directory = ScreenCaptureService.ResolveHomeDirectory(_settings.Capture.CaptureFolder);
         var path = ScreenCaptureService.BuildUniqueFilePath(directory, $"AIMediaWorker_Capture_{DateTime.Now:yyyyMMdd_HHmmss}", ".png");
         await ScreenCaptureService.SavePngAsync(pixels, bounds.Width, bounds.Height, path);
-        ShowStatus(F("StatusSavedFormat", path));
+        await CopyImageToClipboardAsync(path);
+        ShowStatus(F("StatusCaptureSavedAndCopiedFormat", path));
     }
 
     private async Task StartRecordingAsync(RECT bounds)
@@ -465,10 +488,35 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
                 return;
             }
 
+            string? translation = null;
+            if (TranslateOcrButton.IsChecked == true)
+            {
+                OcrButton.IsEnabled = false;
+                TranslateOcrButton.IsEnabled = false;
+                ShowOverlay();
+                ShowStatus(L("StatusOcrTranslating"));
+                try
+                {
+                    translation = await GetOcrTranslator().TranslateTextAsync(
+                        text,
+                        _settings.Llm.TranslationLanguage);
+                    if (string.IsNullOrWhiteSpace(translation))
+                        throw new InvalidOperationException(L("ErrorOcrTranslationEmpty"));
+                }
+                catch (Exception exception)
+                {
+                    await HandleActionErrorAsync(L("TranslationTitle"), "CAPTURE_OCR_TRANSLATION_ERROR", exception);
+                    return;
+                }
+            }
+
             var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-            package.SetText(text);
+            package.SetText(OcrClipboardFormatter.Compose(text, translation));
             Clipboard.SetContent(package);
-            ShowStatus(F("StatusOcrCopiedFormat", text.Length));
+            Clipboard.Flush();
+            ShowStatus(translation is null
+                ? F("StatusOcrCopiedFormat", text.Length)
+                : L("StatusOcrTranslationCopied"));
         }
         catch (Exception exception)
         {
@@ -476,8 +524,30 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         }
         finally
         {
+            OcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture;
+            TranslateOcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture;
             ShowOverlay();
         }
+    }
+
+    private LlmService GetOcrTranslator()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.Llm.Model))
+            throw new InvalidOperationException(L("LlmModelMissingMessage"));
+
+        return _ocrTranslator ??= new LlmService(
+            new LlmProviderFactory(new WindowsCredentialService()).Create(_settings.Llm.Provider),
+            _settings.Llm.Model,
+            _settings.Llm.ThinkingLevel);
+    }
+
+    private static async Task CopyImageToClipboardAsync(string path)
+    {
+        var file = await StorageFile.GetFileFromPathAsync(path);
+        var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+        package.SetBitmap(RandomAccessStreamReference.CreateFromFile(file));
+        Clipboard.SetContent(package);
+        Clipboard.Flush();
     }
 
     private async Task HandleActionErrorAsync(string title, string eventId, Exception exception)

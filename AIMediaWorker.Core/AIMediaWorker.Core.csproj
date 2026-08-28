@@ -22,6 +22,7 @@
     <Compile Include="..\AIMediaWorker\Llm\**\*.cs" Link="Llm\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Capture\OcrTextPostProcessor.cs" Link="Capture\OcrTextPostProcessor.cs" />
     <Compile Include="..\AIMediaWorker\Capture\OcrImagePreprocessor.cs" Link="Capture\OcrImagePreprocessor.cs" />
+    <Compile Include="..\AIMediaWorker\Capture\OcrClipboardFormatter.cs" Link="Capture\OcrClipboardFormatter.cs" />
   </ItemGroup>
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
