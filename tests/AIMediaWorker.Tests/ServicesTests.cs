@@ -322,6 +322,17 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
+    public void WebDavAddressDefaultsToHttpsAndRejectsHttp()
+    {
+        Assert.True(WebDavConnectionCredential.TryParseHttpsAddress("dav.example.test/root", out var withoutScheme));
+        Assert.Equal("https://dav.example.test/root", withoutScheme.AbsoluteUri);
+        Assert.True(WebDavConnectionCredential.TryParseHttpsAddress("https://dav.example.test/root", out var withScheme));
+        Assert.Equal("https://dav.example.test/root", withScheme.AbsoluteUri);
+        Assert.False(WebDavConnectionCredential.TryParseHttpsAddress("http://dav.example.test/root", out _));
+        Assert.Throws<ArgumentException>(() => new WebDavConnectionCredential("http://dav.example.test/root/", 80, "", "").RootUri);
+    }
+
+    [Fact]
     public async Task WebDavSettingsContainOnlyNonSecretServerMetadata()
     {
         var path = Path.Combine(_folder, "webdav-settings.json");

@@ -29,7 +29,7 @@ public sealed record WebDavConnectionCredential(string Address, int Port, string
     {
         get
         {
-            if (!Uri.TryCreate(Address, UriKind.Absolute, out var address) || address.Scheme is not ("http" or "https")) throw new ArgumentException("The WebDAV address must be an absolute HTTP or HTTPS URL.", nameof(Address));
+            if (!Uri.TryCreate(Address, UriKind.Absolute, out var address) || address.Scheme != Uri.UriSchemeHttps) throw new ArgumentException("The WebDAV address must be an absolute HTTPS URL.", nameof(Address));
             if (Port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(Port), "The WebDAV port must be between 1 and 65535.");
             var builder = new UriBuilder(address) { Port = Port };
             var uri = builder.Uri;
@@ -40,8 +40,21 @@ public sealed record WebDavConnectionCredential(string Address, int Port, string
     public static string NormalizeAddress(Uri uri)
     {
         ArgumentNullException.ThrowIfNull(uri);
-        if (!uri.IsAbsoluteUri || uri.Scheme is not ("http" or "https")) throw new ArgumentException("The WebDAV address must be an absolute HTTP or HTTPS URL.", nameof(uri));
+        if (!uri.IsAbsoluteUri || uri.Scheme != Uri.UriSchemeHttps) throw new ArgumentException("The WebDAV address must be an absolute HTTPS URL.", nameof(uri));
         return new UriBuilder(uri) { Port = -1, UserName = string.Empty, Password = string.Empty, Query = string.Empty, Fragment = string.Empty }.Uri.AbsoluteUri;
+    }
+
+    public static bool TryParseHttpsAddress(string? value, out Uri address)
+    {
+        address = null!;
+        var text = value?.Trim();
+        if (string.IsNullOrEmpty(text)) return false;
+        if (!text.Contains("://", StringComparison.Ordinal)) text = $"https://{text}";
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var parsed) ||
+            parsed.Scheme != Uri.UriSchemeHttps ||
+            string.IsNullOrWhiteSpace(parsed.Host)) return false;
+        address = parsed;
+        return true;
     }
 }
 
@@ -75,7 +88,7 @@ public sealed class WebDavCredentialStore(ICredentialService credentials)
     public bool MigrateLegacy(WebDavServerSettings server)
     {
         ArgumentNullException.ThrowIfNull(server);
-        if (string.IsNullOrWhiteSpace(server.LegacyUrl) || !Uri.TryCreate(server.LegacyUrl, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return false;
+        if (string.IsNullOrWhiteSpace(server.LegacyUrl) || !Uri.TryCreate(server.LegacyUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return false;
         var legacy = _credentials.Read(CredentialIdentifier.ForWebDav(server.Id));
         Save(server.Id, new WebDavConnectionCredential(
             WebDavConnectionCredential.NormalizeAddress(uri),

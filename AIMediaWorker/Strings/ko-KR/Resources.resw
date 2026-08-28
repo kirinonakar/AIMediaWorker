@@ -185,4 +185,5 @@
 
 <data name="RecordingErrorTitle"><value>녹화 실패</value></data>
 <data name="CloseTooltip"><value>닫기</value></data>
+<data name="InvalidWebDavHttpsAddressMessage"><value>올바른 HTTPS 주소와 1~65535 사이의 포트를 입력하세요. https://는 생략할 수 있습니다.</value></data>
 </root>

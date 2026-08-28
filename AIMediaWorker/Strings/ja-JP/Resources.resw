@@ -185,4 +185,5 @@
 
 <data name="RecordingErrorTitle"><value>録画に失敗しました</value></data>
 <data name="CloseTooltip"><value>閉じる</value></data>
+<data name="InvalidWebDavHttpsAddressMessage"><value>有効なHTTPSアドレスと1～65535のポートを入力してください。https://は省略できます。</value></data>
 </root>

@@ -185,4 +185,5 @@
 
 <data name="RecordingErrorTitle"><value>Recording failed</value></data>
 <data name="CloseTooltip"><value>Close</value></data>
+<data name="InvalidWebDavHttpsAddressMessage"><value>Enter a valid HTTPS address and a port from 1 to 65535. You can omit https://.</value></data>
 </root>

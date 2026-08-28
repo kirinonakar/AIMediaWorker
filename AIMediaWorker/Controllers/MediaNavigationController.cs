@@ -8,7 +8,6 @@ using AIMediaWorker.Subtitle.Parsing;
 using AIMediaWorker.Views;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
 
@@ -257,48 +256,20 @@ internal sealed class MediaNavigationController : IDisposable
     {
         try
         {
-            var name = CreateWebDavTextBox(L("NameHeader"), string.Empty);
-            var address = CreateWebDavTextBox(L("AddressHeader"), string.Empty, "https://server.example/dav/");
-            var port = new NumberBox
-            {
-                Header = L("PortHeader"), Value = 443, Minimum = 1, Maximum = 65535,
-                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden
-            };
-            var username = CreateWebDavTextBox(L("UsernameHeader"), string.Empty);
-            var password = new PasswordBox { Header = L("PasswordHeader") };
-            var validation = new TextBlock
-            {
-                Foreground = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 196, 43, 28)),
-                TextWrapping = TextWrapping.Wrap,
-                Visibility = Visibility.Collapsed
-            };
-            var panel = new StackPanel { Spacing = 12, Width = 440, Children = { name, address, port, username, password, validation } };
-            var dialog = new ContentDialog
-            {
-                Title = L("AddWebDavServerTitle"), Content = panel, PrimaryButtonText = L("SaveButtonText"),
-                CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary
-            };
-            Uri? parsedAddress = null;
-            dialog.PrimaryButtonClick += (_, args) =>
-            {
-                if (Uri.TryCreate(address.Text.Trim(), UriKind.Absolute, out parsedAddress) &&
-                    parsedAddress.Scheme is "http" or "https" &&
-                    !double.IsNaN(port.Value) && port.Value % 1 == 0 && port.Value is >= 1 and <= 65535) return;
-                args.Cancel = true;
-                validation.Text = L("InvalidWebDavAddressMessage");
-                validation.Visibility = Visibility.Visible;
-            };
-            if (await _host.ShowDialogAsync(dialog) != ContentDialogResult.Primary || parsedAddress is null) return;
+            var input = await WebDavServerWindow.ShowAsync(
+                _view.Owner,
+                _host.GetSettings().General.Theme);
+            if (input is null) return;
 
             var server = new WebDavServerSettings
             {
-                Name = string.IsNullOrWhiteSpace(name.Text) ? parsedAddress.Host : name.Text.Trim()
+                Name = string.IsNullOrWhiteSpace(input.Name) ? input.Address.Host : input.Name
             };
             _webDavCredentials.Save(server.Id, new WebDavConnectionCredential(
-                WebDavConnectionCredential.NormalizeAddress(parsedAddress),
-                (int)port.Value,
-                username.Text.Trim(),
-                password.Password));
+                WebDavConnectionCredential.NormalizeAddress(input.Address),
+                input.Port,
+                input.Username,
+                input.Password));
             _host.GetSettings().Network.WebDavServers.Add(server);
             await SettingsService.CreateDefault().SaveAsync(_host.GetSettings());
             _host.ShowPanel(RightPanelSection.WebDav);
@@ -517,20 +488,6 @@ internal sealed class MediaNavigationController : IDisposable
         (MediaFileClassifier.IsPlayable(Uri.UnescapeDataString(entry.Uri.AbsolutePath)) ||
          entry.ContentType?.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) == true ||
          entry.ContentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true);
-
-    private static TextBox CreateWebDavTextBox(string header, string text, string? placeholder = null) => new()
-    {
-        Header = header,
-        Text = text,
-        PlaceholderText = placeholder ?? string.Empty,
-        IsSpellCheckEnabled = false,
-        IsTextPredictionEnabled = false
-    };
-
-    private static Brush ThemeBrush(string resourceKey, Windows.UI.Color fallback) =>
-        Application.Current.Resources.TryGetValue(resourceKey, out var value) && value is Brush brush
-            ? brush
-            : new SolidColorBrush(fallback);
 
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) =>

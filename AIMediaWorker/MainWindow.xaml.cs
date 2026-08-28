@@ -90,6 +90,15 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         StartupProfiler.Mark("xaml-start");
         InitializeComponent();
+        // Set the saved theme before any potentially expensive window setup. This keeps
+        // the first composed frame from using the default light resources and then
+        // flashing to dark when WindowChromeController is initialized later.
+        RootGrid.RequestedTheme = _settings.General.Theme switch
+        {
+            AppTheme.Light => ElementTheme.Light,
+            AppTheme.Dark => ElementTheme.Dark,
+            _ => ElementTheme.Default
+        };
         StartupProfiler.Mark("xaml-ready");
         _dialogs = new WindowDialogService(RootGrid, () => _videoHost);
         _aboutDialog = new AboutDialogService(_dialogs);
@@ -656,7 +665,6 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void ApplyAudioArtworkPresentation(bool isLocalAudio)
     {
         AudioArtworkSurface.Visibility = isLocalAudio ? Visibility.Visible : Visibility.Collapsed;
-        VideoStatusText.Visibility = isLocalAudio ? Visibility.Collapsed : Visibility.Visible;
         if (!isLocalAudio)
         {
             AlbumArtImage.Source = null;

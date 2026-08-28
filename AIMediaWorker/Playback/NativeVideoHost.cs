@@ -21,6 +21,7 @@ public sealed class NativeVideoHost : IDisposable
     private const int WsChild = 0x40000000;
     private const int WsVisible = 0x10000000;
     private const int WsClipChildren = 0x02000000;
+    private const int StaticBlackRectangle = 0x00000004;
     private const int StaticNotify = 0x00000100;
     private const int SwpNoActivate = 0x0010;
     private readonly Window _window;
@@ -54,7 +55,10 @@ public sealed class NativeVideoHost : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_handle != 0) return _handle;
         var parent = WinRT.Interop.WindowNative.GetWindowHandle(_window);
-        _handle = CreateWindowEx(0, "STATIC", string.Empty, WsChild | WsVisible | WsClipChildren | StaticNotify, 0, 0, 1, 1, parent, 0, GetModuleHandle(null), 0);
+        // A plain STATIC control paints itself with COLOR_WINDOW (normally white)
+        // until libmpv creates its swap chain. Start with a black rectangle so the
+        // native host matches the XAML video surface during that initialization gap.
+        _handle = CreateWindowEx(0, "STATIC", string.Empty, WsChild | WsVisible | WsClipChildren | StaticBlackRectangle | StaticNotify, 0, 0, 1, 1, parent, 0, GetModuleHandle(null), 0);
         if (_handle == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not create the libmpv video window.");
         _windowProcedure = OnWindowMessage;
         _originalWindowProcedure = SetWindowLongPtr(_handle, GwlpWndProc, Marshal.GetFunctionPointerForDelegate(_windowProcedure));
