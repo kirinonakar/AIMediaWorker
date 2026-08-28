@@ -55,14 +55,26 @@ namespace AIMediaWorker
             StartupProfiler.Mark("app-constructor");
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
             var settingsService = SettingsService.CreateDefault();
+            // Application.RequestedTheme must be selected during startup. Doing this before
+            // any Window XAML is created prevents the default light resources from producing
+            // a white first frame when the saved preference is Dark.
+            var startupTheme = settingsService.LoadTheme();
             StartupProfiler.Mark("settings-load-start");
             // JSON metadata generation/JIT can complete synchronously for this small file.
             // Force it off the UI thread so App XAML and native DLL loading can overlap it.
             _settingsLoadTask = Task.Run(() => LoadSettingsAsync(settingsService));
             StartupProfiler.Mark("app-xaml-start");
             InitializeComponent();
+            ApplyStartupTheme(startupTheme);
             StartupProfiler.Mark("app-xaml-end");
             UnhandledException += (_, eventArgs) => _ = AppLog.WriteAsync("critical", "application", "UNHANDLED_EXCEPTION", eventArgs.Message, eventArgs.Exception);
+        }
+
+        private void ApplyStartupTheme(AppTheme theme)
+        {
+            // Leaving RequestedTheme unchanged preserves the Windows app-mode preference.
+            if (theme == AppTheme.System) return;
+            RequestedTheme = theme == AppTheme.Light ? ApplicationTheme.Light : ApplicationTheme.Dark;
         }
 
         private static async Task<AppSettings> LoadSettingsAsync(SettingsService settingsService)

@@ -36,6 +36,7 @@ public sealed class ServicesTests : IDisposable
         var service = new SettingsService(path);
         var settings = new AppSettings();
         settings.General.Language = AppLanguage.Japanese;
+        settings.General.Theme = AppTheme.Light;
         settings.General.UiFontFamily = "Arial";
         settings.Asr.Language = "ko";
         settings.Playback.DefaultVolume = 77;
@@ -50,6 +51,7 @@ public sealed class ServicesTests : IDisposable
         settings.Window.BottomPanelHeight = 220;
         await service.SaveAsync(settings);
         Assert.Equal(AppLanguage.Japanese, service.LoadLanguage());
+        Assert.Equal(AppTheme.Light, service.LoadTheme());
         var loaded = await service.LoadAsync();
         Assert.Equal(AppLanguage.Japanese, loaded.General.Language);
         Assert.Equal("Arial", loaded.General.UiFontFamily);
@@ -61,9 +63,18 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal((440, 220), (loaded.Window.RightPanelWidth, loaded.Window.BottomPanelHeight));
         await File.WriteAllTextAsync(path, "{ definitely broken");
         Assert.Equal(AppLanguage.Default, service.LoadLanguage());
+        Assert.Equal(GeneralSettings.DefaultTheme, service.LoadTheme());
         var recovered = await service.LoadAsync();
         Assert.Equal("auto", recovered.Asr.Language);
         Assert.NotEmpty(Directory.GetFiles(_folder, "settings.json.corrupt-*"));
+    }
+
+    [Fact]
+    public void MissingSettingsUseDarkStartupTheme()
+    {
+        var path = Path.Combine(_folder, "missing-settings.json");
+
+        Assert.Equal(AppTheme.Dark, new SettingsService(path).LoadTheme());
     }
 
     [Fact]

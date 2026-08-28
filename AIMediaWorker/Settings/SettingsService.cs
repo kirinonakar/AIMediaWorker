@@ -36,6 +36,20 @@ public sealed class SettingsService
         }
     }
 
+    public AppTheme LoadTheme()
+    {
+        if (!File.Exists(_path)) return GeneralSettings.DefaultTheme;
+        try
+        {
+            using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return JsonSerializer.Deserialize<AppSettings>(stream, _jsonOptions)?.General?.Theme ?? GeneralSettings.DefaultTheme;
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return GeneralSettings.DefaultTheme;
+        }
+    }
+
     public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default)
     {
         if (!File.Exists(_path)) return new AppSettings();

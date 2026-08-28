@@ -134,9 +134,10 @@ public sealed class LlmSettings
 public sealed class GeneralSettings
 {
     public const string DefaultUiFontFamily = "Noto Sans CJK JP";
+    public const AppTheme DefaultTheme = AppTheme.Dark;
 
     public AppLanguage Language { get; set; } = AppLanguage.Default;
-    public AppTheme Theme { get; set; } = AppTheme.Dark;
+    public AppTheme Theme { get; set; } = DefaultTheme;
     public string UiFontFamily { get; set; } = DefaultUiFontFamily;
     public int RecentMediaCount { get; set; } = 20;
     public bool ResumePlayback { get; set; } = true;
