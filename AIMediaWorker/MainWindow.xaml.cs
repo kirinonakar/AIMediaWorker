@@ -30,6 +30,8 @@ namespace AIMediaWorker;
 
 public sealed partial class MainWindow : Window, IAiWorkflowHost
 {
+    private const uint DwmwaCloak = 13;
+
     private readonly MpvPlaybackEngine _playback = new();
     private readonly WindowsPowerManagement _windowsPowerManagement = new();
     private readonly SubtitleFileService _subtitleFiles = new();
@@ -68,6 +70,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private CancellationTokenSource? _audioArtworkCancellation;
     private int _audioArtworkRequestId;
     private readonly TaskCompletionSource _firstUiFrameReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _firstUiFrameWaitStarted;
     private readonly Task _playbackInitializationTask;
     private readonly PanelLayoutController _panels;
     private readonly FullscreenPresentationController _fullscreen;
@@ -78,6 +81,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private readonly AboutDialogService _aboutDialog;
     private readonly AuxiliaryWindowController _auxiliaryWindows;
     private readonly TaskbarProgressController _taskbarProgress;
+    private readonly nint _windowHandle;
+    private bool _startupWindowCloaked;
 
     private sealed record SubtitleSelectionOption(string DisplayName, SubtitleDisplayMode? DisplayMode, int? TrackId);
 
@@ -88,6 +93,11 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     public MainWindow(string? initialSource, AppSettings settings)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        _windowHandle = WindowNative.GetWindowHandle(this);
+        // A WinUI HWND can briefly expose its default light surface after Activate and
+        // before the first XAML frame reaches DWM. Keep it composed but invisible until
+        // that first frame is ready, so only the correctly themed UI is ever presented.
+        _startupWindowCloaked = SetWindowCloak(_windowHandle, cloak: true);
         StartupProfiler.Mark("xaml-start");
         InitializeComponent();
         // Set the saved theme before any potentially expensive window setup. This keeps
@@ -147,7 +157,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _playback.TracksChanged += OnTracksChanged;
         _playback.ErrorOccurred += OnPlaybackError;
         _playback.MediaEnded += OnMediaEnded;
-        _taskbarProgress = new TaskbarProgressController(WindowNative.GetWindowHandle(this));
+        _taskbarProgress = new TaskbarProgressController(_windowHandle);
         _videoHost = new NativeVideoHost(this, VideoPlaceholder);
         _videoHost.FilesDropped += OnNativeVideoFilesDropped;
         _videoHost.Clicked += OnNativeVideoClicked;
@@ -195,8 +205,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         GenerateSubtitlesMenuItem.IsChecked = _settings.Asr.GenerateSubtitles;
         TranslateMenuItem.IsChecked = _settings.Llm.TranslateSubtitles;
         _aiWorkflow.UpdateModes(GenerateSubtitlesMenuItem.IsChecked, TranslateMenuItem.IsChecked);
-        var handle = WindowNative.GetWindowHandle(this);
-        _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
+        _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_windowHandle));
         _chrome = new WindowChromeController(
             _appWindow,
             new WindowChromeViewElements(
@@ -242,6 +251,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         PositionSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
         PositionSlider.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
         BindDocument(new SubtitleDocument());
+        // Subscribe before Activate so the reveal cannot be skipped by other Loaded work.
+        _ = WaitForFirstUiFrameAsync();
     }
 
     private async Task OpenInitialLaunchSourceAsync()
@@ -345,22 +356,39 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
 
     private Task WaitForFirstUiFrameAsync()
     {
-        if (_firstUiFrameReady.Task.IsCompleted) return _firstUiFrameReady.Task;
+        if (_firstUiFrameReady.Task.IsCompleted || _firstUiFrameWaitStarted) return _firstUiFrameReady.Task;
+        _firstUiFrameWaitStarted = true;
         EventHandler<object>? rendering = null;
         rendering = (_, _) =>
         {
             Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= rendering;
             // Rendering is raised while the frame is being prepared. Complete from a low
             // priority dispatcher item so the current frame is submitted before playback work.
-            if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
-                {
-                    StartupProfiler.Mark("first-ui-frame");
-                    _firstUiFrameReady.TrySetResult();
-                }))
-                _firstUiFrameReady.TrySetResult();
+            if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, CompleteFirstUiFrame))
+                CompleteFirstUiFrame();
         };
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += rendering;
         return _firstUiFrameReady.Task;
+    }
+
+    private void CompleteFirstUiFrame()
+    {
+        StartupProfiler.Mark("first-ui-frame");
+        RevealStartupWindow();
+        _firstUiFrameReady.TrySetResult();
+    }
+
+    private void RevealStartupWindow()
+    {
+        if (!_startupWindowCloaked) return;
+        _startupWindowCloaked = !SetWindowCloak(_windowHandle, cloak: false);
+        if (!_startupWindowCloaked) StartupProfiler.Mark("window-revealed");
+    }
+
+    private static bool SetWindowCloak(nint windowHandle, bool cloak)
+    {
+        var value = cloak ? 1 : 0;
+        return DwmSetWindowAttribute(windowHandle, DwmwaCloak, ref value, sizeof(int)) == 0;
     }
 
     private async void OnOpenMediaClick(object sender, RoutedEventArgs e)
@@ -1718,6 +1746,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
 
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(nint window, uint attribute, ref int value, uint valueSize);
 
     private enum RepeatMode { Off, One, AutoAdvance }
 }
