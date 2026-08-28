@@ -5,8 +5,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Capture &amp; record">
     <Window.SystemBackdrop><DesktopAcrylicBackdrop /></Window.SystemBackdrop>
-    <StackPanel x:Name="Root" MinWidth="550" Spacing="2" Loaded="OnLoaded" SizeChanged="OnContentSizeChanged" KeyDown="OnRootKeyDown">
-        <Grid x:Name="ToolbarPanel" ColumnSpacing="10" Margin="10,7,10,2">
+    <StackPanel x:Name="Root" MinWidth="520" Spacing="1" Loaded="OnLoaded" SizeChanged="OnContentSizeChanged" KeyDown="OnRootKeyDown">
+        <Grid x:Name="ToolbarPanel" ColumnSpacing="7" Margin="8,5,8,1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -16,7 +16,7 @@
 
             <Border x:Name="DragHandle"
                     Grid.Column="0"
-                    Width="24"
+                    Width="22"
                     Background="Transparent"
                     CornerRadius="5"
                     PointerPressed="OnDragHandlePointerPressed"
@@ -31,41 +31,41 @@
             </Border>
 
             <Border Grid.Column="1"
-                    Padding="3"
+                    Padding="2"
                     Background="{ThemeResource ControlFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
                     BorderThickness="1"
                     CornerRadius="7">
                 <StackPanel Orientation="Horizontal" Spacing="3">
-                    <ToggleButton x:Name="CaptureModeButton" MinWidth="64" Height="32" Padding="8,0" Click="OnCaptureModeClick" />
-                    <ToggleButton x:Name="RecordModeButton" MinWidth="64" Height="32" Padding="8,0" Click="OnRecordModeClick" />
+                    <ToggleButton x:Name="CaptureModeButton" MinWidth="56" Height="30" Padding="4,0" FontSize="13" Click="OnCaptureModeClick" />
+                    <ToggleButton x:Name="RecordModeButton" MinWidth="56" Height="30" Padding="4,0" FontSize="13" Click="OnRecordModeClick" />
                 </StackPanel>
             </Border>
 
             <Border Grid.Column="2"
                     HorizontalAlignment="Center"
-                    Padding="3"
+                    Padding="2"
                     Background="{ThemeResource ControlFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
                     BorderThickness="1"
                     CornerRadius="7">
                 <StackPanel Orientation="Horizontal" Spacing="3">
-                    <Button x:Name="FullscreenButton" MinWidth="82" Height="32" Padding="8,0" Click="OnFullscreenClick" />
-                    <Button x:Name="WindowAreaButton" MinWidth="64" Height="32" Padding="8,0" Click="OnWindowAreaClick" />
-                    <Button x:Name="RegionButton" MinWidth="60" Height="32" Padding="8,0" Click="OnRegionClick" />
+                    <Button x:Name="FullscreenButton" MinWidth="72" Height="30" Padding="4,0" FontSize="13" Click="OnFullscreenClick" />
+                    <Button x:Name="WindowAreaButton" MinWidth="52" Height="30" Padding="4,0" FontSize="13" Click="OnWindowAreaClick" />
+                    <Button x:Name="RegionButton" MinWidth="48" Height="30" Padding="4,0" FontSize="13" Click="OnRegionClick" />
                     <StackPanel Orientation="Horizontal" Spacing="3">
-                        <Button x:Name="OcrButton" MinWidth="48" Height="32" Padding="8,0" Click="OnOcrClick" />
-                        <ToggleButton x:Name="TranslateOcrButton" MinWidth="52" Height="32" Padding="7,0" Click="OnTranslateOcrClick" />
+                        <Button x:Name="OcrButton" MinWidth="40" Height="30" Padding="4,0" FontSize="13" Click="OnOcrClick" />
+                        <ToggleButton x:Name="TranslateOcrButton" MinWidth="48" Height="30" Padding="4,0" FontSize="13" Click="OnTranslateOcrClick" />
                     </StackPanel>
                 </StackPanel>
             </Border>
 
-            <Button Grid.Column="3" x:Name="CloseOverlayButton" Width="38" Height="40" Click="OnCloseClick">
+            <Button Grid.Column="3" x:Name="CloseOverlayButton" Width="34" Height="34" Padding="4,0" Click="OnCloseClick">
                 <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE8BB;" FontSize="14" />
             </Button>
         </Grid>
-        <StackPanel x:Name="RecordingPanel" Orientation="Horizontal" Spacing="12" Margin="12,7,12,2" Visibility="Collapsed">
-            <Border Width="24"
+        <StackPanel x:Name="RecordingPanel" Orientation="Horizontal" Spacing="8" Margin="8,5,8,1" Visibility="Collapsed">
+            <Border Width="22"
                     Height="32"
                     Background="Transparent"
                     CornerRadius="5"
@@ -81,8 +81,8 @@
             </Border>
             <Ellipse Width="12" Height="12" Fill="#FFC42B1C" VerticalAlignment="Center" />
             <TextBlock x:Name="RecordingElapsedText" FontFamily="Consolas" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" MinWidth="66" Text="00:00" />
-            <Button x:Name="PauseResumeButton" MinWidth="92" Height="32" Click="OnPauseResumeClick" />
-            <Button x:Name="StopRecordButton" MinWidth="70" Height="32" Style="{ThemeResource AccentButtonStyle}" Click="OnStopRecordClick" />
+            <Button x:Name="PauseResumeButton" MinWidth="76" Height="30" Padding="6,0" FontSize="13" Click="OnPauseResumeClick" />
+            <Button x:Name="StopRecordButton" MinWidth="58" Height="30" Padding="6,0" FontSize="13" Style="{ThemeResource AccentButtonStyle}" Click="OnStopRecordClick" />
         </StackPanel>
         <TextBlock x:Name="StatusText" FontSize="11" Opacity="0.75" Margin="12,0,12,6" MaxLines="1" TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
         <Canvas Height="0">
