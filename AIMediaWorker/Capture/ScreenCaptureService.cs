@@ -1,4 +1,5 @@
 using Windows.Graphics.Imaging;
+using Windows.Globalization;
 using Windows.Media.Ocr;
 using Windows.Security.Cryptography;
 using Windows.Storage.Streams;
@@ -45,14 +46,58 @@ internal static class ScreenCaptureService
     /// </summary>
     public static async Task<string?> RecognizeTextAsync(byte[] bgraPixels, int width, int height)
     {
-        var engine = OcrEngine.TryCreateFromUserProfileLanguages();
-        if (engine is null) return null;
+        var profileEngine = OcrEngine.TryCreateFromUserProfileLanguages();
+        var japaneseEngine = CreateJapaneseEngine();
+        if (profileEngine is null && japaneseEngine is null) return null;
 
         var buffer = CryptographicBuffer.CreateFromByteArray(bgraPixels);
         using var bitmap = SoftwareBitmap.CreateCopyFromBuffer(buffer, BitmapPixelFormat.Bgra8, width, height, BitmapAlphaMode.Premultiplied);
-        var result = await engine.RecognizeAsync(bitmap).AsTask();
-        return result.Text;
+        var profileText = profileEngine is null
+            ? string.Empty
+            : (await profileEngine.RecognizeAsync(bitmap).AsTask()).Text;
+
+        if (japaneseEngine is null ||
+            string.Equals(profileEngine?.RecognizerLanguage.LanguageTag, japaneseEngine.RecognizerLanguage.LanguageTag, StringComparison.OrdinalIgnoreCase))
+        {
+            return profileText;
+        }
+
+        var japaneseText = (await japaneseEngine.RecognizeAsync(bitmap).AsTask()).Text;
+        return SelectBestRecognizedText(profileText, japaneseText);
     }
+
+    private static OcrEngine? CreateJapaneseEngine()
+    {
+        var language = OcrEngine.AvailableRecognizerLanguages.FirstOrDefault(candidate =>
+            candidate.LanguageTag.StartsWith("ja", StringComparison.OrdinalIgnoreCase));
+        return language is null ? null : OcrEngine.TryCreateFromLanguage(language);
+    }
+
+    /// <summary>
+    /// Uses the profile-language result for ordinary Latin/Hangul captures, but switches to the
+    /// Japanese engine when it finds Japanese script (or when the profile engine found nothing).
+    /// </summary>
+    private static string SelectBestRecognizedText(string profileText, string japaneseText)
+    {
+        if (string.IsNullOrWhiteSpace(japaneseText)) return profileText;
+        if (string.IsNullOrWhiteSpace(profileText)) return japaneseText;
+        if (japaneseText.Any(IsJapaneseSpecificCharacter)) return japaneseText;
+        if (profileText.Any(IsHangulCharacter)) return profileText;
+
+        var japaneseCjkCount = japaneseText.Count(IsCjkIdeograph);
+        var profileCjkCount = profileText.Count(IsCjkIdeograph);
+        return japaneseCjkCount > 0 && profileCjkCount == 0
+            ? japaneseText
+            : profileText;
+    }
+
+    private static bool IsJapaneseSpecificCharacter(char character) =>
+        character is >= '\u3040' and <= '\u30ff' or >= '\uff66' and <= '\uff9f' or '々' or '〆' or 'ヶ';
+
+    private static bool IsHangulCharacter(char character) =>
+        character is >= '\u1100' and <= '\u11ff' or >= '\u3130' and <= '\u318f' or >= '\uac00' and <= '\ud7af';
+
+    private static bool IsCjkIdeograph(char character) => character is >= '\u3400' and <= '\u9fff';
 
     /// <summary>Returns the configured home folder, falling back to Pictures and then Documents.</summary>
     public static string ResolveHomeDirectory(string? configuredFolder)

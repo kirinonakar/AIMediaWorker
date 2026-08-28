@@ -37,8 +37,8 @@
                     BorderThickness="1"
                     CornerRadius="7">
                 <StackPanel Orientation="Horizontal" Spacing="3">
-                    <ToggleButton x:Name="CaptureModeButton" MinWidth="76" Height="32" Click="OnCaptureModeClick" />
-                    <ToggleButton x:Name="RecordModeButton" MinWidth="76" Height="32" Click="OnRecordModeClick" />
+                    <ToggleButton x:Name="CaptureModeButton" MinWidth="64" Height="32" Padding="8,0" Click="OnCaptureModeClick" />
+                    <ToggleButton x:Name="RecordModeButton" MinWidth="64" Height="32" Padding="8,0" Click="OnRecordModeClick" />
                 </StackPanel>
             </Border>
 

@@ -30,6 +30,7 @@ internal static class ScreenCaptureInterop
 {
     private const uint SourceCopy = 0x00CC0020;
     private const uint MonitorDefaultToNearest = 2;
+    private const uint DwmwaExtendedFrameBounds = 9;
     private const uint DwmwaCloaked = 14;
     private const uint WindowDisplayAffinityNone = 0x0;
     private const uint WindowDisplayAffinityExcludeFromCapture = 0x11;
@@ -115,8 +116,11 @@ internal static class ScreenCaptureInterop
     [DllImport("user32.dll")]
     private static extern bool SetWindowDisplayAffinity(IntPtr windowHandle, uint affinity);
 
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmGetWindowAttribute(IntPtr windowHandle, uint attribute, out int value, uint valueSize);
+    [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")]
+    private static extern int DwmGetWindowAttributeInt(IntPtr windowHandle, uint attribute, out int value, uint valueSize);
+
+    [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")]
+    private static extern int DwmGetWindowAttributeRect(IntPtr windowHandle, uint attribute, out RECT value, uint valueSize);
 
     [DllImport("gdi32.dll")]
     private static extern IntPtr CreateCompatibleDC(IntPtr deviceContext);
@@ -159,11 +163,26 @@ internal static class ScreenCaptureInterop
 
     public static bool TryGetWindowBounds(IntPtr windowHandle, out RECT bounds)
     {
-        if (windowHandle == IntPtr.Zero || !GetWindowRect(windowHandle, out bounds))
+        if (windowHandle == IntPtr.Zero)
         {
             bounds = default;
             return false;
         }
+
+        // GetWindowRect includes the invisible resize border that DWM adds around modern
+        // windows. Capturing that rectangle leaves narrow blank strips on the sides and
+        // bottom, so prefer the bounds of the frame that is actually visible on screen.
+        if (DwmGetWindowAttributeRect(
+                windowHandle,
+                DwmwaExtendedFrameBounds,
+                out bounds,
+                (uint)Marshal.SizeOf<RECT>()) != 0 &&
+            !GetWindowRect(windowHandle, out bounds))
+        {
+            bounds = default;
+            return false;
+        }
+
         return bounds.Width > 1 && bounds.Height > 1;
     }
 
@@ -179,7 +198,7 @@ internal static class ScreenCaptureInterop
             if (!IsWindowVisible(handle) || IsIconic(handle)) return true;
             GetWindowThreadProcessId(handle, out var processId);
             if (processId == Environment.ProcessId) return true;
-            if (DwmGetWindowAttribute(handle, DwmwaCloaked, out var cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
+            if (DwmGetWindowAttributeInt(handle, DwmwaCloaked, out var cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
             if (!TryGetWindowBounds(handle, out var bounds)) return true;
             if (x < bounds.Left || x >= bounds.Right || y < bounds.Top || y >= bounds.Bottom) return true;
 
