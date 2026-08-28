@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using AIMediaWorker.Capture;
 using AIMediaWorker.Localization;
@@ -26,7 +27,20 @@ internal enum CaptureSelectorMode
 /// </summary>
 internal sealed partial class CaptureRegionSelectorWindow : Window
 {
+    private const int GwlStyle = -16;
+    private const nint WsBorder = 0x00800000;
+    private const nint WsDlgFrame = 0x00400000;
+    private const nint WsThickFrame = 0x00040000;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpFrameChanged = 0x0020;
+    private const uint DwmwaBorderColor = 34;
+    private const uint DwmColorNone = 0xFFFFFFFE;
+
     private readonly AppWindow? _appWindow;
+    private readonly nint _selfHandle;
     private TaskCompletionSource<RECT?>? _completion;
     private CaptureSelectorMode _mode;
     private RECT _monitor;
@@ -39,8 +53,8 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
     {
         InitializeComponent();
         Title = "AIMediaWorker";
-        var handle = WindowNative.GetWindowHandle(this);
-        _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(handle));
+        _selfHandle = WindowNative.GetWindowHandle(this);
+        _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_selfHandle));
         if (_appWindow is not null)
         {
             if (_appWindow.Presenter is OverlappedPresenter presenter)
@@ -54,6 +68,7 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
 
             _appWindow.Closing += OnAppWindowClosing;
         }
+        RemoveNativeWindowFrame();
 
         Closed += (_, _) => Complete(null);
         var escape = new KeyboardAccelerator { Key = VirtualKey.Escape, ScopeOwner = Root };
@@ -83,8 +98,9 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         SelectionBand.Visibility = Visibility.Collapsed;
         UpdateDimMask(null);
         PositionOver(monitorBounds);
-        Activate();
         _appWindow?.Show();
+        RemoveNativeWindowFrame();
+        Activate();
         FocusSink.Focus(FocusState.Programmatic);
         return await completion.Task;
     }
@@ -98,6 +114,18 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         if (_appWindow is null) return;
         _appWindow.Move(new PointInt32(monitorBounds.Left, monitorBounds.Top));
         _appWindow.Resize(new SizeInt32(monitorBounds.Width, monitorBounds.Height));
+    }
+
+    private void RemoveNativeWindowFrame()
+    {
+        var style = GetWindowLong(_selfHandle, GwlStyle);
+        var framelessStyle = style & ~(WsBorder | WsDlgFrame | WsThickFrame);
+        if (framelessStyle != style) SetWindowLong(_selfHandle, GwlStyle, framelessStyle);
+        SetWindowPos(_selfHandle, 0, 0, 0, 0, 0,
+            SwpNoSize | SwpNoMove | SwpNoZOrder | SwpNoActivate | SwpFrameChanged);
+
+        var color = DwmColorNone;
+        DwmSetWindowAttribute(_selfHandle, DwmwaBorderColor, ref color, sizeof(uint));
     }
 
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -274,4 +302,28 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
     }
 
     private static string L(string key) => LocalizationService.Get(key);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern nint GetWindowLongPtr64(nint windowHandle, int index);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    private static extern int GetWindowLong32(nint windowHandle, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern nint SetWindowLongPtr64(nint windowHandle, int index, nint value);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+    private static extern int SetWindowLong32(nint windowHandle, int index, int value);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(nint windowHandle, nint insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(nint windowHandle, uint attribute, ref uint value, uint valueSize);
+
+    private static nint GetWindowLong(nint windowHandle, int index)
+        => IntPtr.Size == 8 ? GetWindowLongPtr64(windowHandle, index) : GetWindowLong32(windowHandle, index);
+
+    private static nint SetWindowLong(nint windowHandle, int index, nint value)
+        => IntPtr.Size == 8 ? SetWindowLongPtr64(windowHandle, index, value) : SetWindowLong32(windowHandle, index, (int)value);
 }
