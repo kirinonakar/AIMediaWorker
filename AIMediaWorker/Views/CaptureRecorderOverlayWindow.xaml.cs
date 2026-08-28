@@ -45,6 +45,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
+    private static readonly nint HwndTopmost = new(-1);
     private const uint DwmwaCloak = 13;
     private const uint DwmwaBorderColor = 34;
     private const uint DwmColorNone = 0xFFFFFFFE;
@@ -96,6 +97,8 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             _appWindow.ResizeClient(new SizeInt32(460, 42));
             _appWindow.Closing += OnAppWindowClosing;
         }
+
+        EnsureAlwaysOnTop();
 
         _elapsedTimer = DispatcherQueue.CreateTimer();
         _elapsedTimer.Interval = TimeSpan.FromMilliseconds(250);
@@ -163,7 +166,11 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     {
         if (!_startupWindowCloaked) return;
         _startupWindowCloaked = !SetWindowCloak(_selfHandle, cloak: false);
-        if (!_startupWindowCloaked) StartupProfiler.Mark("capture-window-revealed");
+        if (!_startupWindowCloaked)
+        {
+            EnsureAlwaysOnTop();
+            StartupProfiler.Mark("capture-window-revealed");
+        }
     }
 
     private static bool SetWindowCloak(nint windowHandle, bool cloak)
@@ -301,8 +308,19 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     {
         _appWindow?.Show();
         RemoveNativeWindowFrame();
+        EnsureAlwaysOnTop();
         Activate();
+        EnsureAlwaysOnTop();
         FocusSink.Focus(FocusState.Programmatic);
+    }
+
+    private void EnsureAlwaysOnTop()
+    {
+        if (_appWindow?.Presenter is OverlappedPresenter presenter)
+            presenter.IsAlwaysOnTop = true;
+
+        SetWindowPos(_selfHandle, HwndTopmost, 0, 0, 0, 0,
+            SwpNoSize | SwpNoMove | SwpNoActivate);
     }
 
     private void HideOverlay() => _appWindow?.Hide();
