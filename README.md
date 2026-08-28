@@ -173,6 +173,17 @@ stereo audio from the default Windows playback device. OCR recognizes a selected
 area and copies its text to the clipboard. Files are written to the default folder
 configured in Settings.
 
+To launch only the capture and recording overlay, run:
+
+```powershell
+AIMediaWorker.exe -capture
+```
+
+This command does not open the main window. When the overlay has focus, pressing
+`Esc` closes the overlay and terminates the capture-only process. While selecting
+a window or region, `Esc` cancels only the current selection and returns to the
+overlay.
+
 ## LLM providers
 
 Supported provider profiles:

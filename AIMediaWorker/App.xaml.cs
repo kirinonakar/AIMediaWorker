@@ -24,6 +24,7 @@ using AIMediaWorker.Localization;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Network;
 using AIMediaWorker.Playback;
+using AIMediaWorker.Views;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -37,13 +38,19 @@ namespace AIMediaWorker
     {
         private Window? _window;
         private readonly Task<AppSettings> _settingsLoadTask;
+        private readonly bool _captureOnly;
 
         /// <summary>
         /// Initializes the singleton application object.  This is the first line of authored code
         /// executed, and as such is the logical equivalent of main() or WinMain().
         /// </summary>
-        public App()
+        public App() : this(captureOnly: false)
         {
+        }
+
+        private App(bool captureOnly)
+        {
+            _captureOnly = captureOnly;
             StartupProfiler.Mark("app-constructor");
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
             var settingsService = SettingsService.CreateDefault();
@@ -64,6 +71,7 @@ namespace AIMediaWorker
         }
 
         private const string SingleInstanceKey = "AIMediaWorker.SingleInstance";
+        private const string CaptureInstanceKey = "AIMediaWorker.CaptureInstance";
 
         /// <summary>
         /// Custom entry point. Enforces a single running instance: a secondary launch
@@ -75,9 +83,14 @@ namespace AIMediaWorker
         {
             StartupProfiler.Start();
             WinRT.ComWrappersSupport.InitializeComWrappers();
+            var captureOnly = IsCaptureOnlyLaunch(args);
 
             Microsoft.Windows.AppLifecycle.AppInstance primaryInstance;
-            try { primaryInstance = Microsoft.Windows.AppLifecycle.AppInstance.FindOrRegisterForKey(SingleInstanceKey); }
+            try
+            {
+                primaryInstance = Microsoft.Windows.AppLifecycle.AppInstance.FindOrRegisterForKey(
+                    captureOnly ? CaptureInstanceKey : SingleInstanceKey);
+            }
             catch { primaryInstance = Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent(); }
 
             if (!primaryInstance.IsCurrent)
@@ -105,9 +118,12 @@ namespace AIMediaWorker
             {
                 var context = new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread());
                 SynchronizationContext.SetSynchronizationContext(context);
-                new App();
+                new App(captureOnly);
             });
         }
+
+        private static bool IsCaptureOnlyLaunch(IEnumerable<string> args) =>
+            args.Any(value => string.Equals(value, "-capture", StringComparison.OrdinalIgnoreCase));
 
         /// <summary>
         /// Invoked when the application is launched.
@@ -126,6 +142,16 @@ namespace AIMediaWorker
                 LocalizationService.Apply(settings.General.Language);
                 StartupProfiler.Mark("localization-apply-end");
                 StartupProfiler.Mark("main-window-create-start");
+                if (_captureOnly)
+                {
+                    var captureWindow = new CaptureRecorderOverlayWindow();
+                    captureWindow.Closed += OnCaptureOnlyWindowClosed;
+                    _window = captureWindow;
+                    _window.Activate();
+                    StartupProfiler.Mark("window-activated");
+                    return;
+                }
+
                 var mainWindow = new MainWindow(launchSource, settings);
                 mainWindow.ApplySavedWindowPlacement(settings.Window);
                 _window = mainWindow;
@@ -146,6 +172,14 @@ namespace AIMediaWorker
                 await AppLog.WriteAsync("critical", "startup", "STARTUP_ERROR", exception.Message, exception);
                 throw;
             }
+        }
+
+        private void OnCaptureOnlyWindowClosed(object sender, WindowEventArgs args)
+        {
+            if (sender is CaptureRecorderOverlayWindow captureWindow)
+                captureWindow.Closed -= OnCaptureOnlyWindowClosed;
+            _window = null;
+            Exit();
         }
 
         private static async Task MigrateWebDavCredentialsAsync(AppSettings settings)

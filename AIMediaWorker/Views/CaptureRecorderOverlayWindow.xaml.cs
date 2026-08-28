@@ -65,11 +65,11 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private ScreenCaptureInterop.POINT _dragStartCursor;
     private PointInt32 _dragStartWindowPosition;
 
-    public CaptureRecorderOverlayWindow(Window owner)
+    public CaptureRecorderOverlayWindow(Window? owner = null)
     {
         InitializeComponent();
         Title = L("CaptureRecorderTitle");
-        WindowOwner.Attach(this, owner);
+        if (owner is not null) WindowOwner.Attach(this, owner);
         _selfHandle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_selfHandle));
         if (_appWindow is not null)
