@@ -163,6 +163,10 @@
 <data name="StatusOcrCopiedFormat"><value>인식된 텍스트를 클립보드에 복사했습니다 ({0}자)</value></data>
 <data name="StatusOcrNoText"><value>인식된 텍스트가 없습니다.</value></data>
 <data name="ErrorNoOcrEngine"><value>사용 가능한 OCR 엔진이 없습니다. Windows 언어 팩을 설치해 주세요.</value></data>
+<data name="CaptureFolderSetting.Text"><value>캡처 폴더</value></data>
+<data name="CaptureFolderBox.PlaceholderText"><value>비워 두면 사진 폴더에 저장</value></data>
+<data name="BrowseCaptureFolderButton.Content"><value>찾아보기…</value></data>
+<data name="ClearCaptureFolderButton.Content"><value>지우기</value></data>
 
 <data name="RecordingErrorTitle"><value>녹화 실패</value></data>
 <data name="CloseTooltip"><value>닫기</value></data>

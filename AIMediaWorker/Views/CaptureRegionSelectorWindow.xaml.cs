@@ -174,7 +174,7 @@ internal sealed partial class CaptureRegionSelectorWindow : Window
         var screenX = _monitor.Left + (int)Math.Round(position.X * Scale);
         var screenY = _monitor.Top + (int)Math.Round(position.Y * Scale);
         var handle = ScreenCaptureInterop.FindTopLevelWindowAtPoint(screenX, screenY);
-        var clipped = ScreenCaptureInterop.TryGetWindowBounds(handle, out var bounds) ? ClipToMonitor(bounds) : default(RECT?);
+        var clipped = ScreenCaptureInterop.TryGetWindowCaptureBounds(handle, out var bounds) ? ClipToMonitor(bounds) : default(RECT?);
         if (clipped is not { } clip || clip.Width < 8 || clip.Height < 8)
         {
             HoverHighlight.Visibility = Visibility.Collapsed;

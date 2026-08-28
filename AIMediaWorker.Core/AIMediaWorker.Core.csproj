@@ -20,6 +20,12 @@
              Link="Asr\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Waveform\**\*.cs" Link="Waveform\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\AIMediaWorker\Llm\**\*.cs" Link="Llm\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\AIMediaWorker\Capture\OcrTextPostProcessor.cs" Link="Capture\OcrTextPostProcessor.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>AIMediaWorker.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="TagLibSharp" Version="2.3.0" />

@@ -98,6 +98,7 @@ public sealed class SettingsService
         settings.Capture.CaptionFontSize = Math.Clamp(settings.Capture.CaptionFontSize, 16, 72);
         settings.Capture.WindowsCaptionFontSize = Math.Clamp(settings.Capture.WindowsCaptionFontSize, 16, 72);
         settings.Capture.WindowsCaptionPreviousSentenceCount = Math.Clamp(settings.Capture.WindowsCaptionPreviousSentenceCount, 1, 2);
+        settings.Capture.CaptureFolder = string.IsNullOrWhiteSpace(settings.Capture.CaptureFolder) ? null : settings.Capture.CaptureFolder.Trim();
         settings.Llm ??= new LlmSettings();
         if (string.Equals(settings.Llm.Provider, "Unsloth", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(settings.Llm.Provider)) settings.Llm.Provider = "Unsloth Desktop";
         settings.Llm.CachedModels ??= [];
@@ -106,6 +107,8 @@ public sealed class SettingsService
             ? GeneralSettings.DefaultUiFontFamily
             : settings.General.UiFontFamily.Trim();
         settings.General.DefaultFolder = string.IsNullOrWhiteSpace(settings.General.DefaultFolder) ? null : settings.General.DefaultFolder.Trim();
+        if (loadedSchemaVersion < 7 && settings.Capture.CaptureFolder is null)
+            settings.Capture.CaptureFolder = settings.General.DefaultFolder;
         settings.Window ??= new WindowLayoutSettings();
         settings.General.Shortcuts ??= [];
         if (settings.General.Shortcuts.TryGetValue(ShortcutActions.PreviousMedia, out var previousMedia) &&

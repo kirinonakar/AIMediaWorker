@@ -161,7 +161,18 @@ internal static class ScreenCaptureInterop
 
     public static POINT GetCursorPosition() => GetCursorPos(out var point) ? point : default;
 
-    public static bool TryGetWindowBounds(IntPtr windowHandle, out RECT bounds)
+    public static bool TryGetWindowBounds(IntPtr windowHandle, out RECT bounds) =>
+        TryGetWindowBounds(windowHandle, trimCaptureBorder: false, out bounds);
+
+    /// <summary>
+    /// Returns capture-ready visible bounds. DWM's extended frame still contains a narrow
+    /// transparent edge around many modern windows, so that edge is removed without changing
+    /// the larger bounds used to find the window under the pointer.
+    /// </summary>
+    public static bool TryGetWindowCaptureBounds(IntPtr windowHandle, out RECT bounds) =>
+        TryGetWindowBounds(windowHandle, trimCaptureBorder: true, out bounds);
+
+    private static bool TryGetWindowBounds(IntPtr windowHandle, bool trimCaptureBorder, out RECT bounds)
     {
         if (windowHandle == IntPtr.Zero)
         {
@@ -172,15 +183,23 @@ internal static class ScreenCaptureInterop
         // GetWindowRect includes the invisible resize border that DWM adds around modern
         // windows. Capturing that rectangle leaves narrow blank strips on the sides and
         // bottom, so prefer the bounds of the frame that is actually visible on screen.
-        if (DwmGetWindowAttributeRect(
+        var usedDwmBounds = DwmGetWindowAttributeRect(
                 windowHandle,
                 DwmwaExtendedFrameBounds,
                 out bounds,
-                (uint)Marshal.SizeOf<RECT>()) != 0 &&
-            !GetWindowRect(windowHandle, out bounds))
+                (uint)Marshal.SizeOf<RECT>()) == 0;
+        if (!usedDwmBounds && !GetWindowRect(windowHandle, out bounds))
         {
             bounds = default;
             return false;
+        }
+
+        if (trimCaptureBorder && usedDwmBounds && bounds.Width > 4 && bounds.Height > 2)
+        {
+            bounds.Left += 2;
+            bounds.Top++;
+            bounds.Right -= 2;
+            bounds.Bottom--;
         }
 
         return bounds.Width > 1 && bounds.Height > 1;

@@ -152,6 +152,19 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsMigrateGeneralDefaultFolderToCaptureFolder()
+    {
+        var path = Path.Combine(_folder, "settings-old-capture-folder.json");
+        Directory.CreateDirectory(_folder);
+        await File.WriteAllTextAsync(path, "{\"SchemaVersion\":6,\"General\":{\"DefaultFolder\":\"  D:\\\\Captures  \"}}");
+
+        var loaded = await new SettingsService(path).LoadAsync();
+
+        Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.SchemaVersion);
+        Assert.Equal(@"D:\Captures", loaded.Capture.CaptureFolder);
+    }
+
+    [Fact]
     public async Task SettingsMigrateUnslothProviderName()
     {
         var path = Path.Combine(_folder, "settings-old-unsloth.json");

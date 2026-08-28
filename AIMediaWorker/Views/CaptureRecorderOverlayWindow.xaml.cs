@@ -80,7 +80,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             }
 
             RemoveNativeWindowFrame();
-            _appWindow.ResizeClient(new SizeInt32(640, 50));
+            _appWindow.ResizeClient(new SizeInt32(550, 50));
             _appWindow.Closing += OnAppWindowClosing;
         }
 
@@ -347,7 +347,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     {
         var pixels = ScreenCaptureInterop.CaptureRegion(bounds)
             ?? throw new InvalidOperationException(L("CaptureErrorTitle"));
-        var directory = ScreenCaptureService.ResolveHomeDirectory(_settings.General.DefaultFolder);
+        var directory = ScreenCaptureService.ResolveHomeDirectory(_settings.Capture.CaptureFolder);
         var path = ScreenCaptureService.BuildUniqueFilePath(directory, $"AIMediaWorker_Capture_{DateTime.Now:yyyyMMdd_HHmmss}", ".png");
         await ScreenCaptureService.SavePngAsync(pixels, bounds.Width, bounds.Height, path);
         ShowStatus(F("StatusSavedFormat", path));
@@ -357,7 +357,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     {
         try
         {
-            var directory = ScreenCaptureService.ResolveHomeDirectory(_settings.General.DefaultFolder);
+            var directory = ScreenCaptureService.ResolveHomeDirectory(_settings.Capture.CaptureFolder);
             var path = ScreenCaptureService.BuildUniqueFilePath(directory, $"AIMediaWorker_Recording_{DateTime.Now:yyyyMMdd_HHmmss}", ".mp4");
             _recorder = MediaFoundationH264Recorder.Start(path, bounds);
             ScreenCaptureInterop.ExcludeWindowFromCapture(_selfHandle, true);

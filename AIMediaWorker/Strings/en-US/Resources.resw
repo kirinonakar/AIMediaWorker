@@ -163,6 +163,10 @@
 <data name="StatusOcrCopiedFormat"><value>Recognized text copied ({0} characters)</value></data>
 <data name="StatusOcrNoText"><value>No text was recognized.</value></data>
 <data name="ErrorNoOcrEngine"><value>No OCR engine is available. Install a Windows language pack.</value></data>
+<data name="CaptureFolderSetting.Text"><value>Capture folder</value></data>
+<data name="CaptureFolderBox.PlaceholderText"><value>Saves to Pictures when empty</value></data>
+<data name="BrowseCaptureFolderButton.Content"><value>Browse…</value></data>
+<data name="ClearCaptureFolderButton.Content"><value>Clear</value></data>
 
 <data name="RecordingErrorTitle"><value>Recording failed</value></data>
 <data name="CloseTooltip"><value>Close</value></data>

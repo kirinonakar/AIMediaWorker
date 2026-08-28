@@ -163,6 +163,10 @@
 <data name="StatusOcrCopiedFormat"><value>認識したテキストをクリップボードにコピーしました ({0} 文字)</value></data>
 <data name="StatusOcrNoText"><value>テキストは認識されませんでした。</value></data>
 <data name="ErrorNoOcrEngine"><value>利用可能な OCR エンジンがありません。Windows 言語パックをインストールしてください。</value></data>
+<data name="CaptureFolderSetting.Text"><value>キャプチャフォルダー</value></data>
+<data name="CaptureFolderBox.PlaceholderText"><value>空欄の場合はピクチャフォルダーに保存</value></data>
+<data name="BrowseCaptureFolderButton.Content"><value>参照…</value></data>
+<data name="ClearCaptureFolderButton.Content"><value>クリア</value></data>
 
 <data name="RecordingErrorTitle"><value>録画に失敗しました</value></data>
 <data name="CloseTooltip"><value>閉じる</value></data>

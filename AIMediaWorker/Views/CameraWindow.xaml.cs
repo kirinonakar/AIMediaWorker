@@ -6,7 +6,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.Graphics;
 using WinRT.Interop;
-using Windows.Storage.Pickers;
+using Windows.Storage;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
 using AIMediaWorker.Localization;
@@ -184,14 +184,14 @@ public sealed partial class CameraWindow : Window
                 Preview.SetMediaPlayer(_camera.Player); PreviewButton.Content = L("StopPreviewText");
                 FormatCombo.ItemsSource = _camera.AvailableFormats;
             }
-            var picker = new FileSavePicker { SuggestedFileName = $"capture-{DateTime.Now:yyyyMMdd-HHmmss}" };
-            picker.FileTypeChoices.Add(L("Mpeg4FileType"), [".mp4"]);
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var file = await picker.PickSaveFileAsync();
-            if (file is null) return;
+            var directory = ScreenCaptureService.ResolveHomeDirectory(_settings.Capture.CaptureFolder);
+            var folder = await StorageFolder.GetFolderFromPathAsync(directory);
+            var file = await folder.CreateFileAsync(
+                $"AIMediaWorker_Camera_{DateTime.Now:yyyyMMdd_HHmmss}.mp4",
+                CreationCollisionOption.GenerateUniqueName);
             await _camera.StartRecordingAsync(file);
             StartRecordingIndicator();
-            UpdateRecordingControls(); SetStatus(L("RecordingTitle"), file.Name, InfoBarSeverity.Warning);
+            UpdateRecordingControls(); SetStatus(L("RecordingTitle"), file.Path, InfoBarSeverity.Warning);
         }
         catch (Exception exception) { SetStatus(L("CaptureErrorTitle"), exception.Message, InfoBarSeverity.Error); }
     }

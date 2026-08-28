@@ -5,7 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Capture &amp; record">
     <Window.SystemBackdrop><DesktopAcrylicBackdrop /></Window.SystemBackdrop>
-    <StackPanel x:Name="Root" MinWidth="640" Spacing="2" Loaded="OnLoaded" SizeChanged="OnContentSizeChanged" KeyDown="OnRootKeyDown">
+    <StackPanel x:Name="Root" MinWidth="550" Spacing="2" Loaded="OnLoaded" SizeChanged="OnContentSizeChanged" KeyDown="OnRootKeyDown">
         <Grid x:Name="ToolbarPanel" ColumnSpacing="10" Margin="10,7,10,2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
@@ -50,10 +50,10 @@
                     BorderThickness="1"
                     CornerRadius="7">
                 <StackPanel Orientation="Horizontal" Spacing="3">
-                    <Button x:Name="FullscreenButton" MinWidth="94" Height="32" Click="OnFullscreenClick" />
-                    <Button x:Name="WindowAreaButton" MinWidth="72" Height="32" Click="OnWindowAreaClick" />
-                    <Button x:Name="RegionButton" MinWidth="72" Height="32" Click="OnRegionClick" />
-                    <Button x:Name="OcrButton" MinWidth="60" Height="32" Click="OnOcrClick" />
+                    <Button x:Name="FullscreenButton" MinWidth="82" Height="32" Padding="8,0" Click="OnFullscreenClick" />
+                    <Button x:Name="WindowAreaButton" MinWidth="64" Height="32" Padding="8,0" Click="OnWindowAreaClick" />
+                    <Button x:Name="RegionButton" MinWidth="60" Height="32" Padding="8,0" Click="OnRegionClick" />
+                    <Button x:Name="OcrButton" MinWidth="48" Height="32" Padding="8,0" Click="OnOcrClick" />
                 </StackPanel>
             </Border>
 

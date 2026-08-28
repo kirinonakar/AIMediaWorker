@@ -46,58 +46,59 @@ internal static class ScreenCaptureService
     /// </summary>
     public static async Task<string?> RecognizeTextAsync(byte[] bgraPixels, int width, int height)
     {
-        var profileEngine = OcrEngine.TryCreateFromUserProfileLanguages();
-        var japaneseEngine = CreateJapaneseEngine();
-        if (profileEngine is null && japaneseEngine is null) return null;
+        var engines = CreateCandidateEngines();
+        if (engines.Count == 0) return null;
 
         var buffer = CryptographicBuffer.CreateFromByteArray(bgraPixels);
         using var bitmap = SoftwareBitmap.CreateCopyFromBuffer(buffer, BitmapPixelFormat.Bgra8, width, height, BitmapAlphaMode.Premultiplied);
-        var profileText = profileEngine is null
-            ? string.Empty
-            : (await profileEngine.RecognizeAsync(bitmap).AsTask()).Text;
-
-        if (japaneseEngine is null ||
-            string.Equals(profileEngine?.RecognizerLanguage.LanguageTag, japaneseEngine.RecognizerLanguage.LanguageTag, StringComparison.OrdinalIgnoreCase))
+        var results = new List<OcrTextCandidate>(engines.Count);
+        foreach (var candidate in engines)
         {
-            return profileText;
+            var result = await candidate.Engine.RecognizeAsync(bitmap).AsTask();
+            var textWithLineBreaks = string.Join(Environment.NewLine, result.Lines.Select(line => line.Text));
+            results.Add(new OcrTextCandidate(textWithLineBreaks, candidate.Language, candidate.IsProfile));
         }
 
-        var japaneseText = (await japaneseEngine.RecognizeAsync(bitmap).AsTask()).Text;
-        return SelectBestRecognizedText(profileText, japaneseText);
+        return OcrTextPostProcessor.SelectBest(results);
     }
 
-    private static OcrEngine? CreateJapaneseEngine()
+    private static List<OcrEngineCandidate> CreateCandidateEngines()
+    {
+        var candidates = new List<OcrEngineCandidate>();
+        var profileEngine = OcrEngine.TryCreateFromUserProfileLanguages();
+        if (profileEngine is not null)
+        {
+            candidates.Add(new OcrEngineCandidate(
+                profileEngine,
+                GetLanguageKind(profileEngine.RecognizerLanguage.LanguageTag),
+                true));
+        }
+
+        AddLanguageEngine(candidates, "ko", OcrLanguageKind.Korean);
+        AddLanguageEngine(candidates, "ja", OcrLanguageKind.Japanese);
+        return candidates;
+    }
+
+    private static void AddLanguageEngine(List<OcrEngineCandidate> candidates, string languagePrefix, OcrLanguageKind languageKind)
     {
         var language = OcrEngine.AvailableRecognizerLanguages.FirstOrDefault(candidate =>
-            candidate.LanguageTag.StartsWith("ja", StringComparison.OrdinalIgnoreCase));
-        return language is null ? null : OcrEngine.TryCreateFromLanguage(language);
+            candidate.LanguageTag.StartsWith(languagePrefix, StringComparison.OrdinalIgnoreCase));
+        if (language is null || candidates.Any(candidate =>
+                string.Equals(candidate.Engine.RecognizerLanguage.LanguageTag, language.LanguageTag, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        var engine = OcrEngine.TryCreateFromLanguage(language);
+        if (engine is not null) candidates.Add(new OcrEngineCandidate(engine, languageKind, false));
     }
 
-    /// <summary>
-    /// Uses the profile-language result for ordinary Latin/Hangul captures, but switches to the
-    /// Japanese engine when it finds Japanese script (or when the profile engine found nothing).
-    /// </summary>
-    private static string SelectBestRecognizedText(string profileText, string japaneseText)
-    {
-        if (string.IsNullOrWhiteSpace(japaneseText)) return profileText;
-        if (string.IsNullOrWhiteSpace(profileText)) return japaneseText;
-        if (japaneseText.Any(IsJapaneseSpecificCharacter)) return japaneseText;
-        if (profileText.Any(IsHangulCharacter)) return profileText;
+    private static OcrLanguageKind GetLanguageKind(string languageTag) =>
+        languageTag.StartsWith("ko", StringComparison.OrdinalIgnoreCase) ? OcrLanguageKind.Korean :
+        languageTag.StartsWith("ja", StringComparison.OrdinalIgnoreCase) ? OcrLanguageKind.Japanese :
+        OcrLanguageKind.Profile;
 
-        var japaneseCjkCount = japaneseText.Count(IsCjkIdeograph);
-        var profileCjkCount = profileText.Count(IsCjkIdeograph);
-        return japaneseCjkCount > 0 && profileCjkCount == 0
-            ? japaneseText
-            : profileText;
-    }
-
-    private static bool IsJapaneseSpecificCharacter(char character) =>
-        character is >= '\u3040' and <= '\u30ff' or >= '\uff66' and <= '\uff9f' or '々' or '〆' or 'ヶ';
-
-    private static bool IsHangulCharacter(char character) =>
-        character is >= '\u1100' and <= '\u11ff' or >= '\u3130' and <= '\u318f' or >= '\uac00' and <= '\ud7af';
-
-    private static bool IsCjkIdeograph(char character) => character is >= '\u3400' and <= '\u9fff';
+    private sealed record OcrEngineCandidate(OcrEngine Engine, OcrLanguageKind Language, bool IsProfile);
 
     /// <summary>Returns the configured home folder, falling back to Pictures and then Documents.</summary>
     public static string ResolveHomeDirectory(string? configuredFolder)

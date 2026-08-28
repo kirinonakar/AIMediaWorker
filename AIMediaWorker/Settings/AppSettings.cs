@@ -12,7 +12,7 @@ public enum ThinkingLevel { Default, Off, Low, Medium, High, XHigh, Max }
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 6;
+    public const int CurrentSchemaVersion = 7;
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public PlaybackSettings Playback { get; set; } = new();
     public SubtitleSettings Subtitle { get; set; } = new();
@@ -101,6 +101,7 @@ public sealed class WebDavServerSettings
 
 public sealed class CaptureSettings
 {
+    public string? CaptureFolder { get; set; }
     public string? CameraDeviceId { get; set; }
     public string? MicrophoneDeviceId { get; set; }
     public int Width { get; set; } = 1920;
