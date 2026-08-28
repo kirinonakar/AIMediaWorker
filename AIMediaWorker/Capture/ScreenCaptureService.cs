@@ -74,6 +74,7 @@ internal static class ScreenCaptureService
                 true));
         }
 
+        AddLanguageEngine(candidates, "en", OcrLanguageKind.English);
         AddLanguageEngine(candidates, "ko", OcrLanguageKind.Korean);
         AddLanguageEngine(candidates, "ja", OcrLanguageKind.Japanese);
         return candidates;
@@ -94,6 +95,7 @@ internal static class ScreenCaptureService
     }
 
     private static OcrLanguageKind GetLanguageKind(string languageTag) =>
+        languageTag.StartsWith("en", StringComparison.OrdinalIgnoreCase) ? OcrLanguageKind.English :
         languageTag.StartsWith("ko", StringComparison.OrdinalIgnoreCase) ? OcrLanguageKind.Korean :
         languageTag.StartsWith("ja", StringComparison.OrdinalIgnoreCase) ? OcrLanguageKind.Japanese :
         OcrLanguageKind.Profile;

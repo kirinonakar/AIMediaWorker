@@ -3,6 +3,7 @@ namespace AIMediaWorker.Capture;
 internal enum OcrLanguageKind
 {
     Profile,
+    English,
     Korean,
     Japanese
 }
@@ -78,6 +79,7 @@ internal static class OcrTextPostProcessor
 
     private static int CountNativeCharacters(OcrTextCandidate candidate) => candidate.Language switch
     {
+        OcrLanguageKind.English => candidate.Text.Count(IsLatinLetter),
         OcrLanguageKind.Korean => candidate.Text.Count(IsHangulCharacter),
         OcrLanguageKind.Japanese => candidate.Text.Count(character =>
             IsJapaneseSpecificCharacter(character) || IsCjkIdeograph(character)),
@@ -107,6 +109,9 @@ internal static class OcrTextPostProcessor
 
     private static bool IsHangulCharacter(char character) =>
         character is >= '\u1100' and <= '\u11ff' or >= '\u3130' and <= '\u318f' or >= '\uac00' and <= '\ud7af';
+
+    private static bool IsLatinLetter(char character) =>
+        character is >= 'A' and <= 'Z' or >= 'a' and <= 'z';
 
     private static bool IsCjkIdeograph(char character) => character is >= '\u3400' and <= '\u9fff';
 

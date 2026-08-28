@@ -194,12 +194,12 @@ internal static class ScreenCaptureInterop
             return false;
         }
 
-        if (trimCaptureBorder && usedDwmBounds && bounds.Width > 4 && bounds.Height > 2)
+        if (trimCaptureBorder && usedDwmBounds && bounds.Width > 4 && bounds.Height > 4)
         {
             bounds.Left += 2;
-            bounds.Top++;
+            bounds.Top += 2;
             bounds.Right -= 2;
-            bounds.Bottom--;
+            bounds.Bottom -= 2;
         }
 
         return bounds.Width > 1 && bounds.Height > 1;

@@ -50,11 +50,28 @@ public sealed class OcrTextPostProcessorTests
     public void SelectBestKeepsProfileResultForOrdinaryEnglish()
     {
         var result = OcrTextPostProcessor.SelectBest([
-            new OcrTextCandidate("hello world", OcrLanguageKind.Profile, true),
+            new OcrTextCandidate("hello world", OcrLanguageKind.English, true),
             new OcrTextCandidate("hello wor1d", OcrLanguageKind.Korean, false),
             new OcrTextCandidate("hello worid", OcrLanguageKind.Japanese, false)
         ]);
 
         Assert.Equal("hello world", result);
+    }
+
+    [Fact]
+    public void SelectBestUsesExplicitEnglishEngineInsteadOfKoreanProfileForLatinText()
+    {
+        const string noisyProfile = "ln terms Of equity, AI will either be the greatest equalizer ever invented or\r\n" +
+                                    "the harms caused by artlficial intelligence, including those wh0 lose their";
+        const string englishResult = "In terms of equity, AI will either be the greatest equalizer ever invented, or\r\n" +
+                                     "the harms caused by artificial intelligence, including those who lose their";
+
+        var result = OcrTextPostProcessor.SelectBest([
+            new OcrTextCandidate(noisyProfile, OcrLanguageKind.Korean, true),
+            new OcrTextCandidate(englishResult, OcrLanguageKind.English, false),
+            new OcrTextCandidate("In terms of equity AI", OcrLanguageKind.Japanese, false)
+        ]);
+
+        Assert.Equal(englishResult, result);
     }
 }
