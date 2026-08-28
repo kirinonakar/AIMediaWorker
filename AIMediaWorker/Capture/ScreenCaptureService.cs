@@ -49,13 +49,22 @@ internal static class ScreenCaptureService
         var engines = CreateCandidateEngines();
         if (engines.Count == 0) return null;
 
-        var buffer = CryptographicBuffer.CreateFromByteArray(bgraPixels);
-        using var bitmap = SoftwareBitmap.CreateCopyFromBuffer(buffer, BitmapPixelFormat.Bgra8, width, height, BitmapAlphaMode.Premultiplied);
+        var prepared = OcrImagePreprocessor.Prepare(bgraPixels, width, height, (int)OcrEngine.MaxImageDimension);
+        var buffer = CryptographicBuffer.CreateFromByteArray(prepared.Pixels);
+        using var bitmap = SoftwareBitmap.CreateCopyFromBuffer(
+            buffer,
+            BitmapPixelFormat.Bgra8,
+            prepared.Width,
+            prepared.Height,
+            BitmapAlphaMode.Ignore);
         var results = new List<OcrTextCandidate>(engines.Count);
         foreach (var candidate in engines)
         {
             var result = await candidate.Engine.RecognizeAsync(bitmap).AsTask();
-            var textWithLineBreaks = string.Join(Environment.NewLine, result.Lines.Select(line => line.Text));
+            var textWithLineBreaks = string.Join(Environment.NewLine, result.Lines.Select(line =>
+                candidate.Language == OcrLanguageKind.Japanese || line.Words.Count == 0
+                    ? line.Text
+                    : string.Join(' ', line.Words.Select(word => word.Text))));
             results.Add(new OcrTextCandidate(textWithLineBreaks, candidate.Language, candidate.IsProfile));
         }
 

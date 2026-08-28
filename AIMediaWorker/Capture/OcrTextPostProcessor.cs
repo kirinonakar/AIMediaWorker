@@ -21,29 +21,60 @@ internal static class OcrTextPostProcessor
         if (populated.Length == 0) return string.Empty;
 
         var profile = populated.FirstOrDefault(candidate => candidate.IsProfile);
-        var scriptCandidates = populated
+        var eastAsianCandidates = populated
             .Select(candidate => new ScoredCandidate(candidate, CountSignificantCharacters(candidate.Text), CountNativeCharacters(candidate)))
-            .Where(scored => scored.NativeCharacters > 0 &&
-                             scored.NativeCharacters * 2 >= scored.SignificantCharacters)
+            .Where(scored => scored.Candidate.Language is OcrLanguageKind.Korean or OcrLanguageKind.Japanese &&
+                             scored.NativeCharacters >= 2 &&
+                             scored.NativeCharacters * 5 >= scored.SignificantCharacters)
             .OrderByDescending(scored => scored.NativeCharacters * 6 + scored.SignificantCharacters)
             .ThenByDescending(scored => scored.Candidate.IsProfile)
             .ToArray();
 
         OcrTextCandidate selected;
-        if (scriptCandidates.Length > 0 &&
-            (profile is null ||
-             scriptCandidates[0].NativeCharacters * 6 + scriptCandidates[0].SignificantCharacters > CountSignificantCharacters(profile.Text)))
+        if (eastAsianCandidates.Length > 0)
         {
-            selected = scriptCandidates[0].Candidate;
+            selected = eastAsianCandidates[0].Candidate;
+        }
+        else if (populated
+                 .Where(candidate => candidate.Language == OcrLanguageKind.English)
+                 .MaxBy(candidate => CountLatinCharacters(candidate.Text)) is { } english &&
+                 CountLatinCharacters(english.Text) >= 3)
+        {
+            // A Korean profile can misread the leading Latin "AI" as the Hangul syllable "시".
+            // When there is no meaningful Korean/Japanese script evidence, trust the dedicated
+            // English recognizer instead of the profile result.
+            selected = english;
         }
         else
         {
             selected = profile ?? populated.MaxBy(candidate => CountSignificantCharacters(candidate.Text))!;
         }
 
-        return selected.Language == OcrLanguageKind.Japanese
-            ? RemoveInsertedJapaneseSpaces(selected.Text)
-            : selected.Text;
+        return selected.Language switch
+        {
+            OcrLanguageKind.Japanese => RemoveInsertedJapaneseSpaces(selected.Text),
+            OcrLanguageKind.English => NormalizeEnglishText(selected.Text),
+            _ => selected.Text
+        };
+    }
+
+    public static string NormalizeEnglishText(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        var normalized = System.Text.RegularExpressions.Regex.Replace(
+            text,
+            @"\b(?:orthe)\b",
+            "or the",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        normalized = System.Text.RegularExpressions.Regex.Replace(
+            normalized,
+            @"\b(?:ofthe)\b",
+            "of the",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"(?<=[a-z])([ \t]+)Of\b", "$1of");
+        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+([,.;:!?])", "$1");
+        return normalized;
     }
 
     public static string RemoveInsertedJapaneseSpaces(string text)
@@ -76,6 +107,8 @@ internal static class OcrTextPostProcessor
 
     private static int CountSignificantCharacters(string text) => text.Count(character =>
         char.IsLetterOrDigit(character) || IsCjkIdeograph(character));
+
+    private static int CountLatinCharacters(string text) => text.Count(IsLatinLetter);
 
     private static int CountNativeCharacters(OcrTextCandidate candidate) => candidate.Language switch
     {

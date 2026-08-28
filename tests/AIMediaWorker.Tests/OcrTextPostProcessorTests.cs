@@ -74,4 +74,31 @@ public sealed class OcrTextPostProcessorTests
 
         Assert.Equal(englishResult, result);
     }
+
+    [Fact]
+    public void SelectBestRejectsSingleHangulMisreadAtStartOfEnglishSentence()
+    {
+        const string koreanProfile = "시 will either be the greatest equalizer ever invented, or the\r\n" +
+                                     "worst source Of injustice.";
+        const string englishResult = "AI will either be the greatest equalizer ever invented, or the\r\n" +
+                                     "worst source of injustice.";
+
+        var result = OcrTextPostProcessor.SelectBest([
+            new OcrTextCandidate(koreanProfile, OcrLanguageKind.Korean, true),
+            new OcrTextCandidate(englishResult, OcrLanguageKind.English, false)
+        ]);
+
+        Assert.Equal(englishResult, result);
+    }
+
+    [Fact]
+    public void EnglishCleanupRestoresSeparatedWordsAndFunctionWordCase()
+    {
+        var result = OcrTextPostProcessor.NormalizeEnglishText(
+            "AI will either be the greatest equalizer ever invented, orthe\r\nworst source Of injustice.");
+
+        Assert.Equal(
+            "AI will either be the greatest equalizer ever invented, or the\r\nworst source of injustice.",
+            result);
+    }
 }
