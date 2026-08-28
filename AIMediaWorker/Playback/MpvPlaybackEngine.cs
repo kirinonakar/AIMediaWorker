@@ -169,7 +169,10 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         // sources remain untouched.
         SetOption("deinterlace", "auto");
         SetOption("sub-auto", "fuzzy");
-        SetOption("sub-fonts-dir", ".");
+        // Do not use the process working directory as sub-fonts-dir. Windows shell
+        // activation can make it the media folder, causing libass to scan that entire
+        // directory before the first frame. mpv already registers Matroska font
+        // attachments directly and uses the system font provider for fallbacks.
         SetOption("audio-client-name", "AIMediaWorker");
         // Keep the Windows audio endpoint alive across loadfile replacements. Reopening it at
         // each playlist boundary can produce a short click on some drivers and receivers.
