@@ -808,7 +808,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         if (!_playback.IsAvailable) return;
         var percent = double.IsFinite(_playback.Volume) ? Math.Clamp(_playback.Volume, 0, 130) : 0;
         var roundedPercent = Math.Round(percent, MidpointRounding.AwayFromZero);
-        TryPlayback(() => _playback.ShowOsdText($"Volume:{roundedPercent:0}", 1.5));
+        TryPlayback(() => _playback.ShowOsdText($"Volume: {roundedPercent:0}", 1.5));
     }
 
     private void ShowMuteOverlay()
