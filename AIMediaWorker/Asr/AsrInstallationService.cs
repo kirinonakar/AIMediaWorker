@@ -29,20 +29,22 @@ public sealed class AsrInstallationService
         Timeout = Timeout.InfiniteTimeSpan
     };
 
-    private readonly string _workerDirectory;
     private readonly string _modelsDirectory;
     private readonly HttpClient _http;
 
+    /// <summary>The asr-worker folder the runtime, FFmpeg, and models are installed into.</summary>
+    public string WorkerDirectory { get; }
+
     public AsrInstallationService(string? workerDirectory = null, HttpClient? httpClient = null)
     {
-        _workerDirectory = Path.GetFullPath(workerDirectory ?? AsrRuntimePaths.WorkerDirectory);
-        _modelsDirectory = Path.Combine(_workerDirectory, "models");
+        WorkerDirectory = Path.GetFullPath(workerDirectory ?? AsrRuntimePaths.WorkerDirectory);
+        _modelsDirectory = Path.Combine(WorkerDirectory, "models");
         _http = httpClient ?? SharedHttp;
     }
 
     public async Task InstallAsync(IProgress<AsrInstallationProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        Directory.CreateDirectory(_workerDirectory);
+        Directory.CreateDirectory(WorkerDirectory);
 
         await EnsureCrispAsrAsync(0.0, 0.20, progress, cancellationToken).ConfigureAwait(false);
         progress?.Report(new("runtime-complete", "CrispASR", 0.20));
@@ -61,7 +63,7 @@ public sealed class AsrInstallationService
                                            IProgress<AsrInstallationProgress>? progress,
                                            CancellationToken cancellationToken)
     {
-        var runtimeDirectory = Path.Combine(_workerDirectory, "crispasr");
+        var runtimeDirectory = Path.Combine(WorkerDirectory, "crispasr");
         var library = Path.Combine(runtimeDirectory, "crispasr.dll");
         if (IsNonEmptyFile(library))
         {
@@ -69,8 +71,8 @@ public sealed class AsrInstallationService
             return;
         }
 
-        var archivePath = Path.Combine(_workerDirectory, $".crispasr-{Guid.NewGuid():N}.tar.gz");
-        var extractionDirectory = Path.Combine(_workerDirectory, $".crispasr-extract-{Guid.NewGuid():N}");
+        var archivePath = Path.Combine(WorkerDirectory, $".crispasr-{Guid.NewGuid():N}.tar.gz");
+        var extractionDirectory = Path.Combine(WorkerDirectory, $".crispasr-extract-{Guid.NewGuid():N}");
         try
         {
             await DownloadArchiveAsync("runtime", "CrispASR", CrispAsrArchiveUrl, archivePath,
@@ -95,16 +97,16 @@ public sealed class AsrInstallationService
                                          IProgress<AsrInstallationProgress>? progress,
                                          CancellationToken cancellationToken)
     {
-        var existingPath = FindInstalledFfmpegPath(_workerDirectory) ?? FindFfmpegOnPath();
+        var existingPath = FindInstalledFfmpegPath(WorkerDirectory) ?? FindFfmpegOnPath();
         if (existingPath is not null)
         {
             progress?.Report(new("requirements-skipped", "FFmpeg", rangeEnd));
             return;
         }
 
-        var archivePath = Path.Combine(_workerDirectory, $".ffmpeg-{Guid.NewGuid():N}.zip");
-        var extractionDirectory = Path.Combine(_workerDirectory, $".ffmpeg-extract-{Guid.NewGuid():N}");
-        var ffmpegDirectory = Path.Combine(_workerDirectory, "ffmpeg");
+        var archivePath = Path.Combine(WorkerDirectory, $".ffmpeg-{Guid.NewGuid():N}.zip");
+        var extractionDirectory = Path.Combine(WorkerDirectory, $".ffmpeg-extract-{Guid.NewGuid():N}");
+        var ffmpegDirectory = Path.Combine(WorkerDirectory, "ffmpeg");
         try
         {
             await DownloadArchiveAsync("requirements", "FFmpeg", FfmpegArchiveUrl, archivePath,

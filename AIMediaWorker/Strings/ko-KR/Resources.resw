@@ -123,7 +123,12 @@
   <data name="FileAssociationsSelectionRequiredMessage"><value>하나 이상의 확장자를 선택하세요.</value></data>
   <data name="DefaultAppsOpenFailedMessage"><value>Windows 기본 앱 설정을 열 수 없습니다.</value></data>
   <data name="AsrInstallationHeading.Text"><value>자동 음성 인식 설치</value></data>
-  <data name="AsrInstallationDescription.Text"><value>PATH에 FFmpeg가 없을 때만 실행 파일 아래 asr-worker에 FFmpeg를 설치하고 CrispASR native runtime을 설치한 뒤 asr-worker\models에 Qwen3 GGUF 모델을 다운로드합니다. 이미 설치된 항목은 건너뜁니다.</value></data>
+  <data name="AsrInstallationDescription.Text"><value>아래에서 지정한 asr-worker 폴더에 CrispASR native runtime과 Qwen3 GGUF 모델을 설치합니다. FFmpeg도 같은 폴더에 설치하지만 PATH에 FFmpeg가 있으면 PATH를 우선하여 설치를 건너뜁니다. 이미 설치된 항목은 건너뜁니다.</value></data>
+  <data name="AsrWorkerFolderSetting.Text"><value>asr-worker 폴더</value></data>
+  <data name="AsrWorkerFolderInput.PlaceholderText"><value>비우면 실행 파일과 같은 폴더의 asr-worker를 기본으로 사용합니다</value></data>
+  <data name="BrowseAsrWorkerFolderButton.Content"><value>찾아보기…</value></data>
+  <data name="ClearAsrWorkerFolderButton.Content"><value>지우기</value></data>
+  <data name="AsrWorkerFolderInvalidMessage"><value>asr-worker 폴더 경로가 올바르지 않습니다.</value></data>
   <data name="InstallAsrButton.Content"><value>설치</value></data>
   <data name="AsrInstallStartingMessage"><value>자동 음성 인식 설치 상태 확인 중…</value></data>
   <data name="AsrInstallRuntimeMessage"><value>CrispASR 런타임 확인 중: {0}</value></data>

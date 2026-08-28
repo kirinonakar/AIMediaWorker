@@ -4,8 +4,16 @@ public static class AsrRuntimePaths
 {
     public const string AsrModelFileName = "Qwen3-ASR-1.7B-Q8_0.gguf";
     public const string AlignerModelFileName = "qwen3-forced-aligner-0.6b-q8_0.gguf";
+    public const string WorkerFolderName = "asr-worker";
 
-    public static string WorkerDirectory => Path.Combine(AppContext.BaseDirectory, "asr-worker");
+    private static string _workerDirectory = DefaultWorkerDirectory;
+
+    /// <summary>The asr-worker folder currently used to locate the runtime, FFmpeg, and models.</summary>
+    public static string WorkerDirectory => _workerDirectory;
+
+    /// <summary>The default asr-worker folder beside the executable.</summary>
+    public static string DefaultWorkerDirectory => Path.Combine(AppContext.BaseDirectory, WorkerFolderName);
+
     public static string CrispAsrRuntimeDirectory => Path.Combine(WorkerDirectory, "crispasr");
     public static string FfmpegDirectory => Path.Combine(WorkerDirectory, "ffmpeg");
     public static string ModelsDirectory => Path.Combine(WorkerDirectory, "models");
@@ -13,6 +21,22 @@ public static class AsrRuntimePaths
     public static string FfmpegPath => Path.Combine(FfmpegDirectory, "ffmpeg.exe");
     public static string AsrModelPath => Path.Combine(ModelsDirectory, AsrModelFileName);
     public static string AlignerModelPath => Path.Combine(ModelsDirectory, AlignerModelFileName);
+
+    /// <summary>
+    /// Resolves the configured asr-worker folder. Null, empty, or whitespace
+    /// restores the default folder beside the executable.
+    /// </summary>
+    public static string ResolveWorkerDirectory(string? workerDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(workerDirectory)) return DefaultWorkerDirectory;
+        return Path.GetFullPath(workerDirectory.Trim());
+    }
+
+    /// <summary>
+    /// Points the static asr-worker paths at a custom folder so the CrispASR
+    /// runtime, FFmpeg, and models are found (and installed) there.
+    /// </summary>
+    public static void SetWorkerDirectory(string? workerDirectory) => _workerDirectory = ResolveWorkerDirectory(workerDirectory);
 
     public static string GetWorkerDirectory(string? anchorPath)
     {

@@ -123,7 +123,12 @@
   <data name="FileAssociationsSelectionRequiredMessage"><value>拡張子を1つ以上選択してください。</value></data>
   <data name="DefaultAppsOpenFailedMessage"><value>Windowsの既定のアプリ設定を開けませんでした。</value></data>
   <data name="AsrInstallationHeading.Text"><value>音声認識のインストール</value></data>
-  <data name="AsrInstallationDescription.Text"><value>PATHにFFmpegがない場合のみ実行ファイル下のasr-workerにFFmpegをインストールし、CrispASRランタイムとQwen3 GGUFモデルを準備します。インストール済みの項目はスキップします。</value></data>
+  <data name="AsrInstallationDescription.Text"><value>下で指定したasr-workerフォルダーにCrispASRランタイムとQwen3 GGUFモデルをインストールします。FFmpegも同じフォルダーにインストールしますが、PATHにFFmpegがある場合はPATHを優先してインストールをスキップします。インストール済みの項目はスキップします。</value></data>
+  <data name="AsrWorkerFolderSetting.Text"><value>asr-worker フォルダー</value></data>
+  <data name="AsrWorkerFolderInput.PlaceholderText"><value>空欄では実行ファイルと同じフォルダーの asr-worker を既定で使用します</value></data>
+  <data name="BrowseAsrWorkerFolderButton.Content"><value>参照…</value></data>
+  <data name="ClearAsrWorkerFolderButton.Content"><value>クリア</value></data>
+  <data name="AsrWorkerFolderInvalidMessage"><value>asr-worker フォルダーのパスが正しくありません。</value></data>
   <data name="InstallAsrButton.Content"><value>インストール</value></data>
   <data name="AsrInstallStartingMessage"><value>音声認識のインストール状態を確認中…</value></data>
   <data name="AsrInstallRuntimeMessage"><value>CrispASRランタイムを確認中: {0}</value></data>

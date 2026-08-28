@@ -27,6 +27,37 @@ public sealed class AsrTests
     }
 
     [Fact]
+    public void WorkerDirectoryOverrideRedirectsRuntimeAndModelPaths()
+    {
+        try
+        {
+            var custom = Path.Combine(Path.GetTempPath(), "AIMediaWorker.Tests", Guid.NewGuid().ToString("N"), "custom-asr");
+            AsrRuntimePaths.SetWorkerDirectory(custom);
+            Assert.Equal(Path.GetFullPath(custom), AsrRuntimePaths.WorkerDirectory);
+            Assert.Equal(Path.Combine(Path.GetFullPath(custom), "crispasr", "crispasr.dll"), AsrRuntimePaths.CrispAsrDllPath);
+            Assert.Equal(Path.Combine(Path.GetFullPath(custom), "ffmpeg", "ffmpeg.exe"), AsrRuntimePaths.FfmpegPath);
+            Assert.Equal(Path.Combine(Path.GetFullPath(custom), "models", AsrRuntimePaths.AsrModelFileName), AsrRuntimePaths.AsrModelPath);
+            Assert.Equal(Path.GetFullPath(custom), AsrRuntimePaths.GetWorkerDirectory(AsrRuntimePaths.CrispAsrRuntimeDirectory));
+            Assert.Equal(Path.Combine(Path.GetFullPath(custom), "models"), AsrRuntimePaths.GetModelsDirectory(AsrRuntimePaths.CrispAsrRuntimeDirectory));
+        }
+        finally
+        {
+            // Null restores the original default: the asr-worker folder beside the executable.
+            AsrRuntimePaths.SetWorkerDirectory(null);
+        }
+
+        Assert.Equal(Path.Combine(AppContext.BaseDirectory, "asr-worker"), AsrRuntimePaths.WorkerDirectory);
+    }
+
+    [Fact]
+    public void InstallationServiceTargetsConfiguredWorkerDirectory()
+    {
+        var custom = Path.Combine(Path.GetTempPath(), "AIMediaWorker.Tests", Guid.NewGuid().ToString("N"), "custom-asr");
+        Assert.Equal(Path.GetFullPath(custom), new AsrInstallationService(custom).WorkerDirectory);
+        Assert.Equal(AsrRuntimePaths.WorkerDirectory, new AsrInstallationService().WorkerDirectory);
+    }
+
+    [Fact]
     public void ProtocolUsesMicrosecondWireNames()
     {
         var request = AsrRequest.Create("transcribe_file", new { input = "C:\\media.mp4", timestamps = true }, "job-123");

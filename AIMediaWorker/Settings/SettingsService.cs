@@ -89,7 +89,15 @@ public sealed class SettingsService
         settings.Asr ??= new AsrSettings();
         settings.Asr.ModelPath = AsrSettings.DefaultModelId;
         settings.Asr.AlignerPath = AsrSettings.DefaultAlignerId;
-        settings.Asr.CrispAsrRuntimeDirectory = AsrRuntimePaths.CrispAsrRuntimeDirectory;
+        settings.Asr.WorkerDirectory = string.IsNullOrWhiteSpace(settings.Asr.WorkerDirectory) ? null : settings.Asr.WorkerDirectory.Trim();
+        var workerDirectory = AsrRuntimePaths.DefaultWorkerDirectory;
+        try { workerDirectory = AsrRuntimePaths.ResolveWorkerDirectory(settings.Asr.WorkerDirectory); }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or System.Security.SecurityException or IOException)
+        {
+            settings.Asr.WorkerDirectory = null;
+            workerDirectory = AsrRuntimePaths.DefaultWorkerDirectory;
+        }
+        settings.Asr.CrispAsrRuntimeDirectory = Path.Combine(workerDirectory, "crispasr");
         settings.Network ??= new NetworkSettings();
         settings.Network.WebDavServers ??= [];
         settings.Capture ??= new CaptureSettings();

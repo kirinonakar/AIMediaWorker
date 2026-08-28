@@ -65,6 +65,9 @@ public sealed class AsrSettings
     public const string DefaultModelId = AsrRuntimePaths.AsrModelFileName;
     public const string DefaultAlignerId = AsrRuntimePaths.AlignerModelFileName;
 
+    // Custom asr-worker folder holding crispasr, ffmpeg, and models. Null uses
+    // the default folder beside the executable.
+    public string? WorkerDirectory { get; set; }
     public string? ModelPath { get; set; } = DefaultModelId;
     public string? AlignerPath { get; set; } = DefaultAlignerId;
     public string CrispAsrRuntimeDirectory { get; set; } = AsrRuntimePaths.CrispAsrRuntimeDirectory;

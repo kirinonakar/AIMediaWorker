@@ -20,6 +20,7 @@ using Windows.Foundation;
 using Windows.Foundation.Collections;
 using Windows.Storage;
 using AIMediaWorker.Settings;
+using AIMediaWorker.Asr;
 using AIMediaWorker.Localization;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Network;
@@ -137,6 +138,7 @@ namespace AIMediaWorker
                 // continuation, so capture the launch source before loading settings.
                 var launchSource = GetLaunchSource();
                 var settings = await _settingsLoadTask;
+                AsrRuntimePaths.SetWorkerDirectory(settings.Asr.WorkerDirectory);
                 UiFontService.Apply(settings.General.UiFontFamily);
                 StartupProfiler.Mark("localization-apply-start");
                 LocalizationService.Apply(settings.General.Language);

@@ -24,6 +24,12 @@ in one go; components that are already present are skipped:
   single-file `qwen3asr` Q8_0 model) and `qwen3-forced-aligner-0.6b-q8_0.gguf`
   downloaded to `asr-worker\models`
 
+The `asr-worker` folder defaults to `asr-worker` beside the executable, and
+leaving the **asr-worker folder** box empty in **Settings → Automatic speech
+recognition** keeps that default. Pointing the box at another folder makes the
+runtime, FFmpeg, and models load from (and install into) that folder instead.
+A system `PATH` FFmpeg still takes priority and is not downloaded again.
+
 In **Settings → Automatic speech recognition**, configure: Device (`Auto`,
 `Cpu`, `Cuda`), precision, VAD, language, and chunk duration. Manual setup
 instructions for each component follow below.

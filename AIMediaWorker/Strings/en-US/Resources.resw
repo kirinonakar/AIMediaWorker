@@ -123,7 +123,12 @@
   <data name="FileAssociationsSelectionRequiredMessage"><value>Select at least one extension.</value></data>
   <data name="DefaultAppsOpenFailedMessage"><value>Windows Default apps settings could not be opened.</value></data>
   <data name="AsrInstallationHeading.Text"><value>ASR installation</value></data>
-  <data name="AsrInstallationDescription.Text"><value>Installs FFmpeg (unless it is already available in PATH) and the CrispASR native runtime under asr-worker, then downloads the Qwen3 GGUF models to asr-worker\models. Existing components are skipped.</value></data>
+  <data name="AsrInstallationDescription.Text"><value>Installs the CrispASR native runtime and the Qwen3 GGUF models into the asr-worker folder below. FFmpeg is installed into the same folder unless it is already available on PATH, which takes priority. Existing components are skipped.</value></data>
+  <data name="AsrWorkerFolderSetting.Text"><value>asr-worker folder</value></data>
+  <data name="AsrWorkerFolderInput.PlaceholderText"><value>Empty uses the asr-worker folder beside the executable</value></data>
+  <data name="BrowseAsrWorkerFolderButton.Content"><value>Browse…</value></data>
+  <data name="ClearAsrWorkerFolderButton.Content"><value>Clear</value></data>
+  <data name="AsrWorkerFolderInvalidMessage"><value>The asr-worker folder path is not valid.</value></data>
   <data name="InstallAsrButton.Content"><value>Install</value></data>
   <data name="AsrInstallStartingMessage"><value>Checking the ASR installation…</value></data>
   <data name="AsrInstallRuntimeMessage"><value>Checking the CrispASR runtime: {0}</value></data>

@@ -1419,6 +1419,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void ApplySettings(AppSettings settings)
     {
         _settings = settings;
+        AsrRuntimePaths.SetWorkerDirectory(settings.Asr.WorkerDirectory);
         _mediaNavigation.ApplySettings();
         LocalizationService.Apply(settings.General.Language);
         UiFontService.Apply(settings.General.UiFontFamily, RootGrid);

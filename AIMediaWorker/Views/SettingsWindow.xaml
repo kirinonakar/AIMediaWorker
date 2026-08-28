@@ -120,7 +120,14 @@
             </Grid></StackPanel></Border>
             <Border Style="{StaticResource SettingsCardStyle}"><StackPanel Spacing="10">
                 <TextBlock x:Uid="AsrInstallationHeading" Text="ASR installation" Style="{StaticResource SettingsCardTitleStyle}" Margin="0" />
-                <TextBlock x:Uid="AsrInstallationDescription" Text="Checks the native runtimes and downloads the GGUF models below the executable." TextWrapping="Wrap" Opacity="0.78" />
+                <TextBlock x:Uid="AsrInstallationDescription" Text="Installs the CrispASR native runtime and the Qwen3 GGUF models into the asr-worker folder below. FFmpeg is installed into the same folder unless it is already available on PATH, which takes priority. Existing components are skipped." TextWrapping="Wrap" Opacity="0.78" />
+                <TextBlock x:Uid="AsrWorkerFolderSetting" Text="asr-worker folder" />
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBox x:Uid="AsrWorkerFolderInput" x:Name="AsrWorkerFolderBox" PlaceholderText="Empty uses the asr-worker folder beside the executable" TextChanged="OnAsrWorkerFolderChanged" />
+                    <Button x:Uid="BrowseAsrWorkerFolderButton" Grid.Column="1" Content="Browse…" Click="OnBrowseAsrWorkerFolderClick" />
+                    <Button x:Uid="ClearAsrWorkerFolderButton" Grid.Column="2" Content="Clear" Click="OnClearAsrWorkerFolderClick" />
+                </Grid>
                 <TextBox x:Name="AsrModelFolderBox" IsReadOnly="True" />
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <Button x:Uid="InstallAsrButton" x:Name="InstallAsrButton" Content="Install" Style="{StaticResource AccentButtonStyle}" Click="OnInstallAsrClick" />
