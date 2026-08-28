@@ -45,6 +45,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
+    private const uint DwmwaCloak = 13;
     private const uint DwmwaBorderColor = 34;
     private const uint DwmColorNone = 0xFFFFFFFE;
 
@@ -52,7 +53,10 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private readonly nint _selfHandle;
     private readonly DispatcherQueueTimer _elapsedTimer;
     private readonly DispatcherQueueTimer _statusHideTimer;
-    private AppSettings _settings = new();
+    private readonly bool _settingsProvided;
+    private AppSettings _settings;
+    private bool _startupWindowCloaked;
+    private bool _startupRevealScheduled;
     private CaptureRecorderMode _mode = CaptureRecorderMode.Capture;
     private MediaFoundationH264Recorder? _recorder;
     private LlmService? _ocrTranslator;
@@ -65,12 +69,15 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private ScreenCaptureInterop.POINT _dragStartCursor;
     private PointInt32 _dragStartWindowPosition;
 
-    public CaptureRecorderOverlayWindow(Window? owner = null)
+    public CaptureRecorderOverlayWindow(Window? owner = null, AppSettings? initialSettings = null)
     {
+        _settings = initialSettings ?? new AppSettings();
+        _settingsProvided = initialSettings is not null;
+        _selfHandle = WindowNative.GetWindowHandle(this);
+        _startupWindowCloaked = SetWindowCloak(_selfHandle, cloak: true);
         InitializeComponent();
         Title = L("CaptureRecorderTitle");
         if (owner is not null) WindowOwner.Attach(this, owner);
-        _selfHandle = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_selfHandle));
         if (_appWindow is not null)
         {
@@ -111,13 +118,16 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        try
+        if (!_settingsProvided)
         {
-            _settings = await SettingsService.CreateDefault().LoadAsync();
-        }
-        catch
-        {
-            _settings = new AppSettings();
+            try
+            {
+                _settings = await SettingsService.CreateDefault().LoadAsync();
+            }
+            catch
+            {
+                _settings = new AppSettings();
+            }
         }
 
         UiFontService.Apply(_settings.General.UiFontFamily, Root);
@@ -132,6 +142,34 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         OcrButton.IsEnabled = true;
         AdjustWindowSize();
         ShowOverlay();
+        RevealAfterNextFrame();
+    }
+
+    private void RevealAfterNextFrame()
+    {
+        if (!_startupWindowCloaked || _startupRevealScheduled) return;
+        _startupRevealScheduled = true;
+        EventHandler<object>? rendering = null;
+        rendering = (_, _) =>
+        {
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= rendering;
+            if (!DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, RevealStartupWindow))
+                RevealStartupWindow();
+        };
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += rendering;
+    }
+
+    private void RevealStartupWindow()
+    {
+        if (!_startupWindowCloaked) return;
+        _startupWindowCloaked = !SetWindowCloak(_selfHandle, cloak: false);
+        if (!_startupWindowCloaked) StartupProfiler.Mark("capture-window-revealed");
+    }
+
+    private static bool SetWindowCloak(nint windowHandle, bool cloak)
+    {
+        var value = cloak ? 1u : 0u;
+        return DwmSetWindowAttribute(windowHandle, DwmwaCloak, ref value, sizeof(uint)) == 0;
     }
 
     private void ApplyLocalizedTexts()

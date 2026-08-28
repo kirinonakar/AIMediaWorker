@@ -158,7 +158,7 @@ namespace AIMediaWorker
                 StartupProfiler.Mark("main-window-create-start");
                 if (_captureOnly)
                 {
-                    var captureWindow = new CaptureRecorderOverlayWindow();
+                    var captureWindow = new CaptureRecorderOverlayWindow(initialSettings: settings);
                     captureWindow.Closed += OnCaptureOnlyWindowClosed;
                     _window = captureWindow;
                     _window.Activate();
