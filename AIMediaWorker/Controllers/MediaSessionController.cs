@@ -83,7 +83,26 @@ internal sealed class MediaSessionController
     public async Task OpenForwardedFilesAsync(IReadOnlyList<string> filePaths)
     {
         _pendingLaunchSource = null;
-        try { await OpenDroppedFilesAsync(filePaths); }
+        try
+        {
+            var files = await Task.Run(() => filePaths
+                .Where(File.Exists)
+                .Select(Path.GetFullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray());
+
+            // A shell file-association launch represents a new primary media selection.
+            // Open it without preserving the temporary one-item playlist so the normal
+            // post-open flow can repopulate the playlist with playable sibling files.
+            if (files.Length == 1 && MediaFileClassifier.IsPlayable(files[0]))
+            {
+                _pendingDroppedFiles = null;
+                await OpenAsync(files[0]);
+                return;
+            }
+
+            await OpenDroppedFilesAsync(files);
+        }
         catch (Exception exception)
         {
             await AppLog.WriteAsync("error", "activation", "REDIRECTED_OPEN_ERROR", exception.Message, exception);

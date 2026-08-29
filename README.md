@@ -6,7 +6,7 @@ AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation b
 
 It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures screenshots and records the desktop with system audio (optional capture only launch); creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
-Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs; Explorer and WebDAV entries support name filtering and cyclic name/newest/oldest sorting.
+Media files can be opened through the picker, command line, folder explorer, playlist, or drag and drop. The side panel contains Explorer, Playlist, WebDAV, and Subtitles tabs.
 
 ## 📥 Download
 You can download the latest portable version with libmpv from the [Releases Page](https://github.com/kirinonakar/AIMediaWorker/releases).
@@ -86,9 +86,9 @@ The [official mpv installation page](https://mpv.io/installation/) lists maintai
 6. If the downloaded build supplies additional runtime DLLs, place those DLLs in `Libs` as well.
 7. Build the application. Every DLL directly inside `Libs` is copied beside `AIMediaWorker.exe` for Debug, Release, and publish output.
 
-AIMediaWorker requests mpv's `gpu-next` D3D11 renderer and `auto-safe` hardware decoding by default. HDR output defaults to automatic display-aware color-space signaling: on an HDR-enabled Windows display, mpv negotiates HDR metadata and a 10-bit D3D11 swap chain; otherwise it keeps the display-compatible output path. HDR output can also be forced on or disabled in Preferences. D3D11VA, NVDEC, software decode, renderer, language preferences, cache/network timeout, subtitle appearance, playback rate, and seek interval are configurable.
+AIMediaWorker uses mpv's `gpu-next` D3D11 renderer and `auto-safe` hardware decoding by default. HDR output automatically negotiates a 10-bit color space on supported Windows displays and can be changed in Preferences.
 
-Dolby Vision Profile 4 and Profile 8 compatible-base-layer fallbacks are detected automatically. Because libmpv cannot reconstruct Profile 4's enhancement layer, AIMediaWorker displays its SDR-compatible Rec.709 base layer. Profile 8 bypasses Dolby Vision reshaping while retaining the source's tagged HDR10, HLG, or SDR base-layer colorspace. In Auto mode, RTX Video Super Resolution is skipped for HDR and Dolby Vision sources so the D3D11 video processor cannot discard their 10-bit color metadata.
+Dolby Vision Profile 4 and 8 use compatible base-layer fallbacks when needed. RTX Video Super Resolution is skipped for HDR and Dolby Vision content in Auto mode to preserve color accuracy.
 
 When RTX Video Super Resolution is set to Auto or On, AIMediaWorker adds mpv's `d3d11vpp` filter with `scaling-mode=nvidia` and a 2x scale request to the D3D11 video path. NVIDIA App/Control Panel must still allow RTX Video enhancement for AIMediaWorker; the driver decides whether each frame is enhanced. Playback falls back to mpv's normal scaler when the filter is disabled or unavailable.
 
