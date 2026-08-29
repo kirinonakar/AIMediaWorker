@@ -27,6 +27,8 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private volatile bool _firstFrameReady;
     private volatile bool _loadfileIssued;
     private bool _disposed;
+    private bool _dolbyVisionCompatibilityEvaluated;
+    private bool _dolbyVisionCompatibilityFilterApplied;
     private RtxVideoSuperResolutionMode _rtxVideoSuperResolutionMode = RtxVideoSuperResolutionMode.Off;
     private bool _rtxVideoSuperResolutionFilterApplied;
     private volatile bool _eofReached;
@@ -53,6 +55,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public int? VideoHeight { get; private set; }
     public string? LibraryVersion { get; private set; }
     public string HdrOutputStatus { get; private set; } = "Automatic HDR output is pending initialization.";
+    public string DolbyVisionCompatibilityStatus { get; private set; } = "Not active.";
     public string RtxVideoSuperResolutionStatus { get; private set; } = "Disabled";
 
     public event EventHandler? StateChanged;
@@ -237,6 +240,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         // being requested. Re-attach RTX VSR after the new decoder has produced a
         // frame instead of making the decoder and d3d11vpp initialize together.
         RemoveRtxVideoSuperResolutionFilter();
+        RemoveDolbyVisionCompatibilityFilter();
         _firstFrameReady = false;
         _eofReached = false;
         SetState(PlaybackState.Loading);
@@ -633,6 +637,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 break;
             case MpvInterop.MpvEventId.FileLoaded:
                 StartupProfiler.Mark("file-loaded");
+                ApplyDolbyVisionCompatibilityFallbackIfNeeded();
                 // libmpv can restore per-file subtitle state when a new source is
                 // loaded. Reapply the user's preference after the file is ready so
                 // the menu checkmark and the renderer cannot drift apart.
@@ -666,6 +671,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 if (_firstFrameReady) ScheduleTrackRefresh();
                 break;
             case MpvInterop.MpvEventId.PlaybackRestart:
+                ApplyDolbyVisionCompatibilityFallbackIfNeeded();
                 if (!_firstFrameReady)
                 {
                     _firstFrameReady = true;
@@ -701,7 +707,13 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             // Track metadata uses many synchronous property reads. Keep those reads away from
             // file loading and the renderer's first-frame setup, then coalesce reconfigure events.
             await Task.Delay(300, cancellation.Token).ConfigureAwait(false);
-            if (!cancellation.IsCancellationRequested && _context != 0) ReadTracks();
+            if (!cancellation.IsCancellationRequested && _context != 0)
+            {
+                // Some MPEG-TS sources expose Dolby Vision track metadata only after
+                // the decoder has produced a frame. Retry here after the initial events.
+                ApplyDolbyVisionCompatibilityFallbackIfNeeded();
+                ReadTracks();
+            }
         }
         catch (OperationCanceledException) { }
         finally
@@ -921,9 +933,57 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         _ => throw new ArgumentOutOfRangeException(nameof(mode))
     };
 
+    private void ApplyDolbyVisionCompatibilityFallbackIfNeeded()
+    {
+        if (_context == 0 || _dolbyVisionCompatibilityEvaluated) return;
+        var profile = GetInt("current-tracks/video/dolby-vision-profile");
+        if (profile is null) return;
+
+        _dolbyVisionCompatibilityEvaluated = true;
+        if (!DolbyVisionCompatibilityFallback.IsRequired(profile))
+        {
+            DolbyVisionCompatibilityStatus = $"Not required for Dolby Vision Profile {profile}.";
+            return;
+        }
+
+        try
+        {
+            MpvInterop.Command(_context, "vf", "add", DolbyVisionCompatibilityFallback.BuildFilter(profile.Value));
+            _dolbyVisionCompatibilityFilterApplied = true;
+            DolbyVisionCompatibilityStatus = profile == DolbyVisionCompatibilityFallback.SdrBaseLayerProfile
+                ? "Active: Dolby Vision Profile 4 is using its SDR Rec.709 base layer."
+                : "Active: Dolby Vision Profile 8 is using its tagged compatible base layer.";
+        }
+        catch (MpvException exception)
+        {
+            _dolbyVisionCompatibilityFilterApplied = false;
+            DolbyVisionCompatibilityStatus = $"Unavailable: {exception.Message}";
+        }
+    }
+
+    private void RemoveDolbyVisionCompatibilityFilter()
+    {
+        if (_dolbyVisionCompatibilityFilterApplied && _context != 0)
+        {
+            try { MpvInterop.Command(_context, "vf", "remove", $"@{DolbyVisionCompatibilityFallback.Label}"); }
+            catch (MpvException) { }
+        }
+
+        _dolbyVisionCompatibilityFilterApplied = false;
+        _dolbyVisionCompatibilityEvaluated = false;
+        DolbyVisionCompatibilityStatus = "Not active.";
+    }
+
     private void ApplyRtxVideoSuperResolutionFilter()
     {
         if (_context == 0 || _rtxVideoSuperResolutionMode == RtxVideoSuperResolutionMode.Off || _rtxVideoSuperResolutionFilterApplied) return;
+        var dolbyVisionProfile = GetInt("current-tracks/video/dolby-vision-profile");
+        var transferFunction = GetString("video-dec-params/gamma");
+        if (!RtxVideoSuperResolutionFilter.ShouldApply(_rtxVideoSuperResolutionMode, dolbyVisionProfile, transferFunction))
+        {
+            RtxVideoSuperResolutionStatus = "Skipped for HDR or Dolby Vision content to preserve 10-bit color metadata.";
+            return;
+        }
         var filter = RtxVideoSuperResolutionFilter.Build(_rtxVideoSuperResolutionMode);
         if (filter is null) return;
         try

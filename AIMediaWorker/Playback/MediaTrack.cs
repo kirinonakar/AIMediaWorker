@@ -39,6 +39,27 @@ public static class HdrOutputOptions
 }
 
 /// <summary>
+/// Builds metadata-only fallbacks for Dolby Vision sources with compatible base layers.
+/// Profile 4 uses its SDR Rec.709 base layer; Profile 8 keeps the source's tagged
+/// HDR10, HLG, or SDR colorspace while bypassing Dolby Vision reshaping.
+/// </summary>
+public static class DolbyVisionCompatibilityFallback
+{
+    public const int SdrBaseLayerProfile = 4;
+    public const int CompatibleBaseLayerProfile = 8;
+    public const string Label = "aimedia-dovi-compatible-base";
+
+    public static bool IsRequired(int? profile) => profile is SdrBaseLayerProfile or CompatibleBaseLayerProfile;
+
+    public static string BuildFilter(int profile) => profile switch
+    {
+        SdrBaseLayerProfile => $"@{Label}:format=dolbyvision=no:colormatrix=bt.709:colorlevels=limited:primaries=bt.709:gamma=bt.1886",
+        CompatibleBaseLayerProfile => $"@{Label}:format=dolbyvision=no",
+        _ => throw new ArgumentOutOfRangeException(nameof(profile), "No Dolby Vision compatibility fallback is defined for this profile.")
+    };
+}
+
+/// <summary>
 /// Builds the libmpv video filter that exposes the NVIDIA RTX Video Super Resolution
 /// processing extension through the Direct3D 11 video processor.
 /// </summary>
@@ -46,6 +67,15 @@ public static class RtxVideoSuperResolutionFilter
 {
     public const string Label = "aimedia-rtx-vsr";
     public const double DefaultScaleFactor = 2.0;
+
+    public static bool ShouldApply(RtxVideoSuperResolutionMode mode, int? dolbyVisionProfile, string? transferFunction)
+    {
+        if (mode == RtxVideoSuperResolutionMode.Off) return false;
+        if (mode == RtxVideoSuperResolutionMode.On) return true;
+        var isHdrTransfer = string.Equals(transferFunction, "pq", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(transferFunction, "hlg", StringComparison.OrdinalIgnoreCase);
+        return dolbyVisionProfile is null && !isHdrTransfer;
+    }
 
     public static string? Build(RtxVideoSuperResolutionMode mode, double scaleFactor = DefaultScaleFactor)
     {

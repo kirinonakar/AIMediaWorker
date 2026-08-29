@@ -88,6 +88,8 @@ The [official mpv installation page](https://mpv.io/installation/) lists maintai
 
 AIMediaWorker requests mpv's `gpu-next` D3D11 renderer and `auto-safe` hardware decoding by default. HDR output defaults to automatic display-aware color-space signaling: on an HDR-enabled Windows display, mpv negotiates HDR metadata and a 10-bit D3D11 swap chain; otherwise it keeps the display-compatible output path. HDR output can also be forced on or disabled in Preferences. D3D11VA, NVDEC, software decode, renderer, language preferences, cache/network timeout, subtitle appearance, playback rate, and seek interval are configurable.
 
+Dolby Vision Profile 4 and Profile 8 compatible-base-layer fallbacks are detected automatically. Because libmpv cannot reconstruct Profile 4's enhancement layer, AIMediaWorker displays its SDR-compatible Rec.709 base layer. Profile 8 bypasses Dolby Vision reshaping while retaining the source's tagged HDR10, HLG, or SDR base-layer colorspace. In Auto mode, RTX Video Super Resolution is skipped for HDR and Dolby Vision sources so the D3D11 video processor cannot discard their 10-bit color metadata.
+
 When RTX Video Super Resolution is set to Auto or On, AIMediaWorker adds mpv's `d3d11vpp` filter with `scaling-mode=nvidia` and a 2x scale request to the D3D11 video path. NVIDIA App/Control Panel must still allow RTX Video enhancement for AIMediaWorker; the driver decides whether each frame is enhanced. Playback falls back to mpv's normal scaler when the filter is disabled or unavailable.
 
 ## FFmpeg setup

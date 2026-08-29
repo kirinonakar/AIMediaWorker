@@ -18,6 +18,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     int? VideoHeight { get; }
     string? LibraryVersion { get; }
     string HdrOutputStatus { get; }
+    string DolbyVisionCompatibilityStatus { get; }
     string RtxVideoSuperResolutionStatus { get; }
 
     event EventHandler? StateChanged;
