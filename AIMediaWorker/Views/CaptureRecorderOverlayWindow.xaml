@@ -61,9 +61,9 @@
                         <Button x:Name="WindowAreaButton" Width="30" Height="30" Padding="0" Click="OnWindowAreaClick">
                             <FontIcon Glyph="&#xE737;" FontSize="14" />
                         </Button>
-                        <ToggleButton x:Name="ScrollCaptureButton" Width="30" Height="30" Padding="0">
+                        <Button x:Name="ScrollCaptureButton" Width="30" Height="30" Padding="0" Click="OnScrollCaptureClick">
                             <TextBlock Text="↕" FontSize="15" FontWeight="SemiBold" />
-                        </ToggleButton>
+                        </Button>
                     </StackPanel>
                     <Button x:Name="RegionButton" Width="30" Height="30" Padding="0" Margin="8,0,0,0" Click="OnRegionClick">
                         <FontIcon Glyph="&#xE7A8;" FontSize="14" />
@@ -73,12 +73,12 @@
                             <FontIcon Glyph="&#xE721;" FontSize="14" />
                         </Button>
                         <StackPanel Orientation="Horizontal" Spacing="3">
-                            <ToggleButton x:Name="TranslateOcrButton" Width="30" Height="30" Padding="0" Click="OnTranslateOcrClick">
+                            <Button x:Name="TranslateOcrButton" Width="30" Height="30" Padding="0" Click="OnTranslateOcrClick">
                                 <FontIcon Glyph="&#xE8C1;" FontSize="14" />
-                            </ToggleButton>
-                            <ToggleButton x:Name="VlmOcrButton" Width="38" Height="30" Padding="0" Click="OnVlmOcrClick">
+                            </Button>
+                            <Button x:Name="VlmOcrButton" Width="38" Height="30" Padding="0" Click="OnVlmOcrClick">
                                 <TextBlock Text="VLM" FontSize="10" FontWeight="SemiBold" />
-                            </ToggleButton>
+                            </Button>
                         </StackPanel>
                     </StackPanel>
                 </StackPanel>

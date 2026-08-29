@@ -29,6 +29,13 @@ internal enum CaptureRecorderMode
     Record
 }
 
+internal enum OcrCaptureAction
+{
+    Recognize,
+    Translate,
+    Vlm
+}
+
 /// <summary>
 /// Always-on-top toolbar shown while the main window is hidden. Offers a capture/record mode
 /// selector plus grouped fullscreen/window/region/OCR actions, and switches to a compact
@@ -347,7 +354,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     {
         _mode = mode;
         OcrButton.IsEnabled = mode == CaptureRecorderMode.Capture;
-        TranslateOcrButton.IsEnabled = mode == CaptureRecorderMode.Capture && VlmOcrButton.IsChecked != true;
+        TranslateOcrButton.IsEnabled = mode == CaptureRecorderMode.Capture;
         VlmOcrButton.IsEnabled = mode == CaptureRecorderMode.Capture;
         ScrollCaptureButton.IsEnabled = mode == CaptureRecorderMode.Capture;
         UpdateModeButtons();
@@ -367,43 +374,45 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
 
     private async void OnWindowAreaClick(object sender, RoutedEventArgs e) => await SelectThenExecuteAsync(CaptureSelectorMode.Window);
 
+    private async void OnScrollCaptureClick(object sender, RoutedEventArgs e)
+        => await SelectThenExecuteAsync(CaptureSelectorMode.Window, scrollingCapture: true);
+
     private async void OnRegionClick(object sender, RoutedEventArgs e) => await SelectThenExecuteAsync(CaptureSelectorMode.Region);
 
-    private async void OnOcrClick(object sender, RoutedEventArgs e) => await SelectAndRecognizeAsync();
+    private async void OnOcrClick(object sender, RoutedEventArgs e)
+        => await SelectAndRecognizeAsync(OcrCaptureAction.Recognize);
 
-    private void OnTranslateOcrClick(object sender, RoutedEventArgs e)
+    private async void OnTranslateOcrClick(object sender, RoutedEventArgs e)
     {
-        if (TranslateOcrButton.IsChecked != true) return;
         try
         {
             _ = GetOcrTranslator();
         }
         catch (Exception exception)
         {
-            TranslateOcrButton.IsChecked = false;
             ShowStatus(exception.Message);
+            return;
         }
+
+        await SelectAndRecognizeAsync(OcrCaptureAction.Translate);
     }
 
-    private void OnVlmOcrClick(object sender, RoutedEventArgs e)
+    private async void OnVlmOcrClick(object sender, RoutedEventArgs e)
     {
-        if (VlmOcrButton.IsChecked == true)
+        try
         {
-            try
-            {
-                _ = GetOcrTranslator();
-            }
-            catch (Exception exception)
-            {
-                VlmOcrButton.IsChecked = false;
-                ShowStatus(exception.Message);
-            }
+            _ = GetOcrTranslator();
+        }
+        catch (Exception exception)
+        {
+            ShowStatus(exception.Message);
+            return;
         }
 
-        TranslateOcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture && VlmOcrButton.IsChecked != true;
+        await SelectAndRecognizeAsync(OcrCaptureAction.Vlm);
     }
 
-    private async Task SelectThenExecuteAsync(CaptureSelectorMode selectorMode)
+    private async Task SelectThenExecuteAsync(CaptureSelectorMode selectorMode, bool scrollingCapture = false)
     {
         var cursor = ScreenCaptureInterop.GetCursorPosition();
         var monitor = ScreenCaptureInterop.GetMonitorBounds(cursor.X, cursor.Y);
@@ -427,9 +436,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             return;
         }
 
-        if (_mode == CaptureRecorderMode.Capture &&
-            selectorMode == CaptureSelectorMode.Window &&
-            ScrollCaptureButton.IsChecked == true)
+        if (scrollingCapture)
         {
             await ExecuteScrollingCaptureAsync(selection.Value);
             return;
@@ -573,7 +580,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         }
     }
 
-    private async Task SelectAndRecognizeAsync()
+    private async Task SelectAndRecognizeAsync(OcrCaptureAction action)
     {
         var cursor = ScreenCaptureInterop.GetCursorPosition();
         var monitor = ScreenCaptureInterop.GetMonitorBounds(cursor.X, cursor.Y);
@@ -597,7 +604,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             var bounds = selection.Value.Bounds;
             var pixels = ScreenCaptureInterop.CaptureRegion(bounds)
                 ?? throw new InvalidOperationException(L("CaptureErrorTitle"));
-            if (VlmOcrButton.IsChecked == true)
+            if (action == OcrCaptureAction.Vlm)
             {
                 OcrButton.IsEnabled = false;
                 TranslateOcrButton.IsEnabled = false;
@@ -627,7 +634,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             }
 
             string? translation = null;
-            if (TranslateOcrButton.IsChecked == true)
+            if (action == OcrCaptureAction.Translate)
             {
                 OcrButton.IsEnabled = false;
                 TranslateOcrButton.IsEnabled = false;
@@ -660,7 +667,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         finally
         {
             OcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture;
-            TranslateOcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture && VlmOcrButton.IsChecked != true;
+            TranslateOcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture;
             VlmOcrButton.IsEnabled = _mode == CaptureRecorderMode.Capture;
             ShowOverlay();
         }
