@@ -7,9 +7,10 @@ using AIMediaWorker.Settings;
 
 namespace AIMediaWorker.Network;
 
-public sealed record WebDavEntry(string Name, Uri Uri, bool IsCollection, long? ContentLength, DateTimeOffset? LastModified, string? ContentType)
+public sealed record WebDavEntry(string Name, Uri Uri, bool IsCollection, long? ContentLength, DateTimeOffset? LastModified, string? ContentType, string? SearchRelativePath = null)
 {
     public string IconGlyph => IsCollection ? "\uE8B7" : "\uE8A5";
+    public string DisplayName => SearchRelativePath ?? Name;
     public string SizeText => IsCollection || ContentLength is null ? string.Empty : FormatBytes(ContentLength.Value);
 
     private static string FormatBytes(long bytes)
@@ -30,6 +31,8 @@ public sealed class WebDavException(string code, string message, HttpStatusCode?
 
 public sealed class WebDavClient : IDisposable
 {
+    public const int MaximumSearchResults = 5000;
+    private const int MaximumSearchEntries = 25000;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsClient;
     private readonly WebDavCredentialStore _credentials;
@@ -57,6 +60,43 @@ public sealed class WebDavClient : IDisposable
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         var document = await XDocument.LoadAsync(stream, LoadOptions.None, cancellationToken).ConfigureAwait(false);
         return ParseMultiStatus(document, directory).Where(entry => !UrisEquivalent(entry.Uri, directory)).OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance).ToArray();
+    }
+
+    public async Task<IReadOnlyList<WebDavEntry>> SearchAsync(
+        WebDavServerSettings server,
+        Uri directory,
+        string query,
+        bool useRegex,
+        CancellationToken cancellationToken = default)
+    {
+        var matcher = SearchPatternMatcher.Create(query, useRegex);
+        var root = WebDavUri.AsDirectory(directory);
+        var pending = new Queue<Uri>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<WebDavEntry>();
+        var scannedEntries = 0;
+        pending.Enqueue(root);
+
+        while (pending.Count > 0 && results.Count < MaximumSearchResults && scannedEntries < MaximumSearchEntries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var current = pending.Dequeue();
+            if (!visited.Add(current.AbsoluteUri)) continue;
+
+            var entries = await ListAsync(server, current, cancellationToken).ConfigureAwait(false);
+            foreach (var entry in entries)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                scannedEntries++;
+                var relativePath = Uri.UnescapeDataString(root.MakeRelativeUri(entry.Uri).OriginalString.TrimEnd('/'));
+                if (matcher.IsMatch(relativePath))
+                    results.Add(entry with { SearchRelativePath = relativePath });
+                if (entry.IsCollection) pending.Enqueue(WebDavUri.AsDirectory(entry.Uri));
+                if (results.Count >= MaximumSearchResults || scannedEntries >= MaximumSearchEntries) break;
+            }
+        }
+
+        return results;
     }
 
     public HttpRequestMessage CreateMediaRequest(WebDavServerSettings server, Uri mediaUri, HttpMethod? method = null)

@@ -40,6 +40,7 @@ public sealed class ServicesTests : IDisposable
         settings.General.UiFontFamily = "Arial";
         settings.Asr.Language = "ko";
         settings.Playback.DefaultVolume = 77;
+        settings.Playback.UseLargeToolbarIcons = true;
         settings.Playback.ShowSubtitles = false;
         settings.Window.HasPlacement = true;
         settings.Window.X = 120;
@@ -57,6 +58,7 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal("Arial", loaded.General.UiFontFamily);
         Assert.Equal("ko", loaded.Asr.Language);
         Assert.Equal(77, loaded.Playback.DefaultVolume);
+        Assert.True(loaded.Playback.UseLargeToolbarIcons);
         Assert.False(loaded.Playback.ShowSubtitles);
         Assert.True(loaded.Window.HasPlacement);
         Assert.Equal((120, 80, 1440, 900, true), (loaded.Window.X, loaded.Window.Y, loaded.Window.Width, loaded.Window.Height, loaded.Window.IsMaximized));
@@ -416,6 +418,22 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("user:password")), handler.Authorization?.Parameter);
     }
 
+    [Fact]
+    public async Task WebDavSearchRecursesAndSupportsRegularExpressions()
+    {
+        using var http = new HttpClient(new WebDavTreeHandler());
+        var credentials = new MemoryCredentials();
+        var server = new WebDavServerSettings();
+        new WebDavCredentialStore(credentials).Save(server.Id, new WebDavConnectionCredential("https://dav.example/root/", 443, "user", "password"));
+        using var client = new WebDavClient(credentials, http);
+
+        var results = await client.SearchAsync(server, new Uri("https://dav.example/root/"), @"Episode\s+\d+\.mkv$", useRegex: true);
+
+        var result = Assert.Single(results);
+        Assert.Equal("folder/Episode 02.mkv", result.SearchRelativePath);
+        Assert.Equal("https://dav.example/root/folder/Episode%2002.mkv", result.Uri.AbsoluteUri);
+    }
+
     private sealed class MemoryCredentials : ICredentialService
     {
         private readonly Dictionary<string, (string Username, string Secret)> _values = [];
@@ -438,6 +456,32 @@ public sealed class ServicesTests : IDisposable
             Authorization = request.Headers.Authorization;
             return Task.FromResult(response);
         }
+    }
+
+    private sealed class WebDavTreeHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath;
+            var xml = path == "/root/folder/"
+                ? MultiStatus(
+                    Response("/root/folder/", "folder", collection: true),
+                    Response("/root/folder/Episode%2002.mkv", "Episode 02.mkv", collection: false))
+                : MultiStatus(
+                    Response("/root/", "root", collection: true),
+                    Response("/root/folder/", "folder", collection: true),
+                    Response("/root/other.mp4", "other.mp4", collection: false));
+            return Task.FromResult(new HttpResponseMessage((HttpStatusCode)207)
+            {
+                Content = new StringContent(xml, Encoding.UTF8, "application/xml")
+            });
+        }
+
+        private static string MultiStatus(params string[] responses) =>
+            $"<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\">{string.Concat(responses)}</d:multistatus>";
+
+        private static string Response(string href, string name, bool collection) =>
+            $"<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:displayname>{name}</d:displayname><d:resourcetype>{(collection ? "<d:collection/>" : string.Empty)}</d:resourcetype></d:prop></d:propstat></d:response>";
     }
 
     public void Dispose()

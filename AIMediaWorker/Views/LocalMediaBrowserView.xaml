@@ -8,6 +8,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
         <CommandBar DefaultLabelPosition="Collapsed">
@@ -24,19 +25,29 @@
                 <DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
             </BreadcrumbBar.ItemTemplate>
         </BreadcrumbBar>
-        <Grid Grid.Row="2" ColumnSpacing="8" Margin="4,0">
+        <Grid Grid.Row="2" ColumnSpacing="8" RowSpacing="2" Margin="4,0">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <SymbolIcon Symbol="Find" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
+            <TextBox x:Uid="BrowserSearch" x:Name="SearchBox" Grid.Column="1" PlaceholderText="Search subfolders" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" />
+            <ToggleButton x:Uid="BrowserRegexSearch" x:Name="RegexSearchToggle" Grid.Column="2" Content=".*" Click="OnRegexSearchClick" />
+            <Button x:Uid="BrowserSearchButton" x:Name="SearchButton" Grid.Column="3" Content="Search" Click="OnSearchClick" />
+            <ProgressRing x:Name="SearchProgressRing" Grid.Row="1" Width="16" Height="16" IsActive="False" />
+            <TextBlock x:Name="SearchStatusText" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" TextTrimming="CharacterEllipsis" Opacity="0.65" FontSize="11" />
+        </Grid>
+        <Grid Grid.Row="3" ColumnSpacing="8" Margin="4,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
             <SymbolIcon Symbol="Filter" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
             <TextBox x:Uid="BrowserFilter" x:Name="FilterBox" Grid.Column="1" PlaceholderText="Filter by name" TextChanged="OnFilterTextChanged" />
         </Grid>
-        <ListView x:Name="EntryList" Grid.Row="3" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnEntryClick">
+        <ListView x:Name="EntryList" Grid.Row="4" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnEntryClick">
             <ListView.ItemTemplate>
                 <DataTemplate>
                     <Grid Padding="5" ColumnSpacing="8" RightTapped="OnEntryRightTapped">
                         <Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddBrowserFavorite" Text="Add to favorites" Click="OnAddFavoriteClick" /></MenuFlyout></Grid.ContextFlyout>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <FontIcon Glyph="{Binding IconGlyph}" />
-                        <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Name}" />
+                        <TextBlock Grid.Column="1" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding DisplayName}" />
                         <TextBlock Grid.Column="2" Text="{Binding Details}" Opacity="0.6" />
                     </Grid>
                 </DataTemplate>

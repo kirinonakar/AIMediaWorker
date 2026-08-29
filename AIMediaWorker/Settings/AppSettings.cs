@@ -32,6 +32,7 @@ public sealed class PlaybackSettings
     public double DefaultVolume { get; set; } = 100;
     public double PlaybackRate { get; set; } = 1;
     public double SeekIntervalSeconds { get; set; } = 5;
+    public bool UseLargeToolbarIcons { get; set; }
     public string? DefaultAudioLanguage { get; set; }
     public string? DefaultSubtitleLanguage { get; set; }
     public bool ShowSubtitles { get; set; } = true;

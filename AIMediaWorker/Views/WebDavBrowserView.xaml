@@ -10,6 +10,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
         <TextBlock x:Uid="WebDavServersPanelLabel" Text="Servers" FontWeight="SemiBold" Margin="4,4,4,0" />
@@ -46,18 +47,25 @@
             <TextBlock x:Name="ConnectionStatusText" Text="" TextTrimming="CharacterEllipsis" Opacity="0.7" FontSize="11" />
         </StackPanel>
         <Grid Grid.Row="4" ColumnSpacing="8" Margin="4,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <SymbolIcon Symbol="Find" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
+            <TextBox x:Uid="WebDavSearch" x:Name="SearchBox" Grid.Column="1" PlaceholderText="Search subfolders" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" IsEnabled="False" />
+            <ToggleButton x:Uid="WebDavRegexSearch" x:Name="RegexSearchToggle" Grid.Column="2" Content=".*" Click="OnRegexSearchClick" IsEnabled="False" />
+            <Button x:Uid="WebDavSearchButton" x:Name="SearchButton" Grid.Column="3" Content="Search" Click="OnSearchClick" IsEnabled="False" />
+        </Grid>
+        <Grid Grid.Row="5" ColumnSpacing="8" Margin="4,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
             <SymbolIcon Symbol="Filter" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
             <TextBox x:Uid="WebDavFilter" x:Name="FilterBox" Grid.Column="1" PlaceholderText="Filter by name" TextChanged="OnFilterTextChanged" />
         </Grid>
-        <ListView x:Name="EntryList" Grid.Row="5" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnEntryClick">
+        <ListView x:Name="EntryList" Grid.Row="6" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnEntryClick">
             <ListView.ItemTemplate>
                 <DataTemplate>
                     <Grid Padding="5" ColumnSpacing="8" RightTapped="OnEntryRightTapped">
                         <Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddWebDavFavorite" Text="Add to favorites" Click="OnAddFavoriteClick" /></MenuFlyout></Grid.ContextFlyout>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <FontIcon Glyph="{Binding IconGlyph}" />
-                        <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Name}" />
+                        <TextBlock Grid.Column="1" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding DisplayName}" />
                         <TextBlock Grid.Column="2" Text="{Binding SizeText}" Opacity="0.6" />
                     </Grid>
                 </DataTemplate>

@@ -149,6 +149,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         // The custom title bar is part of this visual tree and must follow the setting
         // on the first launch, not only after the Preferences window is saved.
         UiFontService.Apply(_settings.General.UiFontFamily, RootGrid);
+        ApplyPlaybackToolbarIconSize();
         PositionSlider.ThumbToolTipValueConverter = new PositionSliderThumbToolTipValueConverter();
         _playback.StateChanged += OnPlaybackStateChanged;
         _playback.FirstFrameReady += OnFirstFrameReady;
@@ -1459,6 +1460,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _mediaNavigation.ApplySettings();
         LocalizationService.Apply(settings.General.Language);
         UiFontService.Apply(settings.General.UiFontFamily, RootGrid);
+        ApplyPlaybackToolbarIconSize();
         _chrome.ApplyTheme(settings.General.Theme);
         _rightPanel.RefreshLabels();
         UpdateShortcutHints();
@@ -1479,6 +1481,60 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             _playback.ConfigureRtxVideoSuperResolution(settings.Playback.RtxVideoSuperResolution);
         });
         ScheduleSubtitleOverlaySync();
+    }
+
+    private void ApplyPlaybackToolbarIconSize()
+    {
+        const double defaultButtonWidth = 44;
+        const double defaultButtonHeight = 38;
+        const double defaultVerticalPadding = 4;
+        var scale = _settings.Playback.UseLargeToolbarIcons ? 1.35 : 1.0;
+
+        foreach (var button in GetPlaybackToolbarButtons())
+        {
+            button.Width = defaultButtonWidth * scale;
+            button.MinWidth = defaultButtonWidth * scale;
+            button.Height = defaultButtonHeight * scale;
+        }
+
+        var verticalPadding = _settings.Playback.UseLargeToolbarIcons ? 6 : defaultVerticalPadding;
+        PlaybackControls.Padding = new Thickness(8, verticalPadding, 8, verticalPadding);
+        PlaybackControls.MinHeight = (defaultButtonHeight * scale) + (verticalPadding * 2);
+
+        SetPlaybackImageSize(BeginningIcon, 19 * scale);
+        SetPlaybackImageSize(PreviousIcon, 19 * scale);
+        SetPlaybackImageSize(SeekBackIcon, 20 * scale);
+        SetPlaybackImageSize(PlayPauseIcon, 21 * scale);
+        SetPlaybackImageSize(StopIcon, 18 * scale);
+        SetPlaybackImageSize(SeekForwardIcon, 20 * scale);
+        SetPlaybackImageSize(NextIcon, 19 * scale);
+        SetPlaybackImageSize(MuteIcon, 20 * scale);
+        SetPlaybackImageSize(RepeatIcon, 20 * scale);
+        ScreenshotButtonIcon.FontSize = 19 * scale;
+        FullscreenButtonIcon.FontSize = 19 * scale;
+        CloseButtonIcon.FontSize = 19 * scale;
+    }
+
+    private ButtonBase[] GetPlaybackToolbarButtons() =>
+    [
+        BeginningButton,
+        PreviousButton,
+        SeekBackButton,
+        PlayPauseButton,
+        StopButton,
+        SeekForwardButton,
+        NextButton,
+        ScreenshotButton,
+        MuteButton,
+        RepeatButton,
+        FullscreenButton,
+        CloseButton
+    ];
+
+    private static void SetPlaybackImageSize(Image icon, double size)
+    {
+        icon.Width = size;
+        icon.Height = size;
     }
 
     private async void OnAboutClick(object sender, RoutedEventArgs e) =>

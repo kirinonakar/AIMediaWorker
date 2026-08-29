@@ -1,20 +1,28 @@
 using AIMediaWorker.Localization;
 using AIMediaWorker.Media;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using System.Text.RegularExpressions;
+using Windows.System;
 
 namespace AIMediaWorker.Views;
 
 public sealed partial class LocalMediaBrowserView : UserControl
 {
     private BrowserEntry[] _entries = [];
+    private BrowserEntry[]? _searchEntries;
+    private CancellationTokenSource? _searchCancellation;
     private EntrySortMode _sortMode;
     private int _navigationVersion;
 
     public LocalMediaBrowserView()
     {
         InitializeComponent();
+        var regexSearchTooltip = LocalizationService.Get("RegexSearchTooltip");
+        ToolTipService.SetToolTip(RegexSearchToggle, regexSearchTooltip);
+        AutomationProperties.SetName(RegexSearchToggle, regexSearchTooltip);
         CurrentDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
     }
 
@@ -31,6 +39,7 @@ public sealed partial class LocalMediaBrowserView : UserControl
 
     public async Task NavigateAsync(string directory, string? selectedPath = null)
     {
+        ClearSearch();
         var navigationVersion = Interlocked.Increment(ref _navigationVersion);
         try
         {
@@ -68,6 +77,7 @@ public sealed partial class LocalMediaBrowserView : UserControl
 
         CurrentDirectory = Path.GetFullPath(directory);
         LoadedDirectory = null;
+        ClearSearch();
         FilterBox.Text = string.Empty;
         _entries = [];
         UpdateBreadcrumbs();
@@ -186,6 +196,90 @@ public sealed partial class LocalMediaBrowserView : UserControl
 
     private void OnFilterTextChanged(object sender, TextChangedEventArgs e) => ApplyEntryView();
 
+    private async void OnSearchClick(object sender, RoutedEventArgs e) => await SearchAsync();
+
+    private async void OnSearchKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Enter) return;
+        e.Handled = true;
+        await SearchAsync();
+    }
+
+    private async void OnRegexSearchClick(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(SearchBox.Text)) await SearchAsync();
+    }
+
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(SearchBox.Text)) ClearSearch(clearQuery: false);
+    }
+
+    private async Task SearchAsync()
+    {
+        var query = SearchBox.Text.Trim();
+        if (query.Length == 0)
+        {
+            ClearSearch();
+            return;
+        }
+
+        var previous = _searchCancellation;
+        _searchCancellation = new CancellationTokenSource();
+        previous?.Cancel();
+        previous?.Dispose();
+        var operation = _searchCancellation;
+        SearchButton.IsEnabled = false;
+        SearchProgressRing.IsActive = true;
+        SearchStatusText.Text = LocalizationService.Get("SearchInProgress");
+        try
+        {
+            var results = await LocalMediaSearchService.SearchAsync(CurrentDirectory, query, RegexSearchToggle.IsChecked == true, operation.Token);
+            if (operation.IsCancellationRequested) return;
+            _searchEntries = results.Select(result => result.IsDirectory
+                ? BrowserEntry.FromDirectory(result.Path, result.RelativePath)
+                : BrowserEntry.FromFile(result.Path, result.RelativePath)).ToArray();
+            ApplyEntryView();
+            SearchStatusText.Text = Format("SearchResultsFormat", _searchEntries.Length);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) when (exception is ArgumentException or RegexMatchTimeoutException)
+        {
+            _searchEntries = [];
+            ApplyEntryView();
+            SearchStatusText.Text = Format("SearchInvalidPatternFormat", exception.Message);
+        }
+        catch (Exception exception)
+        {
+            _searchEntries = [];
+            ApplyEntryView();
+            ErrorOccurred?.Invoke(this, new LocalMediaBrowserErrorEventArgs(exception));
+            SearchStatusText.Text = exception.Message;
+        }
+        finally
+        {
+            if (ReferenceEquals(_searchCancellation, operation))
+            {
+                SearchButton.IsEnabled = true;
+                SearchProgressRing.IsActive = false;
+            }
+        }
+    }
+
+    private void ClearSearch(bool clearQuery = true)
+    {
+        var operation = _searchCancellation;
+        _searchCancellation = null;
+        operation?.Cancel();
+        operation?.Dispose();
+        _searchEntries = null;
+        if (clearQuery && SearchBox.Text.Length > 0) SearchBox.Text = string.Empty;
+        SearchStatusText.Text = string.Empty;
+        SearchButton.IsEnabled = true;
+        SearchProgressRing.IsActive = false;
+        ApplyEntryView();
+    }
+
     private void OnSortClick(object sender, RoutedEventArgs e)
     {
         _sortMode = _sortMode switch
@@ -201,9 +295,10 @@ public sealed partial class LocalMediaBrowserView : UserControl
     {
         var selectedPath = (EntryList.SelectedItem as BrowserEntry)?.Path;
         var filter = FilterBox.Text.Trim();
+        var source = _searchEntries ?? _entries;
         IEnumerable<BrowserEntry> filtered = string.IsNullOrEmpty(filter)
-            ? _entries
-            : _entries.Where(entry => entry.Name.Contains(filter, StringComparison.CurrentCultureIgnoreCase));
+            ? source
+            : source.Where(entry => entry.Name.Contains(filter, StringComparison.CurrentCultureIgnoreCase));
         filtered = _sortMode switch
         {
             EntrySortMode.Newest => filtered.OrderByDescending(entry => entry.IsDirectory).ThenByDescending(entry => entry.LastModified).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance),
@@ -246,22 +341,26 @@ public sealed partial class LocalMediaBrowserView : UserControl
     private sealed record BrowserBreadcrumbEntry(string Label, string Path);
     private enum EntrySortMode { Name, Newest, Oldest }
 
-    private sealed record BrowserEntry(string Path, bool IsDirectory, long? Length, DateTime LastModified)
+    private static string Format(string key, params object[] arguments) =>
+        string.Format(System.Globalization.CultureInfo.CurrentCulture, LocalizationService.Get(key), arguments);
+
+    private sealed record BrowserEntry(string Path, bool IsDirectory, long? Length, DateTime LastModified, string? SearchRelativePath = null)
     {
         public string Name => System.IO.Path.GetFileName(Path.TrimEnd(System.IO.Path.DirectorySeparatorChar));
+        public string DisplayName => SearchRelativePath ?? Name;
         public string IconGlyph => IsDirectory ? "\uE8B7" : "\uE8A5";
         public string Details => IsDirectory || Length is null ? string.Empty : FormatBytes(Length.Value);
 
-        public static BrowserEntry FromDirectory(string path)
+        public static BrowserEntry FromDirectory(string path, string? searchRelativePath = null)
         {
             var info = new DirectoryInfo(path);
-            return new BrowserEntry(path, true, null, info.LastWriteTimeUtc);
+            return new BrowserEntry(path, true, null, info.LastWriteTimeUtc, searchRelativePath);
         }
 
-        public static BrowserEntry FromFile(string path)
+        public static BrowserEntry FromFile(string path, string? searchRelativePath = null)
         {
             var info = new FileInfo(path);
-            return new BrowserEntry(path, false, info.Length, info.LastWriteTimeUtc);
+            return new BrowserEntry(path, false, info.Length, info.LastWriteTimeUtc, searchRelativePath);
         }
 
         private static string FormatBytes(long bytes)
