@@ -33,6 +33,7 @@ public sealed class WebDavClient : IDisposable
 {
     public const int MaximumSearchResults = 5000;
     private const int MaximumSearchEntries = 25000;
+    private const int MaximumConcurrentSearchRequests = 4;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsClient;
     private readonly WebDavCredentialStore _credentials;
@@ -80,18 +81,29 @@ public sealed class WebDavClient : IDisposable
         while (pending.Count > 0 && results.Count < MaximumSearchResults && scannedEntries < MaximumSearchEntries)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var current = pending.Dequeue();
-            if (!visited.Add(current.AbsoluteUri)) continue;
-
-            var entries = await ListAsync(server, current, cancellationToken).ConfigureAwait(false);
-            foreach (var entry in entries)
+            var directories = new List<Uri>(MaximumConcurrentSearchRequests);
+            while (pending.Count > 0 && directories.Count < MaximumConcurrentSearchRequests)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                scannedEntries++;
-                var relativePath = Uri.UnescapeDataString(root.MakeRelativeUri(entry.Uri).OriginalString.TrimEnd('/'));
-                if (matcher.IsMatch(relativePath))
-                    results.Add(entry with { SearchRelativePath = relativePath });
-                if (entry.IsCollection) pending.Enqueue(WebDavUri.AsDirectory(entry.Uri));
+                var current = pending.Dequeue();
+                if (visited.Add(current.AbsoluteUri)) directories.Add(current);
+            }
+            if (directories.Count == 0) continue;
+
+            var listings = await Task.WhenAll(directories.Select(current =>
+                ListAsync(server, current, cancellationToken))).ConfigureAwait(false);
+
+            foreach (var entries in listings)
+            {
+                foreach (var entry in entries)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    scannedEntries++;
+                    var relativePath = Uri.UnescapeDataString(root.MakeRelativeUri(entry.Uri).OriginalString.TrimEnd('/'));
+                    if (matcher.IsMatch(relativePath))
+                        results.Add(entry with { SearchRelativePath = relativePath });
+                    if (entry.IsCollection) pending.Enqueue(WebDavUri.AsDirectory(entry.Uri));
+                    if (results.Count >= MaximumSearchResults || scannedEntries >= MaximumSearchEntries) break;
+                }
                 if (results.Count >= MaximumSearchResults || scannedEntries >= MaximumSearchEntries) break;
             }
         }

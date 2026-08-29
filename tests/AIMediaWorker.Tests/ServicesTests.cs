@@ -434,6 +434,22 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal("https://dav.example/root/folder/Episode%2002.mkv", result.Uri.AbsoluteUri);
     }
 
+    [Fact]
+    public async Task WebDavSearchListsSiblingFoldersConcurrently()
+    {
+        var handler = new ConcurrentWebDavTreeHandler();
+        using var http = new HttpClient(handler);
+        var credentials = new MemoryCredentials();
+        var server = new WebDavServerSettings();
+        new WebDavCredentialStore(credentials).Save(server.Id, new WebDavConnectionCredential("https://dav.example/root/", 443, "user", "password"));
+        using var client = new WebDavClient(credentials, http);
+
+        var results = await client.SearchAsync(server, new Uri("https://dav.example/root/"), "missing", useRegex: false);
+
+        Assert.Empty(results);
+        Assert.InRange(handler.MaximumConcurrentRequests, 2, 4);
+    }
+
     private sealed class MemoryCredentials : ICredentialService
     {
         private readonly Dictionary<string, (string Username, string Secret)> _values = [];
@@ -475,6 +491,56 @@ public sealed class ServicesTests : IDisposable
             {
                 Content = new StringContent(xml, Encoding.UTF8, "application/xml")
             });
+        }
+
+        private static string MultiStatus(params string[] responses) =>
+            $"<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\">{string.Concat(responses)}</d:multistatus>";
+
+        private static string Response(string href, string name, bool collection) =>
+            $"<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:displayname>{name}</d:displayname><d:resourcetype>{(collection ? "<d:collection/>" : string.Empty)}</d:resourcetype></d:prop></d:propstat></d:response>";
+    }
+
+    private sealed class ConcurrentWebDavTreeHandler : HttpMessageHandler
+    {
+        private int _activeRequests;
+        private int _maximumConcurrentRequests;
+
+        public int MaximumConcurrentRequests => _maximumConcurrentRequests;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var activeRequests = Interlocked.Increment(ref _activeRequests);
+            UpdateMaximum(activeRequests);
+            try
+            {
+                var path = request.RequestUri?.AbsolutePath;
+                if (path != "/root/") await Task.Delay(50, cancellationToken);
+                var responses = path == "/root/"
+                    ? new[]
+                    {
+                        Response("/root/", "root", collection: true),
+                        Response("/root/a/", "a", collection: true),
+                        Response("/root/b/", "b", collection: true),
+                        Response("/root/c/", "c", collection: true),
+                        Response("/root/d/", "d", collection: true)
+                    }
+                    : new[] { Response(path!, path!.Trim('/'), collection: true) };
+                return new HttpResponseMessage((HttpStatusCode)207)
+                {
+                    Content = new StringContent(MultiStatus(responses), Encoding.UTF8, "application/xml")
+                };
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeRequests);
+            }
+        }
+
+        private void UpdateMaximum(int value)
+        {
+            int current;
+            while (value > (current = _maximumConcurrentRequests) &&
+                   Interlocked.CompareExchange(ref _maximumConcurrentRequests, value, current) != current) { }
         }
 
         private static string MultiStatus(params string[] responses) =>

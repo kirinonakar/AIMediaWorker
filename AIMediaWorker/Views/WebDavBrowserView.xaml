@@ -38,7 +38,16 @@
             <AppBarButton x:Uid="WebDavSort" x:Name="SortButton" Label="Sort by name" Click="OnSortClick">
                 <AppBarButton.Icon><FontIcon x:Name="SortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon>
             </AppBarButton>
-            <AppBarElementContainer><ProgressRing x:Name="ProgressRing" Width="20" Height="20" Margin="8,0" IsActive="False" /></AppBarElementContainer>
+            <AppBarElementContainer VerticalContentAlignment="Center">
+                <ProgressRing
+                    x:Name="ProgressRing"
+                    Width="20"
+                    Height="20"
+                    Margin="8,0"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    IsActive="False" />
+            </AppBarElementContainer>
         </CommandBar>
         <StackPanel Grid.Row="3" Margin="4,0" Spacing="2">
             <BreadcrumbBar x:Name="BreadcrumbBar" ItemClicked="OnBreadcrumbItemClick">
