@@ -72,8 +72,8 @@ public sealed partial class SettingsWindow : Window
         if (_appWindow?.Presenter is OverlappedPresenter presenter)
         {
             presenter.SetBorderAndTitleBar(true, false);
-            presenter.IsResizable = false;
-            presenter.IsMaximizable = false;
+            presenter.IsResizable = true;
+            presenter.IsMaximizable = true;
         }
         SettingsSectionList.SelectionChanged += OnSettingsSectionChanged;
         SettingsSectionList.SelectedIndex = 0;
@@ -117,6 +117,39 @@ public sealed partial class SettingsWindow : Window
         var y = workArea.Y + (workArea.Height - height) / 2;
 
         _appWindow.MoveAndResize(new RectInt32(x, y, width, height));
+    }
+
+    private void OnSettingsLayoutSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = e.NewSize.Width;
+        var narrow = width < 760;
+        var compact = width < 1100;
+
+        Root.Padding = narrow ? new Thickness(8) : compact ? new Thickness(16) : new Thickness(24);
+        SettingsBodyGrid.ColumnSpacing = narrow ? 8 : compact ? 12 : 16;
+        SettingsNavigationColumn.Width = new GridLength(narrow ? 128 : compact ? 160 : 210);
+
+        var labelWidth = narrow ? 120 : compact ? 160 : 220;
+        var columnSpacing = narrow ? 12 : compact ? 16 : 20;
+        UpdateSettingsGridWidths(Root, labelWidth, columnSpacing);
+    }
+
+    private void UpdateSettingsGridWidths(DependencyObject element, double labelWidth, double columnSpacing)
+    {
+        if (element is Grid grid &&
+            !ReferenceEquals(grid, SettingsBodyGrid) &&
+            grid.ColumnDefinitions.Count == 2 &&
+            grid.ColumnDefinitions[0].Width.IsAbsolute &&
+            grid.ColumnDefinitions[1].Width.IsStar &&
+            grid.ColumnDefinitions[0].Width.Value is 120 or 160 or 220)
+        {
+            grid.ColumnDefinitions[0].Width = new GridLength(labelWidth);
+            grid.ColumnSpacing = columnSpacing;
+        }
+
+        var childCount = VisualTreeHelper.GetChildrenCount(element);
+        for (var index = 0; index < childCount; index++)
+            UpdateSettingsGridWidths(VisualTreeHelper.GetChild(element, index), labelWidth, columnSpacing);
     }
 
     private void OnSettingsSectionChanged(object sender, SelectionChangedEventArgs e)
