@@ -12,6 +12,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using Windows.ApplicationModel;
@@ -23,6 +24,7 @@ using AIMediaWorker.Settings;
 using AIMediaWorker.Asr;
 using AIMediaWorker.Localization;
 using AIMediaWorker.Diagnostics;
+using AIMediaWorker.Media;
 using AIMediaWorker.Network;
 using AIMediaWorker.Playback;
 using AIMediaWorker.Views;
@@ -40,6 +42,8 @@ namespace AIMediaWorker
         private Window? _window;
         private readonly Task<AppSettings> _settingsLoadTask;
         private readonly bool _captureOnly;
+        private readonly object _activationGate = new();
+        private readonly Queue<string[]> _pendingExternalActivations = new();
 
         /// <summary>
         /// Initializes the singleton application object.  This is the first line of authored code
@@ -68,6 +72,8 @@ namespace AIMediaWorker
             ApplyStartupTheme(startupTheme);
             StartupProfiler.Mark("app-xaml-end");
             UnhandledException += (_, eventArgs) => _ = AppLog.WriteAsync("critical", "application", "UNHANDLED_EXCEPTION", eventArgs.Message, eventArgs.Exception);
+            if (!_captureOnly)
+                Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += OnAppInstanceActivated;
         }
 
         private void ApplyStartupTheme(AppTheme theme)
@@ -168,17 +174,17 @@ namespace AIMediaWorker
 
                 var mainWindow = new MainWindow(launchSource, settings);
                 mainWindow.ApplySavedWindowPlacement(settings.Window);
-                _window = mainWindow;
+                string[][] pendingActivations;
+                lock (_activationGate)
+                {
+                    _window = mainWindow;
+                    pendingActivations = _pendingExternalActivations.ToArray();
+                    _pendingExternalActivations.Clear();
+                }
                 _window.Activate();
                 StartupProfiler.Mark("window-activated");
-                Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += (_, args) =>
-                {
-                    if (_window is not MainWindow window) return;
-                    var filePaths = args.Kind == ExtendedActivationKind.File && args.Data is IFileActivatedEventArgs fileActivation
-                        ? fileActivation.Files.OfType<StorageFile>().Select(file => file.Path).ToArray()
-                        : Array.Empty<string>();
-                    window.DispatcherQueue.TryEnqueue(() => window.ActivateFromExternalLaunch(filePaths));
-                };
+                foreach (var filePaths in pendingActivations)
+                    mainWindow.ActivateFromExternalLaunch(filePaths);
                 _ = MigrateWebDavCredentialsAsync(settings);
             }
             catch (Exception exception)
@@ -194,6 +200,63 @@ namespace AIMediaWorker
                 captureWindow.Closed -= OnCaptureOnlyWindowClosed;
             _window = null;
             Exit();
+        }
+
+        private void OnAppInstanceActivated(object? sender, AppActivationArguments args)
+        {
+            var filePaths = GetActivatedFilePaths(args);
+            MainWindow? window;
+            lock (_activationGate)
+            {
+                window = _window as MainWindow;
+                if (window is null)
+                {
+                    _pendingExternalActivations.Enqueue(filePaths);
+                    return;
+                }
+            }
+
+            window.DispatcherQueue.TryEnqueue(() => window.ActivateFromExternalLaunch(filePaths));
+        }
+
+        private static string[] GetActivatedFilePaths(AppActivationArguments activation)
+        {
+            try
+            {
+                if (activation.Kind == ExtendedActivationKind.File && activation.Data is IFileActivatedEventArgs fileActivation)
+                    return fileActivation.Files.OfType<StorageFile>().Select(file => file.Path).ToArray();
+
+                // Unpackaged file associations invoke `AIMediaWorker.exe "%1"`. Windows App SDK
+                // reports that redirection as a Launch activation, not a File activation.
+                if (activation.Kind == ExtendedActivationKind.Launch && activation.Data is ILaunchActivatedEventArgs launchActivation)
+                    return ParseLaunchFilePaths(launchActivation.Arguments);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or COMException)
+            {
+            }
+
+            return [];
+        }
+
+        private static string[] ParseLaunchFilePaths(string arguments)
+        {
+            if (string.IsNullOrWhiteSpace(arguments)) return [];
+
+            // Prefix a synthetic argv[0] because CommandLineToArgvW applies special parsing
+            // rules to the first token. The remaining tokens are the forwarded shell arguments.
+            var argv = CommandLineToArgvW($"AIMediaWorker.exe {arguments}", out var argumentCount);
+            if (argv == IntPtr.Zero) return [];
+            try
+            {
+                return Enumerable.Range(1, Math.Max(0, argumentCount - 1))
+                    .Select(index => Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv, index * IntPtr.Size)))
+                    .Where(value => !string.IsNullOrWhiteSpace(value) && File.Exists(value))
+                    .Select(value => System.IO.Path.GetFullPath(value!))
+                    .Where(path => MediaFileClassifier.IsPlayable(path) || MediaFileClassifier.IsSubtitle(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+            finally { LocalFree(argv); }
         }
 
         private static async Task MigrateWebDavCredentialsAsync(AppSettings settings)
@@ -225,6 +288,12 @@ namespace AIMediaWorker
                 File.Exists(value) ||
                 Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https");
         }
+
+        [DllImport("shell32.dll", SetLastError = true)]
+        private static extern IntPtr CommandLineToArgvW([MarshalAs(UnmanagedType.LPWStr)] string commandLine, out int argumentCount);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr memory);
 
     }
 }
