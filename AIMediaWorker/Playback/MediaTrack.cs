@@ -19,7 +19,24 @@ public sealed record MediaTrack(
 
 public enum PlaybackState { Uninitialized, Idle, Loading, Playing, Paused, Ended, Failed, Disposed }
 public enum HardwareDecoder { Auto, D3D11VA, Nvdec, Off }
+public enum HdrOutputMode { Off, Auto, On }
 public enum RtxVideoSuperResolutionMode { Off, Auto, On }
+
+/// <summary>
+/// Maps the app's HDR output preference to mpv's swap-chain color-space hint.
+/// Auto only signals HDR when Windows and the active display expose their color
+/// capabilities; On always asks the D3D11 swap chain to carry color metadata.
+/// </summary>
+public static class HdrOutputOptions
+{
+    public static string GetColorspaceHint(HdrOutputMode mode) => mode switch
+    {
+        HdrOutputMode.Off => "no",
+        HdrOutputMode.Auto => "auto",
+        HdrOutputMode.On => "yes",
+        _ => throw new ArgumentOutOfRangeException(nameof(mode))
+    };
+}
 
 /// <summary>
 /// Builds the libmpv video filter that exposes the NVIDIA RTX Video Super Resolution

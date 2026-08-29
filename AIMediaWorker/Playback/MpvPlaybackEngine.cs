@@ -52,6 +52,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public int? VideoWidth { get; private set; }
     public int? VideoHeight { get; private set; }
     public string? LibraryVersion { get; private set; }
+    public string HdrOutputStatus { get; private set; } = "Automatic HDR output is pending initialization.";
     public string RtxVideoSuperResolutionStatus { get; private set; } = "Disabled";
 
     public event EventHandler? StateChanged;
@@ -83,30 +84,30 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     /// Creates the libmpv context and applies pre-initialization options. It deliberately
     /// does not need an HWND, so callers can overlap this work with XAML construction.
     /// </summary>
-    public Task PrepareAsync(HardwareDecoder hardwareDecoder, string renderer = "gpu-next", RtxVideoSuperResolutionMode rtxVideoSuperResolution = RtxVideoSuperResolutionMode.Auto, CancellationToken cancellationToken = default)
+    public Task PrepareAsync(HardwareDecoder hardwareDecoder, string renderer = "gpu-next", RtxVideoSuperResolutionMode rtxVideoSuperResolution = RtxVideoSuperResolutionMode.Auto, HdrOutputMode hdrOutput = HdrOutputMode.Auto, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         lock (_sync)
         {
-            _preparationTask ??= PrepareCoreAsync(hardwareDecoder, renderer, rtxVideoSuperResolution);
+            _preparationTask ??= PrepareCoreAsync(hardwareDecoder, renderer, rtxVideoSuperResolution, hdrOutput);
             return _preparationTask.WaitAsync(cancellationToken);
         }
     }
 
-    private async Task PrepareCoreAsync(HardwareDecoder hardwareDecoder, string renderer, RtxVideoSuperResolutionMode rtxVideoSuperResolution)
+    private async Task PrepareCoreAsync(HardwareDecoder hardwareDecoder, string renderer, RtxVideoSuperResolutionMode rtxVideoSuperResolution, HdrOutputMode hdrOutput)
     {
         await PreloadAsync().ConfigureAwait(false);
-        await Task.Run(() => CreateAndConfigureCore(hardwareDecoder, renderer, rtxVideoSuperResolution), CancellationToken.None).ConfigureAwait(false);
+        await Task.Run(() => CreateAndConfigureCore(hardwareDecoder, renderer, rtxVideoSuperResolution, hdrOutput), CancellationToken.None).ConfigureAwait(false);
     }
 
-    public async Task InitializeAsync(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer = "gpu-next", RtxVideoSuperResolutionMode rtxVideoSuperResolution = RtxVideoSuperResolutionMode.Auto, CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer = "gpu-next", RtxVideoSuperResolutionMode rtxVideoSuperResolution = RtxVideoSuperResolutionMode.Auto, HdrOutputMode hdrOutput = HdrOutputMode.Auto, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (IsAvailable) return;
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            await PrepareAsync(hardwareDecoder, renderer, rtxVideoSuperResolution, cancellationToken).ConfigureAwait(false);
+            await PrepareAsync(hardwareDecoder, renderer, rtxVideoSuperResolution, hdrOutput, cancellationToken).ConfigureAwait(false);
             if (IsAvailable) return;
             var initialization = Task.Run(() => InitializeCore(videoWindowHandle, cancellationToken), cancellationToken);
             _initializationTask = initialization;
@@ -139,7 +140,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         finally { _initializationTask = null; }
     }
 
-    private void CreateAndConfigureCore(HardwareDecoder hardwareDecoder, string renderer, RtxVideoSuperResolutionMode rtxVideoSuperResolution)
+    private void CreateAndConfigureCore(HardwareDecoder hardwareDecoder, string renderer, RtxVideoSuperResolutionMode rtxVideoSuperResolution, HdrOutputMode hdrOutput)
     {
         StartupProfiler.Mark("mpv-create-start");
         _context = MpvInterop.mpv_create();
@@ -156,6 +157,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         TrySetOption("force-window", "immediate");
         SetOption("vo", string.IsNullOrWhiteSpace(renderer) ? "gpu-next" : renderer);
         SetOption("gpu-api", "d3d11");
+        ConfigureHdrOutputOption(hdrOutput);
         SetOption("hwdec", hardwareDecoder switch
         {
             HardwareDecoder.D3D11VA => "d3d11va-copy,auto-safe",
@@ -535,6 +537,16 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         TrySetProperty("sub-margin-y", _subtitleBottomMargin.ToString(CultureInfo.InvariantCulture));
     }
 
+    public void ConfigureHdrOutput(HdrOutputMode mode)
+    {
+        EnsureAvailable();
+        var configured = TrySetProperty("target-colorspace-hint", HdrOutputOptions.GetColorspaceHint(mode));
+        TrySetProperty("target-colorspace-hint-mode", "target");
+        TrySetProperty("d3d11-output-format", "auto");
+        TrySetProperty("d3d11-output-csp", "auto");
+        HdrOutputStatus = configured ? DescribeHdrOutput(mode) : "Unavailable: this renderer or libmpv build does not support HDR color-space signaling.";
+    }
+
     public void ConfigureRtxVideoSuperResolution(RtxVideoSuperResolutionMode mode)
     {
         EnsureAvailable();
@@ -888,6 +900,26 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         // leave libmpv on the first frame with a stalled video clock.
         RtxVideoSuperResolutionStatus = "NVIDIA RTX Video Super Resolution will be applied after the decoder is ready.";
     }
+
+    private void ConfigureHdrOutputOption(HdrOutputMode mode)
+    {
+        var configured = TrySetOption("target-colorspace-hint", HdrOutputOptions.GetColorspaceHint(mode));
+        // target mode adapts HDR to the active display capabilities instead of blindly
+        // forwarding source mastering metadata. D3D11 auto selects a 10-bit swap chain
+        // and the desktop color space when Windows HDR is enabled.
+        TrySetOption("target-colorspace-hint-mode", "target");
+        TrySetOption("d3d11-output-format", "auto");
+        TrySetOption("d3d11-output-csp", "auto");
+        HdrOutputStatus = configured ? DescribeHdrOutput(mode) : "Unavailable: this renderer or libmpv build does not support HDR color-space signaling.";
+    }
+
+    private static string DescribeHdrOutput(HdrOutputMode mode) => mode switch
+    {
+        HdrOutputMode.Off => "Disabled; HDR sources are rendered without display color-space signaling.",
+        HdrOutputMode.Auto => "Automatic; HDR metadata and a 10-bit D3D11 swap chain are negotiated when supported by Windows and the active display.",
+        HdrOutputMode.On => "Forced; libmpv always requests display color-space signaling.",
+        _ => throw new ArgumentOutOfRangeException(nameof(mode))
+    };
 
     private void ApplyRtxVideoSuperResolutionFilter()
     {

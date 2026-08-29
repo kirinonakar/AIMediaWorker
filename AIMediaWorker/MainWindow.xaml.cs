@@ -327,7 +327,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
 
     private async Task InitializePlaybackAsync(nint videoWindowHandle)
     {
-        await _playback.InitializeAsync(videoWindowHandle, _settings.Playback.HardwareDecoder, _settings.Playback.Renderer, _settings.Playback.RtxVideoSuperResolution).ConfigureAwait(false);
+        await _playback.InitializeAsync(videoWindowHandle, _settings.Playback.HardwareDecoder, _settings.Playback.Renderer, _settings.Playback.RtxVideoSuperResolution, _settings.Playback.HdrOutput).ConfigureAwait(false);
         if (!_playback.IsAvailable) return;
         _playback.SetLoopFile(_playbackController.RepeatMode == PlaybackRepeatMode.One);
         _playback.SetVolume(_settings.Playback.DefaultVolume);
@@ -838,6 +838,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
                 settings.Subtitle.Background,
                 settings.Subtitle.Outline,
                 settings.Subtitle.BottomMargin);
+            _playback.ConfigureHdrOutput(settings.Playback.HdrOutput);
             _playback.ConfigureRtxVideoSuperResolution(settings.Playback.RtxVideoSuperResolution);
         });
         ScheduleSubtitleOverlaySync();

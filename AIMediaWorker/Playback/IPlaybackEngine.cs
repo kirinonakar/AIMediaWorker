@@ -17,6 +17,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     int? VideoWidth { get; }
     int? VideoHeight { get; }
     string? LibraryVersion { get; }
+    string HdrOutputStatus { get; }
     string RtxVideoSuperResolutionStatus { get; }
 
     event EventHandler? StateChanged;
@@ -27,7 +28,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     event EventHandler<PlaybackError>? ErrorOccurred;
     event EventHandler? MediaEnded;
 
-    Task InitializeAsync(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer = "gpu-next", RtxVideoSuperResolutionMode rtxVideoSuperResolution = RtxVideoSuperResolutionMode.Auto, CancellationToken cancellationToken = default);
+    Task InitializeAsync(nint videoWindowHandle, HardwareDecoder hardwareDecoder, string renderer = "gpu-next", RtxVideoSuperResolutionMode rtxVideoSuperResolution = RtxVideoSuperResolutionMode.Auto, HdrOutputMode hdrOutput = HdrOutputMode.Auto, CancellationToken cancellationToken = default);
     Task OpenAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, CancellationToken cancellationToken = default);
     void Play();
     void Pause();
@@ -50,5 +51,6 @@ public interface IPlaybackEngine : IAsyncDisposable
     void ConfigureNetwork(TimeSpan timeout, string? proxy);
     void ConfigurePreferredLanguages(string? audioLanguage, string? subtitleLanguage);
     void ConfigureSubtitleStyle(string fontFamily, double fontSize, string color, string background, double outline, int bottomMargin);
+    void ConfigureHdrOutput(HdrOutputMode mode);
     void ConfigureRtxVideoSuperResolution(RtxVideoSuperResolutionMode mode);
 }
