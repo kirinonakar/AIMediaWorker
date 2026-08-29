@@ -8,19 +8,13 @@ using AIMediaWorker.Asr;
 using AIMediaWorker.Media;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Localization;
-using AIMediaWorker.WindowsIntegration;
-using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
-using Windows.Storage.Pickers;
 using Windows.Storage;
-using Windows.Storage.Streams;
 using WinRT.Interop;
 using Windows.ApplicationModel.DataTransfer;
 using System.Runtime.InteropServices;
@@ -33,42 +27,21 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private const uint DwmwaCloak = 13;
 
     private readonly MpvPlaybackEngine _playback = new();
-    private readonly WindowsPowerManagement _windowsPowerManagement = new();
-    private readonly SubtitleFileService _subtitleFiles = new();
+    private readonly SubtitleSessionController _subtitleSession;
     private readonly SubtitleEditorController _subtitleEditor;
     private readonly SubtitleOverlayController _subtitleOverlay;
-    private SubtitleDocument _document = new();
     private NativeVideoHost? _videoHost;
     private AppWindow? _appWindow;
-    private bool _updatingPosition;
-    private bool _positionSliderDragging;
     private bool _initialized;
     private AppSettings _settings = new();
     private readonly AiWorkflowController _aiWorkflow;
     private int _generatedSubtitleUiRefreshQueued;
-    private int _playbackPositionUiRefreshQueued;
-    private IMediaSource? _currentMediaSource;
-    private IReadOnlyDictionary<string, string>? _currentHttpHeaders;
+    private MediaSessionController _mediaSession = null!;
     private bool _allowClose;
     private bool _closeInProgress;
-    private bool _playbackPowerRequirementActive;
-    private bool _playbackPowerManagementDisabled;
     private Task? _shutdownTask;
-    private TimeSpan? _abStart;
-    private SubtitleDisplayMode? _subtitleDisplayMode;
-    private int? _selectedNativeSubtitleTrackId;
-    private bool _updatingSubtitleTrackSelector;
-    private RepeatMode _repeatMode;
-    private bool _mediaOpenReady;
-    private bool _firstFrameUiReadyForMedia;
-    private string? _pendingMediaOpenSource;
-    private string? _firstFrameWaitSource;
-    private TaskCompletionSource? _firstFrameWaiter;
-    private string? _pendingLaunchSource;
-    private string[]? _pendingDroppedFiles;
-    private string? _audioTagStatusText;
-    private CancellationTokenSource? _audioArtworkCancellation;
-    private int _audioArtworkRequestId;
+    private SubtitleTrackController _subtitleTracks = null!;
+    private readonly AudioPresentationController _audioPresentation;
     private readonly TaskCompletionSource _firstUiFrameReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _firstUiFrameWaitStarted;
     private readonly Task _playbackInitializationTask;
@@ -80,11 +53,10 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private readonly WindowDialogService _dialogs;
     private readonly AboutDialogService _aboutDialog;
     private readonly AuxiliaryWindowController _auxiliaryWindows;
-    private readonly TaskbarProgressController _taskbarProgress;
+    private PlaybackController _playbackController = null!;
+    private readonly ShortcutController _shortcuts;
     private readonly nint _windowHandle;
     private bool _startupWindowCloaked;
-
-    private sealed record SubtitleSelectionOption(string DisplayName, SubtitleDisplayMode? DisplayMode, int? TrackId);
 
     public MainWindow() : this(null, new AppSettings()) { }
 
@@ -112,10 +84,20 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         StartupProfiler.Mark("xaml-ready");
         _dialogs = new WindowDialogService(RootGrid, () => _videoHost);
         _aboutDialog = new AboutDialogService(_dialogs);
+        _subtitleSession = new SubtitleSessionController(new SubtitleSessionHost(
+            _windowHandle,
+            () => _settings,
+            () => _playback.CurrentSource,
+            () => _subtitleTracks.DisplayMode,
+            PrepareForSubtitleLoadAsync,
+            document => _subtitleTracks.BindDocument(document),
+            CompleteSubtitleLoad,
+            message => StatusText.Text = message,
+            _dialogs));
         _subtitleEditor = new SubtitleEditorController(
             SubtitleList,
             TimelineCanvas,
-            () => _document,
+            () => _subtitleSession.Document,
             () => CurrentPlaybackPositionMicroseconds,
             position => SeekAndRestartAi(position, () => _playback.Seek(position, true)),
             () => ScheduleSubtitleOverlaySync(),
@@ -125,14 +107,22 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             ShowMessageAsync);
         _subtitleOverlay = new SubtitleOverlayController(
             _playback,
-            () => _document,
+            () => _subtitleSession.Document,
             () => _settings,
-            () => _subtitleDisplayMode,
-            () => _selectedNativeSubtitleTrackId,
+            () => _subtitleTracks.DisplayMode,
+            () => _subtitleTracks.SelectedNativeTrackId,
             () => CurrentPlaybackPositionMicroseconds,
             visible => SubtitleVisibilityMenuItem.IsChecked = visible,
             message => StatusText.Text = message,
             DispatcherQueue);
+        _subtitleTracks = new SubtitleTrackController(
+            _playback,
+            _subtitleSession,
+            _subtitleOverlay,
+            _subtitleEditor,
+            SubtitleTrackCombo,
+            force => ScheduleSubtitleOverlaySync(force),
+            TryPlayback);
         _aiWorkflow = new AiWorkflowController(
             this,
             _playback,
@@ -149,22 +139,17 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         // The custom title bar is part of this visual tree and must follow the setting
         // on the first launch, not only after the Preferences window is saved.
         UiFontService.Apply(_settings.General.UiFontFamily, RootGrid);
-        ApplyPlaybackToolbarIconSize();
-        PositionSlider.ThumbToolTipValueConverter = new PositionSliderThumbToolTipValueConverter();
-        _playback.StateChanged += OnPlaybackStateChanged;
         _playback.FirstFrameReady += OnFirstFrameReady;
-        _playback.PositionChanged += OnPlaybackPositionChanged;
-        _playback.Seeked += OnPlaybackSeeked;
-        _playback.TracksChanged += OnTracksChanged;
-        _playback.ErrorOccurred += OnPlaybackError;
-        _playback.MediaEnded += OnMediaEnded;
-        _taskbarProgress = new TaskbarProgressController(_windowHandle);
         _videoHost = new NativeVideoHost(this, VideoPlaceholder);
         _videoHost.FilesDropped += OnNativeVideoFilesDropped;
         _videoHost.Clicked += OnNativeVideoClicked;
         _videoHost.DoubleClicked += OnNativeVideoDoubleClicked;
+        _audioPresentation = new AudioPresentationController(
+            new AudioPresentationViewElements(AudioArtworkSurface, AlbumArtImage, AudioArtworkFallback),
+            DispatcherQueue,
+            () => _videoHost,
+            message => StatusText.Text = message);
         _playbackInitializationTask = InitializePlaybackAfterFirstUiFrameAsync(_videoHost.Create());
-        _pendingLaunchSource = initialSource;
         ExtendsContentIntoTitleBar = true;
         _rightPanel = new RightPanelController(
             new RightPanelViewElements(
@@ -181,14 +166,14 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
                 RecentMenu, PreviousButton, NextButton),
             new MediaNavigationHost(
                 () => _settings,
-                () => _currentMediaSource,
+                () => _mediaSession.CurrentSource,
                 () => _playback.CurrentSource,
                 () => CurrentPlaybackPositionMicroseconds,
-                request => OpenMediaAsync(request.Source, request.HttpHeaders, request.MediaSource, request.PreservePlaylist),
+                request => _mediaSession.OpenAsync(request.Source, request.HttpHeaders, request.MediaSource, request.PreservePlaylist),
                 LoadSubtitleFromPathAsync,
                 PrepareForRemoteSubtitleLoadAsync,
                 ApplyDownloadedWebDavSubtitleAsync,
-                WaitForFirstFrameAsync,
+                source => _mediaSession.WaitForFirstFrameAsync(source),
                 position => SeekAndRestartAi(position, () => _playback.Seek(position, true)),
                 _rightPanel.Show,
                 message => StatusText.Text = message,
@@ -214,7 +199,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
                 StopIcon, SeekForwardIcon, NextIcon, MuteIcon, RepeatIcon, BottomPanelToggleIcon, RightPanelToggleIcon),
             () => _playback.State,
             () => _playback.IsMuted,
-            () => _repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.AutoAdvance => "repeat-auto", _ => "repeat" },
+            () => _playbackController.RepeatIconName,
             () => _panels.IsRightVisible,
             () => _panels.IsBottomVisible);
         _chrome.ResizeToAvailableWorkArea(1280, 820);
@@ -242,51 +227,109 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             FocusPlaybackSurface,
             hidden => _videoHost?.SetCursorHidden(hidden),
             message => StatusText.Text = message);
+        _mediaSession = new MediaSessionController(
+            _playback,
+            _audioPresentation,
+            _subtitleSession,
+            initialSource,
+            new MediaSessionHost(
+                _windowHandle,
+                _firstUiFrameReady.Task,
+                _playbackInitializationTask,
+                action => DispatcherQueue.TryEnqueue(() => action()),
+                CancelAiPipelineAsync,
+                _mediaNavigation.PrepareForMediaOpenAsync,
+                paths => _mediaNavigation.OpenFilesAsync(paths),
+                _mediaNavigation.MediaOpened,
+                _mediaNavigation.NotifyFirstFrameReady,
+                () => _playbackController.ApplyRepeatMode(),
+                _subtitleEditor.ResetTimeline,
+                _aiWorkflow.ResetForMedia,
+                UpdateWindowTitle,
+                FocusPlaybackSurface,
+                () => _aiWorkflow.IsSeekRestartPending,
+                () => StartCheckedAiPipeline(waitForMediaReady: true),
+                message => StatusText.Text = message,
+                ShowMessageAsync));
+        _playbackController = new PlaybackController(
+            _playback,
+            new PlaybackViewElements(
+                PlaybackControls, PositionSlider, PositionText, VolumeSlider, RateCombo,
+                AudioTrackCombo, ResolutionText, DecoderText, RepeatButton,
+                [BeginningButton, PreviousButton, SeekBackButton, PlayPauseButton, StopButton,
+                    SeekForwardButton, NextButton, ScreenshotButton, MuteButton, RepeatButton,
+                    FullscreenButton, CloseButton],
+                BeginningIcon, PreviousIcon, SeekBackIcon, PlayPauseIcon, StopIcon, SeekForwardIcon,
+                NextIcon, MuteIcon, RepeatIcon, ScreenshotButtonIcon, FullscreenButtonIcon, CloseButtonIcon),
+            new PlaybackControllerHost(
+                _windowHandle,
+                DispatcherQueue,
+                () => _settings,
+                () => _audioPresentation.StatusText,
+                () => _mediaSession.CurrentSource,
+                message => StatusText.Text = message,
+                SeekAndRestartAi,
+                HandlePlaybackStateChanged,
+                HandlePlaybackSeeked,
+                HandlePlaybackTracksChanged,
+                HandlePlaybackPositionChanged,
+                _mediaNavigation.AutoAdvanceAsync,
+                _chrome.UpdateIcons,
+                ShowMessageAsync));
+        _playbackController.ApplyToolbarSize();
+        _shortcuts = new ShortcutController(
+            new ShortcutViewElements(
+                RootGrid, VideoFocusTarget, SaveSubtitleMenuItem, SaveSubtitleAsMenuItem, ExitMenuItem,
+                PlayPauseMenuItem, DeleteCueMenuItem, PreviousSubtitleMenuItem, NextSubtitleMenuItem,
+                UndoMenuItem, RedoMenuItem, SubtitleVisibilityMenuItem, ShowBottomPanelMenuItem,
+                ShowRightPanelMenuItem, FullscreenMenuItem, BottomPanelToggleButton, RightPanelToggleButton,
+                PlayPauseButton, BeginningButton, PreviousButton, NextButton, SeekBackButton,
+                SeekForwardButton, StopButton, MuteButton, VolumeSlider, PositionSlider, SubtitleList,
+                CloseButton, FullscreenButton, FullscreenButtonIcon),
+            new ShortcutControllerHost(
+                () => _settings,
+                () => _fullscreen.IsFullscreen,
+                _fullscreen.Exit,
+                _fullscreen.Toggle,
+                FocusPlaybackSurface,
+                Close,
+                _subtitleSession.SaveCurrentAsync,
+                _subtitleSession.SaveAsAsync,
+                _playbackController.PlayFromBeginning,
+                _playbackController.TogglePause,
+                _mediaNavigation.OpenPreviousAsync,
+                _mediaNavigation.OpenNextAsync,
+                _subtitleEditor.SelectRelativeCue,
+                _playbackController.SeekBackward,
+                _playbackController.SeekForward,
+                _subtitleEditor.Undo,
+                _subtitleEditor.Redo,
+                _subtitleEditor.DeleteSelectedCues,
+                ToggleSubtitleVisibility,
+                ToggleBottomPanel,
+                ToggleRightPanel,
+                _playbackController.ToggleMute,
+                _playbackController.AdjustVolume,
+                _playbackController.GoToBeginning,
+                _playbackController.SeekToEnd,
+                _playbackController.RefreshRepeatToolTip));
         if (_appWindow is not null) { _appWindow.Closing += OnAppWindowClosing; _appWindow.Changed += OnAppWindowChanged; }
         Closed += OnWindowClosed;
         RootGrid.ActualThemeChanged += OnRootActualThemeChanged;
         _chrome.ApplyTheme(_settings.General.Theme);
-        RootGrid.AddHandler(UIElement.PreviewKeyDownEvent, new KeyEventHandler(OnRootPreviewKeyDown), true);
-        RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnRootKeyDown), true);
         PositionSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPositionSliderPointerPressed), true);
         PositionSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
         PositionSlider.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(OnPositionSliderPointerReleased), true);
-        BindDocument(new SubtitleDocument());
+        _subtitleSession.Bind(_subtitleSession.Document);
         // Subscribe before Activate so the reveal cannot be skipped by other Loaded work.
         _ = WaitForFirstUiFrameAsync();
-    }
-
-    private async Task OpenInitialLaunchSourceAsync()
-    {
-        try
-        {
-            await _firstUiFrameReady.Task.ConfigureAwait(false);
-            await _playbackInitializationTask.ConfigureAwait(false);
-            if (!_playback.IsAvailable || _pendingDroppedFiles is { Length: > 0 } ||
-                _pendingLaunchSource is not { Length: > 0 } launchSource) return;
-            _pendingLaunchSource = null;
-            BeginMediaOpen(launchSource);
-            await _playback.OpenAsync(launchSource).ConfigureAwait(false);
-            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (!DispatcherQueue.TryEnqueue(() =>
-                {
-                    try { CompleteMediaOpen(launchSource, null, null, preservePlaylist: false, showInExplorer: true); completion.SetResult(); }
-                    catch (Exception exception) { completion.SetException(exception); }
-                }))
-                throw new InvalidOperationException("Could not complete the initial media open on the UI thread.");
-            await completion.Task.ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "startup", "INITIAL_MEDIA_OPEN_ERROR", exception.Message, exception);
-        }
     }
 
     private async Task InitializePlaybackAsync(nint videoWindowHandle)
     {
         await _playback.InitializeAsync(videoWindowHandle, _settings.Playback.HardwareDecoder, _settings.Playback.Renderer, _settings.Playback.RtxVideoSuperResolution).ConfigureAwait(false);
         if (!_playback.IsAvailable) return;
-        _playback.SetLoopFile(_repeatMode == RepeatMode.One);
+        _playback.SetLoopFile(_playbackController.RepeatMode == PlaybackRepeatMode.One);
         _playback.SetVolume(_settings.Playback.DefaultVolume);
         _playback.SetRate(_settings.Playback.PlaybackRate);
         _playback.ConfigureNetwork(TimeSpan.FromSeconds(_settings.Network.TimeoutSeconds), _settings.Network.Proxy);
@@ -333,22 +376,15 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             var recentLoad = _mediaNavigation.LoadRecentAsync();
             _ = _mediaNavigation.InitializeBrowserAsync();
             SubtitleVisibilityMenuItem.IsChecked = _settings.Playback.ShowSubtitles;
-            RateCombo.ItemsSource = new[] { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0 };
-            RateCombo.SelectedItem = RateCombo.Items.Cast<double>().OrderBy(value => Math.Abs(value - _settings.Playback.PlaybackRate)).First();
-            UpdateShortcutHints();
+            _playbackController.InitializeView();
+            _shortcuts.RefreshHints();
             // Shell activation previously issued loadfile from the constructor, before WinUI
             // had presented its first frame. Let one complete composition pass finish first so
             // decoder/GPU startup cannot delay painting the window chrome and controls.
             await WaitForFirstUiFrameAsync();
             await _playbackInitializationTask;
             StatusText.Text = _playback.IsAvailable ? L("StatusLibmpvReady") : L("StatusPlaybackUnavailable");
-            if (_playback.IsAvailable && _pendingDroppedFiles is { Length: > 0 } droppedFiles)
-            {
-                _pendingDroppedFiles = null;
-                _pendingLaunchSource = null;
-                await _mediaNavigation.OpenFilesAsync(droppedFiles);
-            }
-            if (_pendingLaunchSource is { Length: > 0 }) await OpenInitialLaunchSourceAsync();
+            await _mediaSession.OpenPendingAsync();
             await recentLoad;
             _chrome.ApplyTheme(_settings.General.Theme);
         }
@@ -392,22 +428,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         return DwmSetWindowAttribute(windowHandle, DwmwaCloak, ref value, sizeof(int)) == 0;
     }
 
-    private async void OnOpenMediaClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var picker = new FileOpenPicker();
-            picker.FileTypeFilter.Add("*");
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var files = await picker.PickMultipleFilesAsync();
-            if (files.Count > 0) await HandleDroppedFilesAsync(files.Select(file => file.Path));
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "file-picker", "OPEN_MEDIA_PICKER_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
-        }
-    }
+    private async void OnOpenMediaClick(object sender, RoutedEventArgs e) => await _mediaSession.PickAndOpenMediaAsync();
 
     private async void OnOpenUrlClick(object sender, RoutedEventArgs e)
     {
@@ -419,7 +440,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             await ShowMessageAsync(L("InvalidUrlTitle"), L("InvalidUrlMessage"));
             return;
         }
-        await OpenMediaAsync(uri.AbsoluteUri);
+        await _mediaSession.OpenAsync(uri.AbsoluteUri);
     }
 
     private void OnRootDragOver(object sender, DragEventArgs e)
@@ -440,14 +461,14 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             if (e.DataView.Contains(StandardDataFormats.StorageItems))
             {
                 var items = await e.DataView.GetStorageItemsAsync();
-                await HandleDroppedFilesAsync(items.OfType<StorageFile>().Select(file => file.Path));
+                await _mediaSession.OpenDroppedFilesAsync(items.OfType<StorageFile>().Select(file => file.Path));
                 return;
             }
             if (e.DataView.Contains(StandardDataFormats.Text))
             {
                 var value = (await e.DataView.GetTextAsync()).Trim();
-                if (Path.IsPathFullyQualified(value)) await HandleDroppedFilesAsync([value]);
-                else if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") await OpenMediaAsync(uri.AbsoluteUri);
+                if (Path.IsPathFullyQualified(value)) await _mediaSession.OpenDroppedFilesAsync([value]);
+                else if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") await _mediaSession.OpenAsync(uri.AbsoluteUri);
             }
         }
         catch (Exception exception)
@@ -462,7 +483,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         var paths = e.Paths.ToArray();
         DispatcherQueue.TryEnqueue(async () =>
         {
-            try { await HandleDroppedFilesAsync(paths); }
+            try { await _mediaSession.OpenDroppedFilesAsync(paths); }
             catch (Exception exception)
             {
                 await AppLog.WriteAsync("error", "drag-drop", "NATIVE_DROP_OPEN_ERROR", exception.Message, exception);
@@ -493,24 +514,6 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         }
     }
 
-    private async Task HandleDroppedFilesAsync(IEnumerable<string> paths)
-    {
-        var pathSnapshot = paths.ToArray();
-        var files = await Task.Run(() => pathSnapshot
-            .Where(File.Exists)
-            .Select(Path.GetFullPath)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray());
-        if (files.Length == 0) return;
-        if (!_playback.IsAvailable)
-        {
-            _pendingDroppedFiles = files;
-            StatusText.Text = L("StatusPreparingDroppedMedia");
-            return;
-        }
-        await _mediaNavigation.OpenFilesAsync(files);
-    }
-
     /// <summary>
     /// Handles a launch redirected from a secondary app instance: brings this window
     /// to the foreground and opens the forwarded files.
@@ -519,18 +522,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     {
         BringToFront();
         if (filePaths is not { Count: > 0 }) return;
-        _pendingLaunchSource = null;
-        _ = OpenForwardedFilesAsync(filePaths);
-    }
-
-    private async Task OpenForwardedFilesAsync(IReadOnlyList<string> filePaths)
-    {
-        try { await HandleDroppedFilesAsync(filePaths); }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "activation", "REDIRECTED_OPEN_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
-        }
+        _ = _mediaSession.OpenForwardedFilesAsync(filePaths);
     }
 
     private void BringToFront()
@@ -541,199 +533,6 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         SetForegroundWindow(handle);
     }
 
-    private async Task OpenMediaAsync(string source, IReadOnlyDictionary<string, string>? httpHeaders = null, IMediaSource? mediaSource = null, bool preservePlaylist = false)
-    {
-        // Cancelling an active ASR/translation request can take a second or two while its
-        // provider returns. Signal it now, but do not make the new media wait to start.
-        var aiPipelineCancellation = CancelAiPipelineAsync();
-        if (!await ConfirmDiscardChangesAsync(L("ActionOpenMedia")))
-        {
-            await aiPipelineCancellation;
-            return;
-        }
-        try
-        {
-            await _firstUiFrameReady.Task;
-            await _playbackInitializationTask;
-            if (!_playback.IsAvailable) throw new InvalidOperationException(L("StatusPlaybackUnavailable"));
-            await _mediaNavigation.PrepareForMediaOpenAsync();
-            BeginMediaOpen(source);
-            await _playback.OpenAsync(source, httpHeaders);
-            await aiPipelineCancellation;
-            CompleteMediaOpen(source, httpHeaders, mediaSource ?? MediaSourceFactory.Parse(source), preservePlaylist, showInExplorer: false);
-        }
-        catch (Exception exception)
-        {
-            if (string.Equals(_pendingMediaOpenSource, source, StringComparison.OrdinalIgnoreCase))
-            {
-                _mediaOpenReady = false;
-                _pendingMediaOpenSource = null;
-                ResetAudioArtworkPresentation();
-            }
-            await aiPipelineCancellation;
-            await AppLog.WriteAsync("error", "playback", "OPEN_MEDIA_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("PlaybackErrorTitle"), exception.Message);
-        }
-    }
-
-    private void CompleteMediaOpen(string source, IReadOnlyDictionary<string, string>? httpHeaders, IMediaSource? mediaSource, bool preservePlaylist, bool showInExplorer)
-    {
-        _currentMediaSource = mediaSource ?? MediaSourceFactory.Parse(source);
-        _currentHttpHeaders = httpHeaders is null ? null : new Dictionary<string, string>(httpHeaders, StringComparer.OrdinalIgnoreCase);
-        ApplyAudioArtworkPresentation(IsLocalAudioSource(_currentMediaSource));
-        ApplyRepeatModeToPlayback();
-        UpdateWindowTitle(_currentMediaSource.DisplayName);
-        _mediaNavigation.MediaOpened(_currentMediaSource, preservePlaylist, showInExplorer);
-        if (_playback.IsFirstFrameReady) _mediaNavigation.NotifyFirstFrameReady();
-        _subtitleEditor.ResetTimeline();
-        var blank = new SubtitleDocument(); blank.EnsureTrack(); blank.MarkSaved(); BindDocument(blank);
-        _aiWorkflow.ResetForMedia();
-        _audioTagStatusText = null;
-        StatusText.Text = source;
-        UpdateAudioTagStatus();
-        UpdateAudioArtwork();
-        FocusPlaybackSurface();
-        _mediaOpenReady = true;
-        _pendingMediaOpenSource = null;
-        if (_firstFrameUiReadyForMedia) StartAutomaticSubtitleGenerationIfReady();
-    }
-
-    private void UpdateAudioTagStatus()
-    {
-        if (_currentMediaSource is not LocalMediaSource localSource || !MediaFileClassifier.IsAudio(localSource.Path)) return;
-        var path = localSource.Path;
-        _ = Task.Run(() =>
-        {
-            var tagText = AudioTagReader.ReadDisplayText(path);
-            if (tagText is null) return;
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (_currentMediaSource is LocalMediaSource current &&
-                    string.Equals(current.Path, path, StringComparison.OrdinalIgnoreCase))
-                {
-                    _audioTagStatusText = tagText;
-                    StatusText.Text = tagText;
-                }
-            });
-        });
-    }
-
-    private void UpdateAudioArtwork()
-    {
-        if (_currentMediaSource is not LocalMediaSource localSource || !MediaFileClassifier.IsAudio(localSource.Path)) return;
-
-        var path = localSource.Path;
-        var requestId = ++_audioArtworkRequestId;
-        var cancellation = new CancellationTokenSource();
-        var previous = _audioArtworkCancellation;
-        _audioArtworkCancellation = cancellation;
-        previous?.Cancel();
-        previous?.Dispose();
-        _ = LoadAudioArtworkAsync(path, requestId, cancellation.Token);
-    }
-
-    private async Task LoadAudioArtworkAsync(string path, int requestId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var artwork = await Task.Run(() => AudioTagReader.ReadArtwork(path), cancellationToken).ConfigureAwait(false);
-            if (artwork is null || cancellationToken.IsCancellationRequested) return;
-
-            if (!DispatcherQueue.TryEnqueue(async () =>
-            {
-                try
-                {
-                    if (!IsCurrentAudioArtwork(path, requestId, cancellationToken)) return;
-                    var image = await DecodeAudioArtworkAsync(artwork, cancellationToken);
-                    if (image is null || !IsCurrentAudioArtwork(path, requestId, cancellationToken)) return;
-                    AlbumArtImage.Source = image;
-                    AudioArtworkFallback.Visibility = Visibility.Collapsed;
-                }
-                catch (OperationCanceledException) { }
-                catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
-                {
-                    _ = AppLog.WriteAsync("warning", "playback", "AUDIO_ARTWORK_DECODE_ERROR", exception.Message, exception);
-                }
-            })) return;
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            _ = AppLog.WriteAsync("warning", "playback", "AUDIO_ARTWORK_READ_ERROR", exception.Message, exception);
-        }
-    }
-
-    private bool IsCurrentAudioArtwork(string path, int requestId, CancellationToken cancellationToken) =>
-        !cancellationToken.IsCancellationRequested &&
-        requestId == _audioArtworkRequestId &&
-        AudioArtworkSurface.Visibility == Visibility.Visible &&
-        _currentMediaSource is LocalMediaSource current &&
-        string.Equals(current.Path, path, StringComparison.OrdinalIgnoreCase);
-
-    private static async Task<BitmapImage?> DecodeAudioArtworkAsync(AudioArtwork artwork, CancellationToken cancellationToken)
-    {
-        if (artwork.Bytes is not { Length: > 0 }) return null;
-        cancellationToken.ThrowIfCancellationRequested();
-
-        using var stream = new InMemoryRandomAccessStream();
-        using (var writer = new DataWriter(stream))
-        {
-            writer.WriteBytes(artwork.Bytes);
-            await writer.StoreAsync();
-            writer.DetachStream();
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        stream.Seek(0);
-        var image = new BitmapImage { DecodePixelWidth = 1600 };
-        await image.SetSourceAsync(stream);
-        cancellationToken.ThrowIfCancellationRequested();
-        return image;
-    }
-
-    private void ApplyAudioArtworkPresentation(bool isLocalAudio)
-    {
-        AudioArtworkSurface.Visibility = isLocalAudio ? Visibility.Visible : Visibility.Collapsed;
-        if (!isLocalAudio)
-        {
-            AlbumArtImage.Source = null;
-            AudioArtworkFallback.Visibility = Visibility.Visible;
-        }
-
-        _videoHost?.SetMediaVisible(!isLocalAudio);
-    }
-
-    private void ResetAudioArtworkPresentation()
-    {
-        ++_audioArtworkRequestId;
-        var cancellation = _audioArtworkCancellation;
-        _audioArtworkCancellation = null;
-        cancellation?.Cancel();
-        cancellation?.Dispose();
-        AlbumArtImage.Source = null;
-        AudioArtworkFallback.Visibility = Visibility.Visible;
-        ApplyAudioArtworkPresentation(false);
-    }
-
-    private static bool IsLocalAudioSource(IMediaSource source) =>
-        source is LocalMediaSource localSource && MediaFileClassifier.IsAudio(localSource.Path);
-
-    private void BeginMediaOpen(string source)
-    {
-        ResetAudioArtworkPresentation();
-        ApplyAudioArtworkPresentation(IsLocalAudioPath(source));
-        _mediaOpenReady = false;
-        _firstFrameUiReadyForMedia = false;
-        _audioTagStatusText = null;
-        _pendingMediaOpenSource = source;
-        _firstFrameWaiter?.TrySetCanceled();
-        _firstFrameWaitSource = source;
-        _firstFrameWaiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    }
-
-    private static bool IsLocalAudioPath(string source) =>
-        Path.IsPathFullyQualified(source) && MediaFileClassifier.IsAudio(source);
-
     private void UpdateWindowTitle(string displayName)
     {
         var title = string.IsNullOrWhiteSpace(displayName) ? "AIMediaWorker" : $"{displayName} - AIMediaWorker";
@@ -742,117 +541,38 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         AppTitleText.Text = title;
     }
 
-    private void OnPlayPauseClick(object sender, RoutedEventArgs e) => TryPlayback(_playback.TogglePause);
-    private void PlayFromBeginning() => SeekAndRestartAi(TimeSpan.Zero, () => { _playback.Seek(TimeSpan.Zero, true); _playback.Play(); });
-    private void OnGoToBeginningClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(TimeSpan.Zero, () => _playback.Seek(TimeSpan.Zero, true));
-    private void OnStopClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(TimeSpan.Zero, () =>
-    {
-        _playback.Seek(TimeSpan.Zero, true);
-        _playback.Pause();
-    });
+    private void OnPlayPauseClick(object sender, RoutedEventArgs e) => _playbackController.TogglePause();
+    private void PlayFromBeginning() => _playbackController.PlayFromBeginning();
+    private void OnGoToBeginningClick(object sender, RoutedEventArgs e) => _playbackController.GoToBeginning();
+    private void OnStopClick(object sender, RoutedEventArgs e) => _playbackController.Stop();
     private async void OnPreviousMediaClick(object sender, RoutedEventArgs e) => await _mediaNavigation.OpenPreviousAsync();
     private async void OnNextMediaClick(object sender, RoutedEventArgs e) => await _mediaNavigation.OpenNextAsync();
-    private void OnFrameStepClick(object sender, RoutedEventArgs e) => TryPlayback(() => _playback.FrameStep());
-    private async void OnSaveScreenshotClick(object sender, RoutedEventArgs e)
-    {
-        if (!_playback.IsAvailable || _playback.State is not (PlaybackState.Playing or PlaybackState.Paused) || _playback.VideoWidth is null)
-        {
-            await ShowMessageAsync(L("ScreenshotUnavailableTitle"), L("ScreenshotUnavailableMessage"));
-            return;
-        }
+    private void OnFrameStepClick(object sender, RoutedEventArgs e) => _playbackController.FrameStep();
+    private async void OnSaveScreenshotClick(object sender, RoutedEventArgs e) => await _playbackController.SaveScreenshotAsync();
+    private void OnSeekBackClick(object sender, RoutedEventArgs e) => _playbackController.SeekBackward();
+    private void OnSeekForwardClick(object sender, RoutedEventArgs e) => _playbackController.SeekForward();
+    private void OnMuteClick(object sender, RoutedEventArgs e) => _playbackController.ToggleMute();
+    private void OnToggleSubtitleVisibilityClick(object sender, RoutedEventArgs e) => ApplySubtitleVisibilitySelection();
 
-        try
-        {
-            var picker = new FileSavePicker
-            {
-                SuggestedStartLocation = PickerLocationId.PicturesLibrary,
-                DefaultFileExtension = ".png",
-                SuggestedFileName = CreateScreenshotFileName()
-            };
-            picker.FileTypeChoices.Add(L("PngImageFileType"), [".png"]);
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var file = await picker.PickSaveFileAsync();
-            if (file is null) return;
-            await Task.Run(() => _playback.SaveScreenshot(file.Path));
-            StatusText.Text = F("StatusScreenshotSaved", file.Name);
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "screenshot", "SCREENSHOT_SAVE_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("ScreenshotErrorTitle"), exception.Message);
-        }
+    private void ToggleSubtitleVisibility()
+    {
+        SubtitleVisibilityMenuItem.IsChecked = !_playback.AreSubtitlesVisible;
+        ApplySubtitleVisibilitySelection();
     }
 
-    private string CreateScreenshotFileName()
-    {
-        var displayName = _currentMediaSource?.DisplayName;
-        var stem = string.IsNullOrWhiteSpace(displayName) ? "AIMediaWorker" : Path.GetFileNameWithoutExtension(displayName);
-        foreach (var character in Path.GetInvalidFileNameChars()) stem = stem.Replace(character, '_');
-        if (string.IsNullOrWhiteSpace(stem)) stem = "AIMediaWorker";
-        var position = _playback.Position;
-        return $"{stem}_{(int)position.TotalHours:00}-{position.Minutes:00}-{position.Seconds:00}.{position.Milliseconds:000}";
-    }
-    private void OnSeekBackClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(_playback.Position - TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds), () => _playback.SeekRelative(TimeSpan.FromSeconds(-_settings.Playback.SeekIntervalSeconds)));
-    private void OnSeekForwardClick(object sender, RoutedEventArgs e) => SeekAndRestartAi(_playback.Position + TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds), () => _playback.SeekRelative(TimeSpan.FromSeconds(_settings.Playback.SeekIntervalSeconds)));
-    private void OnMuteClick(object sender, RoutedEventArgs e)
-    {
-        TryPlayback(() => _playback.SetMute(!_playback.IsMuted));
-        MuteIcon.Source = _chrome.PlaybackIconSource(_playback.IsMuted ? "mute" : "volume");
-        ShowMuteOverlay();
-    }
-    private void OnToggleSubtitleVisibilityClick(object sender, RoutedEventArgs e)
+    private void ApplySubtitleVisibilitySelection()
     {
         var visible = SubtitleVisibilityMenuItem.IsChecked;
         _settings.Playback.ShowSubtitles = visible;
         ApplySubtitleVisibilityPreference();
         ShowSubtitleVisibilityOverlay();
     }
-    private void OnRateChanged(object sender, SelectionChangedEventArgs e) { if (RateCombo.SelectedItem is double rate && _playback.IsAvailable) TryPlayback(() => _playback.SetRate(rate)); }
-    private void OnRepeatClick(object sender, RoutedEventArgs e)
-    {
-        _repeatMode = _repeatMode switch { RepeatMode.Off => RepeatMode.One, RepeatMode.One => RepeatMode.AutoAdvance, _ => RepeatMode.Off };
-        ApplyRepeatModeToPlayback();
-        RepeatIcon.Source = _chrome.PlaybackIconSource(_repeatMode switch { RepeatMode.One => "repeat-one", RepeatMode.AutoAdvance => "repeat-auto", _ => "repeat" });
-        ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.AutoAdvance => "TooltipAutoAdvance", _ => "TooltipRepeatOff" }));
-    }
-
-    private void ApplyRepeatModeToPlayback()
-    {
-        if (_playback.IsAvailable) TryPlayback(() => _playback.SetLoopFile(_repeatMode == RepeatMode.One));
-    }
-
-    private void OnSetAbStartClick(object sender, RoutedEventArgs e)
-    {
-        _abStart = _playback.Position;
-        TryPlayback(() => _playback.SetAbLoop(_abStart, null));
-        StatusText.Text = F("StatusAPoint", FormatTime(_abStart.Value));
-    }
-    private void OnSetAbEndClick(object sender, RoutedEventArgs e)
-    {
-        if (_abStart is null) _abStart = TimeSpan.Zero;
-        if (_playback.Position <= _abStart) { StatusText.Text = L("StatusBMustFollowA"); return; }
-        TryPlayback(() => _playback.SetAbLoop(_abStart, _playback.Position)); StatusText.Text = F("StatusAbRepeat", FormatTime(_abStart.Value), FormatTime(_playback.Position));
-    }
-    private void OnClearAbClick(object sender, RoutedEventArgs e) { _abStart = null; if (_playback.IsAvailable) _playback.SetAbLoop(null, null); StatusText.Text = L("StatusAbCleared"); }
-
-    private void OnVolumeChanged(object sender, RangeBaseValueChangedEventArgs e)
-    {
-        if (_initialized && _playback.IsAvailable) { TryPlayback(() => _playback.SetVolume(e.NewValue)); ShowVolumeOverlay(); }
-    }
-
-    private void ShowVolumeOverlay()
-    {
-        if (!_playback.IsAvailable) return;
-        var percent = double.IsFinite(_playback.Volume) ? Math.Clamp(_playback.Volume, 0, 130) : 0;
-        var roundedPercent = Math.Round(percent, MidpointRounding.AwayFromZero);
-        TryPlayback(() => _playback.ShowOsdText($"Volume: {roundedPercent:0}", 1.5));
-    }
-
-    private void ShowMuteOverlay()
-    {
-        if (!_playback.IsAvailable) return;
-        TryPlayback(() => _playback.ShowOsdText(L(_playback.IsMuted ? "OsdMuteOn" : "OsdMuteOff"), 1.5));
-    }
+    private void OnRateChanged(object sender, SelectionChangedEventArgs e) => _playbackController?.ChangeRate(RateCombo.SelectedItem);
+    private void OnRepeatClick(object sender, RoutedEventArgs e) => _playbackController.CycleRepeatMode();
+    private void OnSetAbStartClick(object sender, RoutedEventArgs e) => _playbackController.SetAbStart();
+    private void OnSetAbEndClick(object sender, RoutedEventArgs e) => _playbackController.SetAbEnd();
+    private void OnClearAbClick(object sender, RoutedEventArgs e) => _playbackController.ClearAb();
+    private void OnVolumeChanged(object sender, RangeBaseValueChangedEventArgs e) => _playbackController?.ChangeVolume(e.NewValue);
 
     private void ShowSubtitleVisibilityOverlay()
     {
@@ -860,105 +580,14 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         TryPlayback(() => _playback.ShowOsdText(L(_playback.AreSubtitlesVisible ? "OsdSubtitlesOn" : "OsdSubtitlesOff"), 1.5));
     }
 
-    private void OnPositionSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
-    {
-        if (_positionSliderDragging)
-        {
-            PositionText.Text = $"{FormatTime(TimeSpan.FromSeconds(e.NewValue))} / {FormatTime(_playback.Duration)}";
-            return;
-        }
+    private void OnPositionSliderChanged(object sender, RangeBaseValueChangedEventArgs e) => _playbackController?.PositionSliderChanged(e.NewValue);
+    private void OnPositionSliderPointerPressed(object sender, PointerRoutedEventArgs e) => _playbackController?.PositionSliderPressed();
+    private void OnPositionSliderPointerReleased(object sender, PointerRoutedEventArgs e) => _playbackController?.PositionSliderReleased();
 
-        if (!_updatingPosition && !_positionSliderDragging && _playback.IsAvailable && PositionSlider.Maximum > 0) SeekAndRestartAi(TimeSpan.FromSeconds(e.NewValue), () => _playback.Seek(TimeSpan.FromSeconds(e.NewValue)));
-    }
-
-    private void OnPositionSliderPointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        _positionSliderDragging = true;
-        PositionText.Text = $"{FormatTime(TimeSpan.FromSeconds(PositionSlider.Value))} / {FormatTime(_playback.Duration)}";
-    }
-    private void OnPositionSliderPointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        if (!_positionSliderDragging) return;
-        _positionSliderDragging = false;
-        var position = TimeSpan.FromSeconds(PositionSlider.Value);
-        PositionText.Text = $"{FormatTime(position)} / {FormatTime(_playback.Duration)}";
-        if (_playback.IsAvailable) SeekAndRestartAi(position, () => _playback.Seek(position, true));
-    }
-
-    private async void OnLoadSubtitleClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var picker = new FileOpenPicker();
-            foreach (var extension in new[] { ".srt", ".vtt", ".ass", ".ssa", ".smi" }) picker.FileTypeFilter.Add(extension);
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var file = await picker.PickSingleFileAsync();
-            if (file is not null) await LoadSubtitleFromPathAsync(file.Path);
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "file-picker", "OPEN_SUBTITLE_PICKER_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message);
-        }
-    }
-
-    private async Task LoadSubtitleFromPathAsync(string path)
-    {
-        await CancelAiPipelineAsync();
-        if (!await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"))) return;
-        try
-        {
-            var document = await _subtitleFiles.LoadAsync(path, _settings.Subtitle.Encoding);
-            BindDocument(document);
-            _aiWorkflow.ResetTranslation();
-            // Keep the native player and the editable document on one subtitle track.
-            // Loading the source file directly left the old track alive when the editor
-            // later switched to its temporary ASS overlay.
-            ScheduleSubtitleOverlaySync();
-            StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
-        }
-        catch (Exception exception) { await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message); }
-    }
-
-    private async void OnSaveSubtitleClick(object sender, RoutedEventArgs e)
-    {
-        if (_document.FilePath is null) await SaveSubtitleAsAsync(); else await SaveSubtitleAsync(_document.FilePath);
-    }
-    private async void OnSaveSubtitleAsClick(object sender, RoutedEventArgs e) => await SaveSubtitleAsAsync();
-
-    private async Task SaveSubtitleAsAsync()
-    {
-        try
-        {
-            var picker = new FileSavePicker { SuggestedFileName = System.IO.Path.GetFileNameWithoutExtension(_playback.CurrentSource ?? "subtitles") };
-            picker.FileTypeChoices.Add(L("SubRipFileType"), [".srt"]);
-            picker.FileTypeChoices.Add(L("WebVttFileType"), [".vtt"]);
-            picker.FileTypeChoices.Add(L("AssFileType"), [".ass"]);
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var file = await picker.PickSaveFileAsync();
-            if (file is not null) await SaveSubtitleAsync(file.Path);
-        }
-        catch (Exception exception)
-        {
-            await AppLog.WriteAsync("error", "file-picker", "SAVE_SUBTITLE_PICKER_ERROR", exception.Message, exception);
-            await ShowMessageAsync(L("SubtitleErrorTitle"), exception.Message);
-        }
-    }
-
-    private async Task SaveSubtitleAsync(string path)
-    {
-        var track = _document.ActiveTrack;
-        if (track is null) return;
-        try
-        {
-            var displayMode = _subtitleDisplayMode ?? SubtitleDisplayMode.Original;
-            var result = await _subtitleFiles.SaveAsync(track, path, displayMode, _settings.Subtitle.FontFamily, _settings.Subtitle.Encoding);
-            track.Format = result.TargetFormat;
-            _document.MarkSaved(path);
-            StatusText.Text = result.HasStyleLoss ? F("StatusSavedStyleLoss", path) : F("StatusSaved", path);
-        }
-        catch (Exception exception) { await ShowMessageAsync(L("SaveErrorTitle"), exception.Message); }
-    }
+    private async void OnLoadSubtitleClick(object sender, RoutedEventArgs e) => await _subtitleSession.PickAndLoadAsync();
+    private async Task LoadSubtitleFromPathAsync(string path) => await _subtitleSession.LoadAsync(path);
+    private async void OnSaveSubtitleClick(object sender, RoutedEventArgs e) => await _subtitleSession.SaveCurrentAsync();
+    private async void OnSaveSubtitleAsClick(object sender, RoutedEventArgs e) => await _subtitleSession.SaveAsAsync();
 
     private void OnAddCueClick(object sender, RoutedEventArgs e)
         => _subtitleEditor.AddCue();
@@ -1015,33 +644,22 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void DrawTimeline(long? positionMicroseconds = null)
         => _subtitleEditor.DrawTimeline(positionMicroseconds);
 
-    private void BindDocument(SubtitleDocument document)
+    private async Task<bool> PrepareForSubtitleLoadAsync()
     {
-        _subtitleOverlay.ResetForDocument();
-        _document = document;
-        _subtitleDisplayMode = null;
-        _selectedNativeSubtitleTrackId = null;
-        var track = _document.EnsureTrack();
-        if (track.Cues.Count > 0) _subtitleDisplayMode = SubtitleDisplayMode.Original;
-        if (_document.FilePath is null && track.Cues.Count == 0) _document.MarkSaved();
-        _subtitleEditor.BindDocument(document);
-        RefreshSubtitleTrackSelector();
+        await CancelAiPipelineAsync();
+        return await _subtitleSession.ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"));
     }
 
-    private void OnPlaybackStateChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
+    private void CompleteSubtitleLoad(SubtitleDocument document)
     {
-        var state = _playback.State;
-        UpdatePlaybackPowerRequirement(state);
-        PlayPauseIcon.Source = _chrome.PlaybackIconSource(state == PlaybackState.Playing ? "pause" : "play");
-        StatusText.Text = _audioTagStatusText is { } audioTag && state != PlaybackState.Failed ? audioTag : L(state switch
-        {
-            PlaybackState.Playing => "PlaybackStatePlaying",
-            PlaybackState.Paused => "PlaybackStatePaused",
-            PlaybackState.Loading => "PlaybackStateLoading",
-            PlaybackState.Idle => "PlaybackStateIdle",
-            PlaybackState.Failed => "PlaybackStateFailed",
-            _ => "PlaybackStateUninitialized"
-        });
+        _aiWorkflow.ResetTranslation();
+        // Keep the native player and editable document on the same rendered track.
+        ScheduleSubtitleOverlaySync();
+        StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
+    }
+
+    private void HandlePlaybackStateChanged(PlaybackState state)
+    {
         if (state == PlaybackState.Playing)
         {
             // show-text has a finite lifetime. Re-arm the current cue after a
@@ -1049,78 +667,14 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             _subtitleOverlay.InvalidateGeneratedCue();
         }
         RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
-        UpdateTaskbarProgress();
-    });
-
-    private void UpdatePlaybackPowerRequirement(PlaybackState state)
-    {
-        if (_playbackPowerManagementDisabled) return;
-        var shouldKeepAwake = state == PlaybackState.Playing;
-        if (shouldKeepAwake == _playbackPowerRequirementActive) return;
-        if (!_windowsPowerManagement.TrySetPlaybackActive(shouldKeepAwake))
-        {
-            _ = AppLog.WriteAsync("warning", "playback", "PLAYBACK_POWER_REQUEST_ERROR",
-                shouldKeepAwake
-                    ? "Windows could not keep the display and system awake during playback."
-                    : "Windows could not release the playback power request.");
-            return;
-        }
-
-        _playbackPowerRequirementActive = shouldKeepAwake;
-    }
-
-    private void ReleasePlaybackPowerRequirement()
-    {
-        _playbackPowerManagementDisabled = true;
-        if (!_playbackPowerRequirementActive) return;
-        if (!_windowsPowerManagement.TrySetPlaybackActive(false))
-            _ = AppLog.WriteAsync("warning", "playback", "PLAYBACK_POWER_REQUEST_ERROR", "Windows could not release the playback power request.");
-        _playbackPowerRequirementActive = false;
     }
 
     private void OnFirstFrameReady(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
-        if (string.Equals(_firstFrameWaitSource, _playback.CurrentSource, StringComparison.OrdinalIgnoreCase))
-        {
-            _firstFrameUiReadyForMedia = true;
-            _firstFrameWaiter?.TrySetResult();
-        }
         ApplySubtitleVisibilityPreference();
-        _mediaNavigation.NotifyFirstFrameReady();
-        StartAutomaticSubtitleGenerationIfReady();
+        _mediaSession.FirstFrameReady();
     });
-
-    private void StartAutomaticSubtitleGenerationIfReady()
-    {
-        if (!_mediaOpenReady || !_firstFrameUiReadyForMedia ||
-            !string.Equals(_currentMediaSource?.Location, _playback.CurrentSource, StringComparison.OrdinalIgnoreCase)) return;
-        if (_playback.State == PlaybackState.Playing && !_aiWorkflow.IsSeekRestartPending)
-            StartCheckedAiPipeline(waitForMediaReady: true);
-    }
-
-    private async Task<bool> WaitForFirstFrameAsync(string source)
-    {
-        if (!_mediaOpenReady || !string.Equals(_playback.CurrentSource, source, StringComparison.OrdinalIgnoreCase)) return false;
-        if (!_firstFrameUiReadyForMedia)
-        {
-            var waiter = _firstFrameWaiter;
-            if (waiter is null || !string.Equals(_firstFrameWaitSource, source, StringComparison.OrdinalIgnoreCase)) return false;
-            try { await waiter.Task.WaitAsync(TimeSpan.FromSeconds(12)); }
-            catch (TimeoutException) { return false; }
-            catch (OperationCanceledException) { return false; }
-        }
-        return _mediaOpenReady && _firstFrameUiReadyForMedia &&
-               _playback.IsFirstFrameReady &&
-               string.Equals(_playback.CurrentSource, source, StringComparison.OrdinalIgnoreCase);
-    }
-    private void OnPlaybackPositionChanged(object? sender, EventArgs e)
-    {
-        if (Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 1) != 0) return;
-        if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, RefreshPlaybackPositionUi))
-            Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 0);
-    }
-
-    private void OnPlaybackSeeked(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+    private void HandlePlaybackSeeked()
     {
         if (_subtitleOverlay.IsGeneratedOverlayActive)
         {
@@ -1133,126 +687,25 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         // Seeking can temporarily clear the selected subtitle track in libmpv. Restore the
         // visibility preference and reselect the editor overlay without rebuilding its file.
         ApplySubtitleVisibilityPreference();
-        if (_subtitleDisplayMode is not null && _document.ActiveTrack is { Cues.Count: > 0 } &&
+        if (_subtitleTracks.DisplayMode is not null && _subtitleSession.Document.ActiveTrack is { Cues.Count: > 0 } &&
             !_playback.RestoreEditorSubtitleAfterSeek())
             ScheduleSubtitleOverlaySync(force: true);
-    });
-
-    private void RefreshPlaybackPositionUi()
-    {
-        try
-        {
-            var position = _playback.Position;
-            var duration = _playback.Duration;
-            _updatingPosition = true;
-            PositionSlider.Maximum = Math.Max(1, duration.TotalSeconds);
-            if (!_positionSliderDragging) PositionSlider.Value = Math.Clamp(position.TotalSeconds, 0, PositionSlider.Maximum);
-            _updatingPosition = false;
-            PositionText.Text = $"{FormatTime(position)} / {FormatTime(duration)}";
-            DecoderText.Text = _playback.DecoderDescription ?? string.Empty;
-            ResolutionText.Text = _playback.VideoWidth is { } width && _playback.VideoHeight is { } height ? $"{width}×{height}" : string.Empty;
-            var positionMicroseconds = Math.Max(0, position.Ticks / 10);
-            _subtitleEditor.UpdatePlaybackPosition(positionMicroseconds);
-            RefreshGeneratedSubtitleOsd(positionMicroseconds);
-            UpdateTaskbarProgress();
-        }
-        finally { Interlocked.Exchange(ref _playbackPositionUiRefreshQueued, 0); }
     }
-    private void UpdateTaskbarProgress()
-    {
-        var source = _playback.CurrentSource;
-        if (_playback.State is not (PlaybackState.Loading or PlaybackState.Playing or PlaybackState.Paused) ||
-            string.IsNullOrEmpty(source))
-        {
-            _taskbarProgress.Clear();
-            return;
-        }
 
-        _taskbarProgress.Update(_playback.State, _playback.Position, _playback.Duration);
-    }
-    private void OnMediaEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(async () =>
+    private void HandlePlaybackPositionChanged(long positionMicroseconds)
     {
-        _taskbarProgress.Clear();
-        if (_repeatMode == RepeatMode.AutoAdvance) await _mediaNavigation.AutoAdvanceAsync();
-    });
-    private void OnTracksChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
+        _subtitleEditor.UpdatePlaybackPosition(positionMicroseconds);
+        RefreshGeneratedSubtitleOsd(positionMicroseconds);
+    }
+
+    private void HandlePlaybackTracksChanged()
     {
         ApplySubtitleVisibilityPreference();
-        AudioTrackCombo.ItemsSource = _playback.Tracks.Where(t => t.Type == MediaTrackType.Audio).ToArray(); AudioTrackCombo.SelectedItem = _playback.Tracks.FirstOrDefault(t => t.Type == MediaTrackType.Audio && t.IsSelected);
-        RefreshSubtitleTrackSelector();
-    });
-    private void OnAudioTrackChanged(object sender, SelectionChangedEventArgs e) { if (AudioTrackCombo.SelectedItem is MediaTrack track) TryPlayback(() => _playback.SelectTrack(MediaTrackType.Audio, track.Id)); }
-    private void OnSubtitleTrackChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_updatingSubtitleTrackSelector || SubtitleTrackCombo.SelectedItem is not SubtitleSelectionOption option) return;
-        if (option.DisplayMode is { } displayMode)
-        {
-            SetSubtitleDisplayMode(displayMode, refreshOverlay: true);
-            return;
-        }
-
-        if (option.TrackId is not { } trackId) return;
-        if (_subtitleOverlay.IsGeneratedOverlayActive)
-        {
-            _subtitleOverlay.DisableGeneratedOverlay();
-        }
-        _subtitleDisplayMode = null;
-        _selectedNativeSubtitleTrackId = trackId;
-        TryPlayback(() => _playback.SelectTrack(MediaTrackType.Subtitle, trackId));
+        _subtitleTracks.Refresh();
     }
 
-    private void RefreshSubtitleTrackSelector()
-    {
-        var options = new List<SubtitleSelectionOption>();
-        if (_document.ActiveTrack is { Cues.Count: > 0 } || _subtitleDisplayMode is not null)
-        {
-            options.Add(new SubtitleSelectionOption(L("SubtitleOptionOriginal"), SubtitleDisplayMode.Original, null));
-            options.Add(new SubtitleSelectionOption(L("SubtitleOptionTranslation"), SubtitleDisplayMode.Translation, null));
-            options.Add(new SubtitleSelectionOption(L("SubtitleOptionBoth"), SubtitleDisplayMode.OriginalAndTranslation, null));
-        }
-        options.AddRange(_playback.Tracks
-            .Where(track => track.Type == MediaTrackType.Subtitle)
-            .Select(track => new SubtitleSelectionOption(track.DisplayName, null, track.Id)));
-
-        _updatingSubtitleTrackSelector = true;
-        try
-        {
-            SubtitleTrackCombo.ItemsSource = options;
-            SubtitleTrackCombo.SelectedItem = _subtitleDisplayMode is { } displayMode
-                ? options.FirstOrDefault(option => option.DisplayMode == displayMode)
-                : _selectedNativeSubtitleTrackId is { } trackId
-                    ? options.FirstOrDefault(option => option.TrackId == trackId)
-                    : options.FirstOrDefault(option => option.TrackId is not null && _playback.Tracks.Any(track => track.Id == option.TrackId && track.IsSelected));
-        }
-        finally { _updatingSubtitleTrackSelector = false; }
-    }
-
-    private void SetSubtitleDisplayMode(SubtitleDisplayMode displayMode, bool refreshOverlay)
-    {
-        _subtitleDisplayMode = displayMode;
-        _selectedNativeSubtitleTrackId = null;
-        RefreshSubtitleTrackSelector();
-        if (refreshOverlay && _document.ActiveTrack is { Cues.Count: > 0 }) ScheduleSubtitleOverlaySync(force: true);
-    }
-
-    private void OnPlaybackError(object? sender, PlaybackError e)
-    {
-        _ = AppLog.WriteAsync("error", "playback", e.Code, e.Message, e.Exception);
-        DispatcherQueue.TryEnqueue(() => StatusText.Text = $"{e.Code}: {e.Message}");
-    }
-
-    private void OnRootPreviewKeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (e.Key != Windows.System.VirtualKey.Space || e.OriginalSource is TextBox or PasswordBox) return;
-        var ctrl = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-        var shift = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-        var alt = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-        if (!_settings.General.Shortcuts.TryGetValue(ShortcutActions.PlayPause, out var gesture) || !ShortcutGesture.Matches(gesture, e.Key.ToString(), ctrl, shift, alt)) return;
-        e.Handled = true;
-        FocusPlaybackSurface();
-        OnPlayPauseClick(this, new RoutedEventArgs());
-    }
-
+    private void OnAudioTrackChanged(object sender, SelectionChangedEventArgs e) =>
+        _playbackController?.SelectAudioTrack(AudioTrackCombo.SelectedItem);
     private void FocusPlaybackSurface()
     {
         VideoFocusTarget.Focus(FocusState.Programmatic);
@@ -1261,58 +714,6 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             () => VideoFocusTarget.Focus(FocusState.Programmatic));
     }
 
-    private void OnRootKeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (e.Key == Windows.System.VirtualKey.Space && e.Handled) return;
-        var ctrl = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-        var shift = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-        var alt = InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-        var key = e.Key.ToString();
-        var playbackHasFocus = VideoFocusTarget.FocusState != FocusState.Unfocused;
-        if (e.Key == Windows.System.VirtualKey.Escape && _fullscreen.IsFullscreen) { _fullscreen.Exit(); UpdateFullscreenButton(); e.Handled = true; return; }
-        var isTextInput = e.OriginalSource is TextBox or PasswordBox;
-        if (ctrl && shift && !alt && e.Key == Windows.System.VirtualKey.N) { PlayFromBeginning(); e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Enter) { ToggleFullscreen(); e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.F) { ToggleFullscreen(); e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.F11) { ToggleFullscreen(); e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.M) { OnMuteClick(this, new RoutedEventArgs()); e.Handled = true; return; }
-        if (playbackHasFocus && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Up) { TryPlayback(() => _playback.SetVolume(_playback.Volume + 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
-        if (playbackHasFocus && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Down) { TryPlayback(() => _playback.SetVolume(_playback.Volume - 5)); VolumeSlider.Value = _playback.Volume; e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Back) { PlayFromBeginning(); e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Home) { SeekAndRestartAi(TimeSpan.Zero, () => _playback.Seek(TimeSpan.Zero, true)); e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.End) { SeekAndRestartAi(_playback.Duration, () => _playback.Seek(_playback.Duration, true)); e.Handled = true; return; }
-        bool Is(string action) => _settings.General.Shortcuts.TryGetValue(action, out var gesture) && ShortcutGesture.Matches(gesture, key, ctrl, shift, alt);
-        var save = Is(ShortcutActions.SaveSubtitle);
-        var saveAs = Is(ShortcutActions.SaveSubtitleAs);
-        var close = Is(ShortcutActions.CloseWindow);
-        var playPauseAlternate = Is(ShortcutActions.PlayPauseAlternate);
-        var playFromBeginning = Is(ShortcutActions.PlayFromBeginning);
-        var previousMedia = Is(ShortcutActions.PreviousMedia);
-        var nextMedia = Is(ShortcutActions.NextMedia);
-        var toggleTimelinePanel = Is(ShortcutActions.ToggleTimelinePanel);
-        var toggleSidePanel = Is(ShortcutActions.ToggleSidePanel);
-        if (isTextInput && !save && !saveAs && !close && !playPauseAlternate && !playFromBeginning && !previousMedia && !nextMedia && !toggleTimelinePanel && !toggleSidePanel) return;
-        if (close) OnExitClick(this, new RoutedEventArgs());
-        else if (saveAs) OnSaveSubtitleAsClick(this, new RoutedEventArgs());
-        else if (save) OnSaveSubtitleClick(this, new RoutedEventArgs());
-        else if (playFromBeginning) PlayFromBeginning();
-        else if (Is(ShortcutActions.PlayPause) || playPauseAlternate) OnPlayPauseClick(this, new RoutedEventArgs());
-        else if (previousMedia) OnPreviousMediaClick(this, new RoutedEventArgs());
-        else if (nextMedia) OnNextMediaClick(this, new RoutedEventArgs());
-        else if (Is(ShortcutActions.PreviousSubtitle)) SelectRelativeCue(-1);
-        else if (Is(ShortcutActions.NextSubtitle)) SelectRelativeCue(1);
-        else if (Is(ShortcutActions.SeekBackward)) OnSeekBackClick(this, new RoutedEventArgs());
-        else if (Is(ShortcutActions.SeekForward)) OnSeekForwardClick(this, new RoutedEventArgs());
-        else if (Is(ShortcutActions.Undo)) OnUndoClick(this, new RoutedEventArgs());
-        else if (Is(ShortcutActions.Redo)) OnRedoClick(this, new RoutedEventArgs());
-        else if (Is(ShortcutActions.DeleteCue)) OnDeleteCueClick(this, new RoutedEventArgs());
-        else if (Is(ShortcutActions.Fullscreen)) ToggleFullscreen();
-        else if (Is(ShortcutActions.ToggleSubtitles)) { SubtitleVisibilityMenuItem.IsChecked = !_playback.AreSubtitlesVisible; OnToggleSubtitleVisibilityClick(this, new RoutedEventArgs()); }
-        else if (toggleTimelinePanel) { ShowBottomPanelMenuItem.IsChecked = !_panels.IsBottomVisible; OnToggleBottomPanelClick(this, new RoutedEventArgs()); }
-        else if (toggleSidePanel) { ShowRightPanelMenuItem.IsChecked = !_panels.IsRightVisible; OnToggleRightPanelClick(this, new RoutedEventArgs()); }
-        else return;
-        e.Handled = true;
-    }
     private void SelectRelativeCue(int delta)
         => _subtitleEditor.SelectRelativeCue(delta);
 
@@ -1320,47 +721,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void OnNextSubtitleClick(object sender, RoutedEventArgs e) => SelectRelativeCue(1);
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
 
-    private void UpdateShortcutHints()
-    {
-        string Shortcut(string action) => _settings.General.Shortcuts.TryGetValue(action, out var gesture) ? gesture : string.Empty;
-        static string Combine(params string[] gestures) => string.Join(" / ", gestures.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase));
-
-        SaveSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.SaveSubtitle);
-        SaveSubtitleAsMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.SaveSubtitleAs);
-        ExitMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.CloseWindow);
-        PlayPauseMenuItem.KeyboardAcceleratorTextOverride = Combine(Shortcut(ShortcutActions.PlayPause), Shortcut(ShortcutActions.PlayPauseAlternate));
-        DeleteCueMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.DeleteCue);
-        PreviousSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.PreviousSubtitle);
-        NextSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.NextSubtitle);
-        UndoMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.Undo);
-        RedoMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.Redo);
-        SubtitleVisibilityMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSubtitles);
-        ShowBottomPanelMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleTimelinePanel);
-        ShowRightPanelMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSidePanel);
-        FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F", "F11")} · Esc";
-
-        ToolTipService.SetToolTip(BottomPanelToggleButton, F("TooltipToggleBottomPanel", Shortcut(ShortcutActions.ToggleTimelinePanel)));
-        ToolTipService.SetToolTip(RightPanelToggleButton, F("TooltipToggleRightPanel", Shortcut(ShortcutActions.ToggleSidePanel)));
-        AutomationProperties.SetName(BottomPanelToggleButton, L("ShowBottomPanel.Text"));
-        AutomationProperties.SetName(RightPanelToggleButton, L("ShowRightPanel.Text"));
-
-        ToolTipService.SetToolTip(PlayPauseButton, $"{L("PlayPause.Text")} ({Combine(Shortcut(ShortcutActions.PlayPause), Shortcut(ShortcutActions.PlayPauseAlternate))})");
-        ToolTipService.SetToolTip(BeginningButton, L("TooltipBeginning"));
-        ToolTipService.SetToolTip(PreviousButton, F("TooltipPreviousMedia", Shortcut(ShortcutActions.PreviousMedia)));
-        ToolTipService.SetToolTip(NextButton, F("TooltipNextMedia", Shortcut(ShortcutActions.NextMedia)));
-        ToolTipService.SetToolTip(SeekBackButton, F("TooltipSeekBackward", _settings.Playback.SeekIntervalSeconds, Shortcut(ShortcutActions.SeekBackward)));
-        ToolTipService.SetToolTip(SeekForwardButton, F("TooltipSeekForward", _settings.Playback.SeekIntervalSeconds, Shortcut(ShortcutActions.SeekForward)));
-        ToolTipService.SetToolTip(StopButton, L("Stop.Text"));
-        ToolTipService.SetToolTip(MuteButton, L("TooltipMute"));
-        ToolTipService.SetToolTip(VolumeSlider, L("TooltipVolume"));
-        ToolTipService.SetToolTip(PositionSlider, F("TooltipPosition", Shortcut(ShortcutActions.PlayFromBeginning)));
-        ToolTipService.SetToolTip(SubtitleList, F("TooltipSubtitleNavigation", Shortcut(ShortcutActions.PreviousSubtitle), Shortcut(ShortcutActions.NextSubtitle)));
-        ToolTipService.SetToolTip(RepeatButton, L(_repeatMode switch { RepeatMode.One => "TooltipRepeatCurrent", RepeatMode.AutoAdvance => "TooltipAutoAdvance", _ => "TooltipRepeatOff" }));
-        ToolTipService.SetToolTip(CloseButton, F("TooltipClose", Shortcut(ShortcutActions.CloseWindow)));
-        UpdateFullscreenButton();
-    }
-
-    private void OnFullscreenClick(object sender, RoutedEventArgs e) => ToggleFullscreen();
+    private void OnFullscreenClick(object sender, RoutedEventArgs e) => _shortcuts.ToggleFullscreen();
     private void OnVideoDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (_playback.State is PlaybackState.Playing or PlaybackState.Paused) TryPlayback(_playback.TogglePause);
@@ -1371,17 +732,16 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void OnRightPanelToggleButtonClick(object sender, RoutedEventArgs e) { _panels.IsRightVisible = RightPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
     private void OnBottomPanelToggleButtonClick(object sender, RoutedEventArgs e) { _panels.IsBottomVisible = BottomPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
 
-    private void ToggleFullscreen()
+    private void ToggleRightPanel()
     {
-        try { _fullscreen.Toggle(); }
-        finally { UpdateFullscreenButton(); }
+        _panels.IsRightVisible = !_panels.IsRightVisible;
+        ApplyPanelVisibility();
     }
 
-    private void UpdateFullscreenButton()
+    private void ToggleBottomPanel()
     {
-        FullscreenButton.IsChecked = _fullscreen.IsFullscreen;
-        FullscreenButtonIcon.Glyph = _fullscreen.IsFullscreen ? "\uE73F" : "\uE740";
-        ToolTipService.SetToolTip(FullscreenButton, L(_fullscreen.IsFullscreen ? "TooltipExitFullscreen" : "TooltipEnterFullscreen"));
+        _panels.IsBottomVisible = !_panels.IsBottomVisible;
+        ApplyPanelVisibility();
     }
 
     private void ApplyPanelVisibility()
@@ -1460,10 +820,10 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _mediaNavigation.ApplySettings();
         LocalizationService.Apply(settings.General.Language);
         UiFontService.Apply(settings.General.UiFontFamily, RootGrid);
-        ApplyPlaybackToolbarIconSize();
+        _playbackController.ApplyToolbarSize();
         _chrome.ApplyTheme(settings.General.Theme);
         _rightPanel.RefreshLabels();
-        UpdateShortcutHints();
+        _shortcuts.RefreshHints();
         if (!_playback.IsAvailable) return;
         TryPlayback(() =>
         {
@@ -1481,60 +841,6 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             _playback.ConfigureRtxVideoSuperResolution(settings.Playback.RtxVideoSuperResolution);
         });
         ScheduleSubtitleOverlaySync();
-    }
-
-    private void ApplyPlaybackToolbarIconSize()
-    {
-        const double defaultButtonWidth = 44;
-        const double defaultButtonHeight = 38;
-        const double defaultVerticalPadding = 4;
-        var scale = _settings.Playback.UseLargeToolbarIcons ? 1.35 : 1.0;
-
-        foreach (var button in GetPlaybackToolbarButtons())
-        {
-            button.Width = defaultButtonWidth * scale;
-            button.MinWidth = defaultButtonWidth * scale;
-            button.Height = defaultButtonHeight * scale;
-        }
-
-        var verticalPadding = _settings.Playback.UseLargeToolbarIcons ? 6 : defaultVerticalPadding;
-        PlaybackControls.Padding = new Thickness(8, verticalPadding, 8, verticalPadding);
-        PlaybackControls.MinHeight = (defaultButtonHeight * scale) + (verticalPadding * 2);
-
-        SetPlaybackImageSize(BeginningIcon, 19 * scale);
-        SetPlaybackImageSize(PreviousIcon, 19 * scale);
-        SetPlaybackImageSize(SeekBackIcon, 20 * scale);
-        SetPlaybackImageSize(PlayPauseIcon, 21 * scale);
-        SetPlaybackImageSize(StopIcon, 18 * scale);
-        SetPlaybackImageSize(SeekForwardIcon, 20 * scale);
-        SetPlaybackImageSize(NextIcon, 19 * scale);
-        SetPlaybackImageSize(MuteIcon, 20 * scale);
-        SetPlaybackImageSize(RepeatIcon, 20 * scale);
-        ScreenshotButtonIcon.FontSize = 19 * scale;
-        FullscreenButtonIcon.FontSize = 19 * scale;
-        CloseButtonIcon.FontSize = 19 * scale;
-    }
-
-    private ButtonBase[] GetPlaybackToolbarButtons() =>
-    [
-        BeginningButton,
-        PreviousButton,
-        SeekBackButton,
-        PlayPauseButton,
-        StopButton,
-        SeekForwardButton,
-        NextButton,
-        ScreenshotButton,
-        MuteButton,
-        RepeatButton,
-        FullscreenButton,
-        CloseButton
-    ];
-
-    private static void SetPlaybackImageSize(Image icon, double size)
-    {
-        icon.Width = size;
-        icon.Height = size;
     }
 
     private async void OnAboutClick(object sender, RoutedEventArgs e) =>
@@ -1561,20 +867,12 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         await _mediaNavigation.RemoveFavoriteAsync(sender);
 
     private async Task<bool> PrepareForRemoteSubtitleLoadAsync()
-    {
-        await CancelAiPipelineAsync();
-        return await ConfirmDiscardChangesAsync(L("ActionLoadSubtitle"));
-    }
+        => await PrepareForSubtitleLoadAsync();
 
     private Task ApplyDownloadedWebDavSubtitleAsync(DownloadedWebDavSubtitle subtitle)
     {
-        var document = _subtitleFiles.DecodeAndParse(subtitle.Path, subtitle.Bytes, _settings.Subtitle.Encoding);
-        document.MarkSaved();
-        BindDocument(document);
-        _aiWorkflow.ResetTranslation();
-        ScheduleSubtitleOverlaySync();
+        _subtitleSession.DecodeAndBind(subtitle.Path, subtitle.Bytes);
         if (subtitle.ShowSubtitlePanel) _rightPanel.Show(RightPanelSection.Subtitles);
-        StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
         return Task.CompletedTask;
     }
 
@@ -1626,17 +924,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _closeInProgress = true;
         try
         {
-            if (_document.IsDirty)
-            {
-                var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("UnsavedChangesTitle"), Content = L("UnsavedChangesCloseMessage"), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
-                var result = await ShowDialogAsync(dialog);
-                if (result == ContentDialogResult.None) return;
-                if (result == ContentDialogResult.Primary)
-                {
-                    if (_document.FilePath is null) await SaveSubtitleAsAsync(); else await SaveSubtitleAsync(_document.FilePath);
-                    if (_document.IsDirty) return;
-                }
-            }
+            if (!await _subtitleSession.ConfirmCloseAsync()) return;
 
             _shutdownTask ??= ShutdownAsync();
             await _shutdownTask;
@@ -1655,20 +943,6 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         }
     }
 
-    private async Task<bool> ConfirmDiscardChangesAsync(string action)
-    {
-        if (!_document.IsDirty) return true;
-        var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("UnsavedChangesTitle"), Content = F("UnsavedChangesActionMessage", action), PrimaryButtonText = L("SaveButtonText"), SecondaryButtonText = L("DiscardButton"), CloseButtonText = L("CancelButtonText"), DefaultButton = ContentDialogButton.Primary };
-        var result = await ShowDialogAsync(dialog);
-        if (result == ContentDialogResult.None) return false;
-        if (result == ContentDialogResult.Primary)
-        {
-            if (_document.FilePath is null) await SaveSubtitleAsAsync(); else await SaveSubtitleAsync(_document.FilePath);
-            return !_document.IsDirty;
-        }
-        return true;
-    }
-
     private void TryPlayback(Action action) { try { action(); } catch (Exception exception) { StatusText.Text = exception.Message; } }
     private void SeekAndRestartAi(TimeSpan requestedPosition, Action seek)
     {
@@ -1682,28 +956,11 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) => string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
     private long CurrentPlaybackPositionMicroseconds => Math.Max(0, _playback.Position.Ticks / 10);
-    private static string FormatTime(TimeSpan value)
-    {
-        var totalSeconds = Math.Max(0, (long)value.TotalSeconds);
-        return $"{totalSeconds / 3600:00}:{totalSeconds / 60 % 60:00}:{totalSeconds % 60:00}";
-    }
-    private sealed class PositionSliderThumbToolTipValueConverter : Microsoft.UI.Xaml.Data.IValueConverter
-    {
-        public object Convert(object value, Type targetType, object parameter, string language)
-        {
-            if (value is double seconds && double.IsFinite(seconds)) return FormatTime(TimeSpan.FromSeconds(Math.Max(0, seconds)));
-            return FormatTime(TimeSpan.Zero);
-        }
-
-        public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
-    }
     private async Task ShutdownAsync()
     {
-        _playback.StateChanged -= OnPlaybackStateChanged;
-        ResetAudioArtworkPresentation();
-        ReleasePlaybackPowerRequirement();
-        _taskbarProgress.Dispose();
-        _windowsPowerManagement.Dispose();
+        _audioPresentation.Dispose();
+        _shortcuts.Dispose();
+        _playbackController.Dispose();
         _fullscreen.Dispose();
         if (_appWindow is not null)
         {
@@ -1722,12 +979,11 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         try { await SettingsService.CreateDefault().SaveAsync(_settings); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "SETTINGS_SAVE_ERROR", exception.Message, exception); }
         _rightPanel.Dispose();
+        _subtitleTracks.Dispose();
         _mediaNavigation.Dispose();
         try { await _playback.DisposeAsync(); }
         catch (Exception exception) { await AppLog.WriteAsync("error", "shutdown", "PLAYBACK_DISPOSE_ERROR", exception.Message, exception); }
         _playback.FirstFrameReady -= OnFirstFrameReady;
-        _playback.PositionChanged -= OnPlaybackPositionChanged;
-        _playback.Seeked -= OnPlaybackSeeked;
         if (_videoHost is not null)
         {
             _videoHost.FilesDropped -= OnNativeVideoFilesDropped;
@@ -1750,9 +1006,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
-        ReleasePlaybackPowerRequirement();
-        _taskbarProgress.Dispose();
-        _windowsPowerManagement.Dispose();
+        _shortcuts.Dispose();
+        _playbackController.Dispose();
         if (_appWindow is not null)
         {
             _appWindow.Closing -= OnAppWindowClosing;
@@ -1763,16 +1018,16 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     }
 
     AppSettings IAiWorkflowHost.Settings => _settings;
-    SubtitleDocument IAiWorkflowHost.Document => _document;
-    SubtitleDisplayMode? IAiWorkflowHost.CurrentSubtitleDisplayMode => _subtitleDisplayMode;
-    IReadOnlyDictionary<string, string>? IAiWorkflowHost.CurrentHttpHeaders => _currentHttpHeaders;
+    SubtitleDocument IAiWorkflowHost.Document => _subtitleSession.Document;
+    SubtitleDisplayMode? IAiWorkflowHost.CurrentSubtitleDisplayMode => _subtitleTracks.DisplayMode;
+    IReadOnlyDictionary<string, string>? IAiWorkflowHost.CurrentHttpHeaders => _mediaSession.CurrentHttpHeaders;
     long IAiWorkflowHost.CurrentPlaybackPositionMicroseconds => CurrentPlaybackPositionMicroseconds;
     double IAiWorkflowHost.ViewWidth => RootGrid.ActualWidth;
     double IAiWorkflowHost.ViewHeight => RootGrid.ActualHeight;
     DispatcherQueue IAiWorkflowHost.DispatcherQueue => DispatcherQueue;
-    void IAiWorkflowHost.BindDocument(SubtitleDocument document) => BindDocument(document);
+    void IAiWorkflowHost.BindDocument(SubtitleDocument document) => _subtitleSession.Bind(document);
     void IAiWorkflowHost.SetSubtitleDisplayMode(SubtitleDisplayMode displayMode, bool refreshOverlay) =>
-        SetSubtitleDisplayMode(displayMode, refreshOverlay);
+        _subtitleTracks.SetDisplayMode(displayMode, refreshOverlay);
     void IAiWorkflowHost.ShowSubtitlePanel()
     {
         _rightPanel.Show(RightPanelSection.Subtitles);
@@ -1804,5 +1059,4 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(nint window, uint attribute, ref int value, uint valueSize);
 
-    private enum RepeatMode { Off, One, AutoAdvance }
 }
