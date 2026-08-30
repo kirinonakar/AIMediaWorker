@@ -8,7 +8,6 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
         <CommandBar Style="{StaticResource RightPanelCommandBarStyle}">
@@ -25,22 +24,24 @@
                 <DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
             </BreadcrumbBar.ItemTemplate>
         </BreadcrumbBar>
-        <Grid Grid.Row="2" ColumnSpacing="8" RowSpacing="4">
-            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <SymbolIcon Symbol="Find" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource RightPanelMutedTextBrush}" IsHitTestVisible="False" />
-            <TextBox x:Uid="BrowserSearch" x:Name="SearchBox" Grid.Column="1" Style="{StaticResource RightPanelTextBoxStyle}" PlaceholderText="Search subfolders" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" />
-            <ToggleButton x:Uid="BrowserRegexSearch" x:Name="RegexSearchToggle" Grid.Column="2" MinWidth="38" Height="36" Padding="8,0" CornerRadius="6" Content=".*" Click="OnRegexSearchClick" />
-            <Button x:Uid="BrowserSearchButton" x:Name="SearchButton" Grid.Column="3" Style="{StaticResource RightPanelButtonStyle}" Content="Search" Click="OnSearchClick" />
-            <ProgressRing x:Name="SearchProgressRing" Grid.Row="1" Width="16" Height="16" IsActive="False" />
-            <TextBlock x:Name="SearchStatusText" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource RightPanelMutedTextBrush}" FontSize="11" />
-        </Grid>
-        <Grid Grid.Row="3" ColumnSpacing="8">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <SymbolIcon Symbol="Filter" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource RightPanelMutedTextBrush}" IsHitTestVisible="False" />
-            <TextBox x:Uid="BrowserFilter" x:Name="FilterBox" Grid.Column="1" Style="{StaticResource RightPanelTextBoxStyle}" PlaceholderText="Filter by name" TextChanged="OnFilterTextChanged" />
-        </Grid>
-        <ListView x:Name="EntryList" Grid.Row="4" Style="{StaticResource RightPanelListStyle}" ItemContainerStyle="{StaticResource RightPanelListItemStyle}" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnEntryClick">
+        <StackPanel Grid.Row="2" Spacing="4">
+            <Grid ColumnSpacing="8" RowSpacing="4">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <SymbolIcon Symbol="Find" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource RightPanelMutedTextBrush}" IsHitTestVisible="False" />
+                <TextBox x:Uid="BrowserSearch" x:Name="SearchBox" Grid.Column="1" Style="{StaticResource RightPanelTextBoxStyle}" PlaceholderText="Search subfolders" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" />
+                <ToggleButton x:Uid="BrowserRegexSearch" x:Name="RegexSearchToggle" Grid.Column="2" MinWidth="38" Height="36" Padding="8,0" CornerRadius="6" Content=".*" Click="OnRegexSearchClick" />
+                <Button x:Uid="BrowserSearchButton" x:Name="SearchButton" Grid.Column="3" Style="{StaticResource RightPanelButtonStyle}" Content="Search" Click="OnSearchClick" />
+                <ProgressRing x:Name="SearchProgressRing" Grid.Row="1" Width="16" Height="16" IsActive="False" />
+                <TextBlock x:Name="SearchStatusText" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource RightPanelMutedTextBrush}" FontSize="11" />
+            </Grid>
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <SymbolIcon Symbol="Filter" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource RightPanelMutedTextBrush}" IsHitTestVisible="False" />
+                <TextBox x:Uid="BrowserFilter" x:Name="FilterBox" Grid.Column="1" Style="{StaticResource RightPanelTextBoxStyle}" PlaceholderText="Filter by name" TextChanged="OnFilterTextChanged" />
+            </Grid>
+        </StackPanel>
+        <ListView x:Name="EntryList" Grid.Row="3" Style="{StaticResource RightPanelListStyle}" ItemContainerStyle="{StaticResource RightPanelListItemStyle}" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnEntryClick">
             <ListView.ItemTemplate>
                 <DataTemplate>
                     <Grid Padding="2,0" ColumnSpacing="10" RightTapped="OnEntryRightTapped">
