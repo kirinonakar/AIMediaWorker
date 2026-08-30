@@ -68,4 +68,53 @@ public sealed class AsrSegmentationTests
         Assert.True(result.Count >= 2);
         Assert.All(result, cue => Assert.True(cue.Text.Length <= 20));
     }
+
+    [Fact]
+    public void JapaneseSmallKanaFragmentIsMergedWithPreviousCue()
+    {
+        var result = AsrSubtitleSegmenter.Segment(
+        [
+            new AsrSegment
+            {
+                StartMicroseconds = 101_600_000,
+                EndMicroseconds = 102_960_000,
+                Text = "もっと強くならなくち"
+            },
+            new AsrSegment
+            {
+                StartMicroseconds = 113_040_000,
+                EndMicroseconds = 113_290_000,
+                Text = "ゃ。"
+            }
+        ], new AsrSegmentationOptions(1, 20, 2, 42, 0.6, 20));
+
+        var cue = Assert.Single(result);
+        Assert.Equal("もっと強くならなくちゃ。", cue.Text);
+        Assert.Equal(101_600_000, cue.StartMicroseconds);
+        Assert.Equal(113_290_000, cue.EndMicroseconds);
+    }
+
+    [Fact]
+    public void StandaloneJapanesePunctuationIsMergedWithPreviousCue()
+    {
+        var result = AsrSubtitleSegmenter.Segment(
+        [
+            new AsrSegment
+            {
+                StartMicroseconds = 113_280_000,
+                EndMicroseconds = 116_640_000,
+                Text = "ルーデスなんて、当然エリスの妄想に違いないわ"
+            },
+            new AsrSegment
+            {
+                StartMicroseconds = 118_640_000,
+                EndMicroseconds = 118_650_000,
+                Text = " 。"
+            }
+        ], new AsrSegmentationOptions(1, 20, 2, 42, 0.6, 20));
+
+        var cue = Assert.Single(result);
+        Assert.Equal("ルーデスなんて、当然エリスの妄想に違いないわ。", cue.Text);
+        Assert.Equal(118_650_000, cue.EndMicroseconds);
+    }
 }

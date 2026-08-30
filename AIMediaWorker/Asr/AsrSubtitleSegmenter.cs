@@ -10,6 +10,7 @@ public static class AsrSubtitleSegmenter
     private const string SentenceTerminators = ".!?。！？…";
     private const string ClosingPunctuation = ")]}>」』】》）〕〉］｝】”’\"'";
     private const string OpeningPunctuation = "([{<「『【《（〔〈［｛";
+    private const string JapaneseNonStarters = "ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶーゝゞヽヾ々〻\u3099\u309a";
 
     public static IReadOnlyList<AsrSegment> Segment(
         IReadOnlyList<AsrSegment> segments,
@@ -33,7 +34,68 @@ public static class AsrSubtitleSegmenter
                 result.AddRange(SegmentText(segment, normalized));
         }
 
+        return MergeDanglingSegments(result);
+    }
+
+    private static IReadOnlyList<AsrSegment> MergeDanglingSegments(IReadOnlyList<AsrSegment> segments)
+    {
+        if (segments.Count < 2) return segments;
+
+        var result = new List<AsrSegment>(segments.Count);
+        foreach (var segment in segments)
+        {
+            if (result.Count == 0 || !IsDanglingSegmentText(segment.Text))
+            {
+                result.Add(segment);
+                continue;
+            }
+
+            var previous = result[^1];
+            result[^1] = new AsrSegment
+            {
+                StartMicroseconds = previous.StartMicroseconds,
+                EndMicroseconds = Math.Max(previous.EndMicroseconds, segment.EndMicroseconds),
+                Text = AppendText(previous.Text, segment.Text),
+                Confidence = CombineConfidence(previous, segment),
+                Words = CombineWords(previous.Words, segment.Words)
+            };
+        }
+
         return result;
+    }
+
+    private static bool IsDanglingSegmentText(string text)
+    {
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0) return false;
+
+        var hasNonPunctuation = false;
+        foreach (var character in trimmed)
+        {
+            if (char.IsWhiteSpace(character) || char.IsPunctuation(character) || char.IsSymbol(character)) continue;
+            if (!JapaneseNonStarters.Contains(character)) return false;
+            hasNonPunctuation = true;
+        }
+
+        return hasNonPunctuation || trimmed.All(character =>
+            char.IsWhiteSpace(character) || char.IsPunctuation(character) || char.IsSymbol(character));
+    }
+
+    private static double? CombineConfidence(AsrSegment first, AsrSegment second)
+    {
+        if (first.Confidence is null) return second.Confidence;
+        if (second.Confidence is null) return first.Confidence;
+
+        var firstDuration = Math.Max(1L, first.EndMicroseconds - first.StartMicroseconds);
+        var secondDuration = Math.Max(1L, second.EndMicroseconds - second.StartMicroseconds);
+        return (first.Confidence.Value * firstDuration + second.Confidence.Value * secondDuration) /
+               (firstDuration + secondDuration);
+    }
+
+    private static IReadOnlyList<AsrWord>? CombineWords(IReadOnlyList<AsrWord>? first, IReadOnlyList<AsrWord>? second)
+    {
+        if (first is null && second is null) return null;
+        return (first ?? []).Concat(second ?? []).ToArray();
     }
 
     private static IReadOnlyList<AsrSegment> SegmentWords(
