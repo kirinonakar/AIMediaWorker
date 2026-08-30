@@ -98,23 +98,23 @@ internal sealed class WindowChromeController
 
     public void UpdateIcons()
     {
-        _view.BeginningIcon.Source = PlaybackIconSource("beginning");
-        _view.PreviousIcon.Source = PlaybackIconSource("previous");
-        _view.SeekBackIcon.Source = PlaybackIconSource("seek-back");
-        _view.PlayPauseIcon.Source = PlaybackIconSource(_getPlaybackState() == PlaybackState.Playing ? "pause" : "play");
-        _view.StopIcon.Source = PlaybackIconSource("stop");
-        _view.SeekForwardIcon.Source = PlaybackIconSource("seek-forward");
-        _view.NextIcon.Source = PlaybackIconSource("next");
-        _view.MuteIcon.Source = PlaybackIconSource(_getMuted() ? "mute" : "volume");
-        _view.RepeatIcon.Source = PlaybackIconSource(_getRepeatIconName());
+        UpdatePlaybackIcon(_view.BeginningIcon, "beginning");
+        UpdatePlaybackIcon(_view.PreviousIcon, "previous");
+        UpdatePlaybackIcon(_view.SeekBackIcon, "seek-back");
+        UpdatePlaybackIcon(_view.PlayPauseIcon, _getPlaybackState() == PlaybackState.Playing ? "pause" : "play");
+        UpdatePlaybackIcon(_view.StopIcon, "stop");
+        UpdatePlaybackIcon(_view.SeekForwardIcon, "seek-forward");
+        UpdatePlaybackIcon(_view.NextIcon, "next");
+        UpdatePlaybackIcon(_view.MuteIcon, _getMuted() ? "mute" : "volume");
+        UpdatePlaybackIcon(_view.RepeatIcon, _getRepeatIconName());
         UpdatePanelToggleIcons();
     }
 
     public void UpdatePanelToggleIcons()
     {
-        _view.BottomPanelToggleIcon.Source = PanelToggleIconSource("bottom-panel", _getBottomPanelVisible());
-        _view.StatusPanelToggleIcon.Source = PanelToggleIconSource("status-panel", _getStatusPanelVisible());
-        _view.RightPanelToggleIcon.Source = PanelToggleIconSource("right-panel", _getRightPanelVisible());
+        UpdatePanelToggleIcon(_view.BottomPanelToggleIcon, "bottom-panel", _getBottomPanelVisible());
+        UpdatePanelToggleIcon(_view.StatusPanelToggleIcon, "status-panel", _getStatusPanelVisible());
+        UpdatePanelToggleIcon(_view.RightPanelToggleIcon, "right-panel", _getRightPanelVisible());
     }
 
     public void ActualThemeChanged(ElementTheme theme)
@@ -148,6 +148,24 @@ internal sealed class WindowChromeController
     {
         UriSource = new Uri($"ms-appx:///Assets/Panels/{name}{(isOpen ? string.Empty : "-closed")}{(_view.Root.ActualTheme == ElementTheme.Dark ? "-dark" : string.Empty)}.svg")
     };
+
+    private void UpdatePlaybackIcon(Image image, string name)
+    {
+        var source = PlaybackIconSource(name);
+        SetIconSourceIfChanged(image, source);
+    }
+
+    private void UpdatePanelToggleIcon(Image image, string name, bool isOpen)
+    {
+        var source = PanelToggleIconSource(name, isOpen);
+        SetIconSourceIfChanged(image, source);
+    }
+
+    private static void SetIconSourceIfChanged(Image image, SvgImageSource source)
+    {
+        if (image.Source is SvgImageSource current && current.UriSource == source.UriSource) return;
+        image.Source = source;
+    }
 
     private void ApplyTitleBarTheme(ElementTheme theme)
     {

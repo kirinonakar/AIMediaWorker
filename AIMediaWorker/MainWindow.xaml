@@ -334,11 +334,15 @@
                     <ResourceDictionary.ThemeDictionaries>
                         <ResourceDictionary x:Key="Light">
                             <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#12000000" />
-                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#22000000" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#12000000" />
+                            <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="#12000000" />
+                            <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="#12000000" />
                         </ResourceDictionary>
                         <ResourceDictionary x:Key="Default">
                             <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#18FFFFFF" />
-                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#2AFFFFFF" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#18FFFFFF" />
+                            <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="#18FFFFFF" />
+                            <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="#18FFFFFF" />
                         </ResourceDictionary>
                     </ResourceDictionary.ThemeDictionaries>
                 </ResourceDictionary>

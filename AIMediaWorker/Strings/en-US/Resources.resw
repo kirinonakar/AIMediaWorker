@@ -196,4 +196,10 @@
 <data name="RecordingErrorTitle"><value>Recording failed</value></data>
 <data name="CloseTooltip"><value>Close</value></data>
 <data name="InvalidWebDavHttpsAddressMessage"><value>Enter a valid HTTPS address and a port from 1 to 65535. You can omit https://.</value></data>
+<data name="DictationTooltip"><value>Dictate into the last cursor position</value></data>
+<data name="DictationTargetMissing"><value>Place the cursor in another app, then press the microphone again.</value></data>
+<data name="DictationListening"><value>Listening and typing at the cursor…</value></data>
+<data name="DictationReady"><value>Ready. Click an input field in another app, then start speaking.</value></data>
+<data name="DictationStopped"><value>Voice typing stopped.</value></data>
+<data name="DictationInputFailed"><value>Text could not be inserted into the target app.</value></data>
 </root>

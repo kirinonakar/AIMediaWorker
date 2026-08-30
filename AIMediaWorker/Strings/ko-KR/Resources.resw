@@ -196,4 +196,10 @@
 <data name="RecordingErrorTitle"><value>녹화 실패</value></data>
 <data name="CloseTooltip"><value>닫기</value></data>
 <data name="InvalidWebDavHttpsAddressMessage"><value>올바른 HTTPS 주소와 1~65535 사이의 포트를 입력하세요. https://는 생략할 수 있습니다.</value></data>
+<data name="DictationTooltip"><value>마지막 커서 위치에 실시간 음성 입력</value></data>
+<data name="DictationTargetMissing"><value>다른 앱에 커서를 놓은 뒤 마이크 버튼을 다시 누르세요.</value></data>
+<data name="DictationListening"><value>음성을 인식해 커서 위치에 입력하는 중…</value></data>
+<data name="DictationReady"><value>준비됨: 다른 앱의 입력창을 클릭한 뒤 말씀하세요.</value></data>
+<data name="DictationStopped"><value>음성 입력을 중지했습니다.</value></data>
+<data name="DictationInputFailed"><value>대상 앱에 인식된 글자를 입력할 수 없습니다.</value></data>
 </root>

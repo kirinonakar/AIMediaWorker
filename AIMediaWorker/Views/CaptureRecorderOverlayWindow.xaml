@@ -5,7 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Capture &amp; record">
     <Window.SystemBackdrop><DesktopAcrylicBackdrop /></Window.SystemBackdrop>
-    <StackPanel x:Name="Root" MinWidth="460" Spacing="1" Loaded="OnLoaded" SizeChanged="OnContentSizeChanged" KeyDown="OnRootKeyDown">
+    <StackPanel x:Name="Root" MinWidth="510" Spacing="1" Loaded="OnLoaded" SizeChanged="OnContentSizeChanged" KeyDown="OnRootKeyDown">
         <Grid x:Name="ToolbarPanel" ColumnSpacing="7" Margin="8,5,8,1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
@@ -79,6 +79,10 @@
                             <Button x:Name="VlmOcrButton" Width="38" Height="30" Padding="0" Click="OnVlmOcrClick">
                                 <TextBlock Text="VLM" FontSize="10" FontWeight="SemiBold" />
                             </Button>
+                            <ToggleButton x:Name="DictationButton" Width="30" Height="30" Padding="0" Margin="9,0,0,0"
+                                          IsTabStop="False" AllowFocusOnInteraction="False" Click="OnDictationClick">
+                                <FontIcon Glyph="&#xE720;" FontSize="14" />
+                            </ToggleButton>
                         </StackPanel>
                     </StackPanel>
                 </StackPanel>

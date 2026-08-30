@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using AIMediaWorker.Asr;
 using AIMediaWorker.Capture;
 using AIMediaWorker.Diagnostics;
 using AIMediaWorker.Llm;
@@ -58,11 +59,19 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private const uint DwmwaCloak = 13;
     private const uint DwmwaBorderColor = 34;
     private const uint DwmColorNone = 0xFFFFFFFE;
+    private const uint InputKeyboard = 1;
+    private const uint KeyEventKeyUp = 0x0002;
+    private const uint KeyEventUnicode = 0x0004;
+    private const ushort VkBack = 0x08;
 
     private readonly AppWindow? _appWindow;
     private readonly nint _selfHandle;
     private readonly DispatcherQueueTimer _elapsedTimer;
     private readonly DispatcherQueueTimer _statusHideTimer;
+    private readonly AsrWorkerClient _dictationAsr = new();
+    private readonly AudioCaptureService _dictationAudio = new();
+    private readonly LiveCaptionStabilizer _dictationStabilizer = new();
+    private readonly LiveAsrController _dictation;
     private readonly bool _settingsProvided;
     private AppSettings _settings;
     private bool _startupWindowCloaked;
@@ -78,6 +87,11 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private bool _isDraggingOverlay;
     private bool _topmostRepairPending;
     private bool _isClosed;
+    private bool _acceptDictationResults;
+    private bool _dictationArmed;
+    private bool _startingDictationCapture;
+    private nint _dictationTarget;
+    private string _injectedDictationText = string.Empty;
     private ScreenCaptureInterop.POINT _dragStartCursor;
     private PointInt32 _dragStartWindowPosition;
 
@@ -88,6 +102,9 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         _selfHandle = WindowNative.GetWindowHandle(this);
         _startupWindowCloaked = SetWindowCloak(_selfHandle, cloak: true);
         InitializeComponent();
+        _dictation = new LiveAsrController(_dictationAudio, _dictationAsr);
+        _dictation.CaptionReceived += OnDictationReceived;
+        _dictation.Failed += OnDictationFailed;
         Title = L("CaptureRecorderTitle");
         if (owner is not null) WindowOwner.Attach(this, owner);
         _appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_selfHandle));
@@ -105,7 +122,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             }
 
             RemoveNativeWindowFrame();
-            _appWindow.ResizeClient(new SizeInt32(460, 42));
+            _appWindow.ResizeClient(new SizeInt32(510, 42));
             _appWindow.Closing += OnAppWindowClosing;
             _appWindow.Changed += OnAppWindowChanged;
         }
@@ -206,6 +223,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         SetButtonDescription(OcrButton, L("OcrTooltip"));
         SetButtonDescription(TranslateOcrButton, L("OcrTranslateTooltip"));
         SetButtonDescription(VlmOcrButton, L("OcrVlmTooltip"));
+        SetButtonDescription(DictationButton, L("DictationTooltip"));
         SetButtonDescription(StopRecordButton, L("RecordStop.Content"));
         SetButtonDescription(CloseOverlayButton, L("CloseTooltip"));
         UpdatePauseResumeButton(false);
@@ -331,7 +349,22 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     }
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
-        => EnsureAlwaysOnTop(forceZOrder: true);
+    {
+        EnsureAlwaysOnTop(forceZOrder: true);
+        if (args.WindowActivationState != WindowActivationState.Deactivated) return;
+        // Foreground ownership changes just after this callback. Sampling on the
+        // dispatcher lets the user's next input-field click choose the target;
+        // the overlay never forces focus back to another app.
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, CaptureExternalForegroundWindow);
+    }
+
+    private void CaptureExternalForegroundWindow()
+    {
+        var window = GetForegroundWindow();
+        if (!IsExternalWindow(window)) return;
+        if (_dictationArmed && !_dictation.IsRunning && !_startingDictationCapture)
+            _ = StartDictationAtTargetAsync(window);
+    }
 
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {
@@ -442,6 +475,182 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         }
 
         await SelectAndRecognizeAsync(OcrCaptureAction.Vlm);
+    }
+
+    private async void OnDictationClick(object sender, RoutedEventArgs e)
+    {
+        if (_dictationArmed || _dictation.IsRunning || _startingDictationCapture)
+        {
+            await StopDictationAsync();
+            return;
+        }
+
+        DictationButton.IsEnabled = false;
+        DictationButton.IsChecked = true;
+        _acceptDictationResults = false;
+        _dictationTarget = 0;
+        try
+        {
+            if (!File.Exists(AsrRuntimePaths.CrispAsrDllPath))
+            {
+                ShowStatus(L("AsrInstallRequiredMessage"));
+                return;
+            }
+
+            ShowStatus(L("StatusLoadingAsr"));
+            var runtimeDirectory = AsrRuntimePaths.GetCrispAsrRuntimeDirectory(_settings.Asr.CrispAsrRuntimeDirectory);
+            await _dictationAsr.StartAsync(runtimeDirectory);
+            var acceptingLoadProgress = true;
+            var progress = new Progress<AsrEvent>(_ => { if (acceptingLoadProgress) ShowStatus(L("StatusLoadingAsr")); });
+            try
+            {
+                await _dictationAsr.LoadModelAsync(
+                    _settings.Asr.ModelPath ?? AsrSettings.DefaultModelId,
+                    _settings.Asr.AlignerPath,
+                    _settings.Asr.Device.ToString(),
+                    _settings.Asr.Precision.ToString(),
+                    progress);
+            }
+            finally
+            {
+                acceptingLoadProgress = false;
+            }
+
+            _dictationArmed = true;
+            ShowStatus(L("DictationReady"));
+            _statusHideTimer.Stop();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _acceptDictationResults = false;
+            ShowStatus(L("MicrophonePermissionMessage"));
+        }
+        catch (Exception exception)
+        {
+            _acceptDictationResults = false;
+            await HandleActionErrorAsync(L("LiveAsrErrorTitle"), "CAPTURE_DICTATION_START_ERROR", exception);
+        }
+        finally
+        {
+            DictationButton.IsEnabled = true;
+            DictationButton.IsChecked = _dictationArmed || _dictation.IsRunning;
+        }
+    }
+
+    private async Task StartDictationAtTargetAsync(nint target)
+    {
+        if (!_dictationArmed || _dictation.IsRunning || _startingDictationCapture || !IsExternalWindow(target)) return;
+        _startingDictationCapture = true;
+        _dictationTarget = target;
+        _injectedDictationText = string.Empty;
+        _dictationStabilizer.Reset();
+        _dictationStabilizer.Language = _settings.Asr.Language;
+        try
+        {
+            await _dictation.StartAsync(_settings.Capture.MicrophoneDeviceId, _settings.Asr.Language);
+            if (!_dictationArmed)
+            {
+                await _dictation.StopAsync();
+                return;
+            }
+            _acceptDictationResults = true;
+            ShowStatus(L("DictationListening"));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _dictationArmed = false;
+            _acceptDictationResults = false;
+            ShowStatus(L("MicrophonePermissionMessage"));
+        }
+        catch (Exception exception)
+        {
+            _dictationArmed = false;
+            _acceptDictationResults = false;
+            await HandleActionErrorAsync(L("LiveAsrErrorTitle"), "CAPTURE_DICTATION_START_ERROR", exception);
+        }
+        finally
+        {
+            _startingDictationCapture = false;
+            DictationButton.IsEnabled = true;
+            DictationButton.IsChecked = _dictationArmed || _dictation.IsRunning;
+        }
+    }
+
+    private async Task StopDictationAsync()
+    {
+        DictationButton.IsEnabled = false;
+        _dictationArmed = false;
+        _acceptDictationResults = false;
+        try
+        {
+            if (_dictation.IsRunning) await _dictation.StopAsync();
+            ShowStatus(L("DictationStopped"));
+        }
+        catch (Exception exception)
+        {
+            await HandleActionErrorAsync(L("LiveAsrErrorTitle"), "CAPTURE_DICTATION_STOP_ERROR", exception);
+        }
+        finally
+        {
+            _dictationTarget = 0;
+            _injectedDictationText = string.Empty;
+            _dictationStabilizer.Reset();
+            DictationButton.IsChecked = false;
+            DictationButton.IsEnabled = true;
+        }
+    }
+
+    private void OnDictationReceived(object? sender, AsrEvent result) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (!_acceptDictationResults) return;
+        var text = _dictationStabilizer.UpdateState(result).DisplayText;
+        if (string.IsNullOrWhiteSpace(text)) return;
+        InjectDictationText(text);
+    });
+
+    private void OnDictationFailed(object? sender, Exception exception) => DispatcherQueue.TryEnqueue(async () =>
+    {
+        _dictationArmed = false;
+        _acceptDictationResults = false;
+        DictationButton.IsChecked = _dictation.IsRunning;
+        await HandleActionErrorAsync(L("LiveAsrErrorTitle"), "CAPTURE_DICTATION_ERROR", exception);
+    });
+
+    private static bool IsExternalWindow(nint window)
+    {
+        if (window == 0 || !IsWindow(window) || !IsWindowVisible(window)) return false;
+        GetWindowThreadProcessId(window, out var processId);
+        return processId != (uint)Environment.ProcessId;
+    }
+
+    private void InjectDictationText(string text)
+    {
+        if (!IsExternalWindow(_dictationTarget) || GetForegroundWindow() != _dictationTarget) return;
+
+        var commonLength = 0;
+        var maximum = Math.Min(_injectedDictationText.Length, text.Length);
+        while (commonLength < maximum && _injectedDictationText[commonLength] == text[commonLength]) commonLength++;
+        if (commonLength > 0 && commonLength < maximum && char.IsLowSurrogate(text[commonLength])) commonLength--;
+
+        var inputs = new List<INPUT>();
+        for (var index = commonLength; index < _injectedDictationText.Length; index++)
+        {
+            if (char.IsLowSurrogate(_injectedDictationText[index])) continue;
+            AddKeyStroke(inputs, VkBack, '\0', 0);
+        }
+        foreach (var character in text.AsSpan(commonLength))
+            AddKeyStroke(inputs, 0, character, KeyEventUnicode);
+
+        if (inputs.Count == 0 || SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>()) == inputs.Count)
+            _injectedDictationText = text;
+        else
+            ShowStatus(L("DictationInputFailed"));
+    }
+
+    private static void AddKeyStroke(List<INPUT> inputs, ushort virtualKey, char scanCode, uint flags)
+    {
+        inputs.Add(new INPUT { Type = InputKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { VirtualKey = virtualKey, ScanCode = scanCode, Flags = flags } } });
+        inputs.Add(new INPUT { Type = InputKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { VirtualKey = virtualKey, ScanCode = scanCode, Flags = flags | KeyEventKeyUp } } });
     }
 
     private async Task SelectThenExecuteAsync(CaptureSelectorMode selectorMode, bool scrollingCapture = false)
@@ -763,6 +972,13 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
 
     private async Task ShutdownAsync()
     {
+        _dictationArmed = false;
+        _acceptDictationResults = false;
+        try { await _dictation.DisposeAsync(); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "capture", "CAPTURE_DICTATION_SHUTDOWN_ERROR", exception.Message, exception); }
+        try { await _dictationAsr.DisposeAsync(); }
+        catch (Exception exception) { await AppLog.WriteAsync("error", "capture", "CAPTURE_DICTATION_ASR_SHUTDOWN_ERROR", exception.Message, exception); }
+
         var recorder = _recorder;
         _recorder = null;
         if (recorder is not null)
@@ -806,6 +1022,60 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint windowHandle, uint attribute, ref uint value, uint valueSize);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindow(nint windowHandle);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(nint windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint windowHandle, out uint processId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint inputCount, INPUT[] inputs, int inputSize);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint Type;
+        public InputUnion Data;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        // SendInput validates sizeof(INPUT), whose native union is sized by
+        // MOUSEINPUT (32 bytes on x64), even when every item is a key event.
+        [FieldOffset(0)] public MOUSEINPUT Mouse;
+        [FieldOffset(0)] public KEYBDINPUT Keyboard;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int X;
+        public int Y;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public nuint ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort VirtualKey;
+        public ushort ScanCode;
+        public uint Flags;
+        public uint Time;
+        public nuint ExtraInfo;
+    }
 
     private static nint GetWindowLong(nint windowHandle, int index)
         => IntPtr.Size == 8 ? GetWindowLongPtr64(windowHandle, index) : GetWindowLong32(windowHandle, index);

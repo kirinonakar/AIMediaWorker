@@ -196,4 +196,10 @@
 <data name="RecordingErrorTitle"><value>録画に失敗しました</value></data>
 <data name="CloseTooltip"><value>閉じる</value></data>
 <data name="InvalidWebDavHttpsAddressMessage"><value>有効なHTTPSアドレスと1～65535のポートを入力してください。https://は省略できます。</value></data>
+<data name="DictationTooltip"><value>最後のカーソル位置にリアルタイム音声入力</value></data>
+<data name="DictationTargetMissing"><value>別のアプリにカーソルを置いてから、もう一度マイクボタンを押してください。</value></data>
+<data name="DictationListening"><value>音声を認識してカーソル位置に入力しています…</value></data>
+<data name="DictationReady"><value>準備完了：別のアプリの入力欄をクリックしてから話してください。</value></data>
+<data name="DictationStopped"><value>音声入力を停止しました。</value></data>
+<data name="DictationInputFailed"><value>対象アプリに認識したテキストを入力できませんでした。</value></data>
 </root>

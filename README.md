@@ -194,6 +194,14 @@ the local OCR engine. The selected region is sent to the LLM provider and
 model configured in Settings, and the recognized text with its translation is
 copied to the clipboard. VLM OCR and **Translate OCR** are mutually exclusive.
 
+### Voice typing
+
+Press the microphone button to the right of **VLM** and wait for the ready
+message. Then click the desired input field in another app and start speaking.
+Speech is recognized in real time and inserted at that cursor position; press
+the microphone button again to stop. This uses the ASR model, language, and
+microphone configured in Settings.
+
 ### Capture only launch
 To launch only the capture and recording overlay, run:
 
