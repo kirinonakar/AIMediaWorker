@@ -48,12 +48,15 @@ internal sealed class ShortcutController : IDisposable
         _view.SubtitleVisibilityMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSubtitles);
         _view.ShowBottomPanelMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleTimelinePanel);
         _view.ShowRightPanelMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleSidePanel);
+        _view.ShowStatusPanelMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.ToggleStatusPanel);
         _view.FullscreenMenuItem.KeyboardAcceleratorTextOverride = $"{Combine(Shortcut(ShortcutActions.Fullscreen), "Enter", "F", "F11")} · Esc";
 
         ToolTipService.SetToolTip(_view.BottomPanelToggleButton, F("TooltipToggleBottomPanel", Shortcut(ShortcutActions.ToggleTimelinePanel)));
         ToolTipService.SetToolTip(_view.RightPanelToggleButton, F("TooltipToggleRightPanel", Shortcut(ShortcutActions.ToggleSidePanel)));
+        ToolTipService.SetToolTip(_view.StatusPanelToggleButton, F("TooltipToggleStatusPanel", Shortcut(ShortcutActions.ToggleStatusPanel)));
         AutomationProperties.SetName(_view.BottomPanelToggleButton, L("ShowBottomPanel.Text"));
         AutomationProperties.SetName(_view.RightPanelToggleButton, L("ShowRightPanel.Text"));
+        AutomationProperties.SetName(_view.StatusPanelToggleButton, L("ShowStatusPanel.Text"));
         ToolTipService.SetToolTip(_view.PlayPauseButton, $"{L("PlayPause.Text")} ({Combine(Shortcut(ShortcutActions.PlayPause), Shortcut(ShortcutActions.PlayPauseAlternate))})");
         ToolTipService.SetToolTip(_view.BeginningButton, L("TooltipBeginning"));
         ToolTipService.SetToolTip(_view.PreviousButton, F("TooltipPreviousMedia", Shortcut(ShortcutActions.PreviousMedia)));
@@ -127,7 +130,8 @@ internal sealed class ShortcutController : IDisposable
         var nextMedia = Matches(ShortcutActions.NextMedia);
         var toggleTimelinePanel = Matches(ShortcutActions.ToggleTimelinePanel);
         var toggleSidePanel = Matches(ShortcutActions.ToggleSidePanel);
-        if (isTextInput && !save && !saveAs && !close && !alternatePause && !playFromBeginning && !previousMedia && !nextMedia && !toggleTimelinePanel && !toggleSidePanel) return;
+        var toggleStatusPanel = Matches(ShortcutActions.ToggleStatusPanel);
+        if (isTextInput && !save && !saveAs && !close && !alternatePause && !playFromBeginning && !previousMedia && !nextMedia && !toggleTimelinePanel && !toggleSidePanel && !toggleStatusPanel) return;
 
         if (close) _host.Close();
         else if (saveAs) _ = _host.SaveSubtitleAsAsync();
@@ -147,6 +151,7 @@ internal sealed class ShortcutController : IDisposable
         else if (Matches(ShortcutActions.ToggleSubtitles)) _host.ToggleSubtitles();
         else if (toggleTimelinePanel) _host.ToggleTimelinePanel();
         else if (toggleSidePanel) _host.ToggleSidePanel();
+        else if (toggleStatusPanel) _host.ToggleStatusPanel();
         else return;
         e.Handled = true;
     }
@@ -200,6 +205,7 @@ internal sealed record ShortcutControllerHost(
     Action ToggleSubtitles,
     Action ToggleTimelinePanel,
     Action ToggleSidePanel,
+    Action ToggleStatusPanel,
     Action ToggleMute,
     Action<double> AdjustVolume,
     Action GoToBeginning,
@@ -221,9 +227,11 @@ internal sealed record ShortcutViewElements(
     ToggleMenuFlyoutItem SubtitleVisibilityMenuItem,
     ToggleMenuFlyoutItem ShowBottomPanelMenuItem,
     ToggleMenuFlyoutItem ShowRightPanelMenuItem,
+    ToggleMenuFlyoutItem ShowStatusPanelMenuItem,
     MenuFlyoutItem FullscreenMenuItem,
     ToggleButton BottomPanelToggleButton,
     ToggleButton RightPanelToggleButton,
+    ToggleButton StatusPanelToggleButton,
     Button PlayPauseButton,
     Button BeginningButton,
     Button PreviousButton,

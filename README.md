@@ -221,7 +221,7 @@ API keys are stored in Windows Credential Manager.
 |---|---|
 | Space | Play/pause |
 | Ctrl+B / Ctrl+F | Previous/next media |
-| Ctrl+1 / Ctrl+2 | Toggle timeline/side panel |
+| Ctrl+1 / Ctrl+2 / Ctrl+3 | Toggle timeline/status bar/side panel |
 | Left / Right | Seek by the configured interval |
 | Up / Down | Volume ±5 |
 | M | Mute/unmute |

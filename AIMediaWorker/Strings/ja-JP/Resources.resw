@@ -35,9 +35,11 @@
   <data name="DeleteWebDavServerTitle"><value>WebDAVサーバーを削除</value></data><data name="DeleteWebDavServerMessage"><value>“{0}”サーバーと保存済み資格情報を削除しますか？</value></data><data name="DeleteButtonText"><value>削除</value></data>
   <data name="ClearApiKeyButton.Content"><value>保存済みキーを削除</value></data><data name="CredentialRemovedTitle"><value>資格情報を削除しました</value></data><data name="CredentialRemovedMessage"><value>{0}の保存済みキーを削除しました。</value></data>
   <data name="ShowRightPanel.Text"><value>サイドパネルを表示</value></data>
-  <data name="ShowBottomPanel.Text"><value>タイムラインパネルを表示</value></data>
+  <data name="ShowBottomPanel.Text"><value>タイムライン</value></data>
+  <data name="ShowStatusPanel.Text"><value>ステータスバー</value></data>
   <data name="TooltipToggleRightPanel"><value>サイドパネルの表示/非表示 ({0})</value></data>
   <data name="TooltipToggleBottomPanel"><value>タイムラインパネルの表示/非表示 ({0})</value></data>
+  <data name="TooltipToggleStatusPanel"><value>ステータスバーの表示/非表示 ({0})</value></data>
   <data name="SubtitleVisibility.Text"><value>字幕を表示</value></data>
   <data name="FavoritesTab.Header"><value>お気に入り</value></data>
   <data name="AddBrowserFavorite.Text"><value>お気に入りに追加</value></data>

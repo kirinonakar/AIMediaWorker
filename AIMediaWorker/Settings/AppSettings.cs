@@ -12,7 +12,7 @@ public enum ThinkingLevel { Default, Off, Low, Medium, High, XHigh, Max }
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 7;
+    public const int CurrentSchemaVersion = 8;
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public PlaybackSettings Playback { get; set; } = new();
     public SubtitleSettings Subtitle { get; set; } = new();
@@ -159,6 +159,7 @@ public sealed class WindowLayoutSettings
     public bool IsMaximized { get; set; }
     public bool IsRightPanelVisible { get; set; } = true;
     public bool IsBottomPanelVisible { get; set; } = true;
+    public bool IsStatusPanelVisible { get; set; } = true;
     public double RightPanelWidth { get; set; } = 360;
     public double BottomPanelHeight { get; set; } = 160;
 }

@@ -21,6 +21,7 @@ internal sealed class PanelLayoutController
 
     public bool IsRightVisible { get; set; } = true;
     public bool IsBottomVisible { get; set; } = true;
+    public bool IsStatusVisible { get; set; } = true;
     public double RightWidth { get; private set; } = 360;
     public double BottomHeight { get; private set; } = 160;
 
@@ -29,6 +30,7 @@ internal sealed class PanelLayoutController
         ArgumentNullException.ThrowIfNull(layout);
         IsRightVisible = layout.IsRightPanelVisible;
         IsBottomVisible = layout.IsBottomPanelVisible;
+        IsStatusVisible = layout.IsStatusPanelVisible;
         RightWidth = Math.Clamp(layout.RightPanelWidth, 240, 1200);
         BottomHeight = Math.Clamp(layout.BottomPanelHeight, WindowLayoutSettings.MinimumBottomPanelHeight, 800);
     }
@@ -43,17 +45,20 @@ internal sealed class PanelLayoutController
         _view.BottomPanelSplitter.Visibility = IsBottomVisible ? Visibility.Visible : Visibility.Collapsed;
         _view.BottomPanelSplitterRow.Height = IsBottomVisible ? new GridLength(6) : new GridLength(0);
         _view.BottomPanelRow.Height = IsBottomVisible ? new GridLength(BottomHeight) : new GridLength(0);
-        _view.StatusPanel.Visibility = IsBottomVisible ? Visibility.Visible : Visibility.Collapsed;
+        _view.StatusPanel.Visibility = IsStatusVisible ? Visibility.Visible : Visibility.Collapsed;
         _view.ShowRightPanelMenuItem.IsChecked = IsRightVisible;
         _view.ShowBottomPanelMenuItem.IsChecked = IsBottomVisible;
+        _view.ShowStatusPanelMenuItem.IsChecked = IsStatusVisible;
         _view.RightPanelToggleButton.IsChecked = IsRightVisible;
         _view.BottomPanelToggleButton.IsChecked = IsBottomVisible;
+        _view.StatusPanelToggleButton.IsChecked = IsStatusVisible;
         _updateToggleIcons();
 
         if (!persist) return;
         var settings = _getSettings();
         settings.IsRightPanelVisible = IsRightVisible;
         settings.IsBottomPanelVisible = IsBottomVisible;
+        settings.IsStatusPanelVisible = IsStatusVisible;
         settings.RightPanelWidth = RightWidth;
         settings.BottomPanelHeight = BottomHeight;
     }
@@ -96,5 +101,7 @@ internal sealed record PanelLayoutViewElements(
     FrameworkElement StatusPanel,
     ToggleMenuFlyoutItem ShowRightPanelMenuItem,
     ToggleMenuFlyoutItem ShowBottomPanelMenuItem,
+    ToggleMenuFlyoutItem ShowStatusPanelMenuItem,
     ToggleButton RightPanelToggleButton,
-    ToggleButton BottomPanelToggleButton);
+    ToggleButton BottomPanelToggleButton,
+    ToggleButton StatusPanelToggleButton);

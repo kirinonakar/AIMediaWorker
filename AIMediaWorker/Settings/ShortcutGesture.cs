@@ -20,6 +20,7 @@ public static class ShortcutActions
     public const string ToggleSubtitles = "ToggleSubtitles";
     public const string ToggleTimelinePanel = "ToggleTimelinePanel";
     public const string ToggleSidePanel = "ToggleSidePanel";
+    public const string ToggleStatusPanel = "ToggleStatusPanel";
     public const string CloseWindow = "CloseWindow";
 
     public static Dictionary<string, string> CreateDefaults() => new(StringComparer.OrdinalIgnoreCase)
@@ -41,7 +42,8 @@ public static class ShortcutActions
         [Fullscreen] = "Enter",
         [ToggleSubtitles] = "V",
         [ToggleTimelinePanel] = "Ctrl+1",
-        [ToggleSidePanel] = "Ctrl+2",
+        [ToggleSidePanel] = "Ctrl+3",
+        [ToggleStatusPanel] = "Ctrl+2",
         [CloseWindow] = "Ctrl+W"
     };
 }

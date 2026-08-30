@@ -133,6 +133,15 @@ public sealed class SettingsService
             settings.Capture.CaptureFolder = settings.General.DefaultFolder;
         settings.Window ??= new WindowLayoutSettings();
         settings.General.Shortcuts ??= [];
+        if (loadedSchemaVersion < 8 &&
+            settings.General.Shortcuts.TryGetValue(ShortcutActions.ToggleSidePanel, out var sidePanelShortcut) &&
+            string.Equals(sidePanelShortcut, "Ctrl+2", StringComparison.OrdinalIgnoreCase) &&
+            (!settings.General.Shortcuts.TryGetValue(ShortcutActions.ToggleStatusPanel, out var statusPanelShortcut) ||
+             string.Equals(statusPanelShortcut, "Ctrl+3", StringComparison.OrdinalIgnoreCase)))
+        {
+            settings.General.Shortcuts[ShortcutActions.ToggleSidePanel] = "Ctrl+3";
+            settings.General.Shortcuts[ShortcutActions.ToggleStatusPanel] = "Ctrl+2";
+        }
         if (settings.General.Shortcuts.TryGetValue(ShortcutActions.PreviousMedia, out var previousMedia) &&
             settings.General.Shortcuts.TryGetValue(ShortcutActions.NextMedia, out var nextMedia) &&
             string.Equals(previousMedia, "Ctrl+F", StringComparison.OrdinalIgnoreCase) &&

@@ -100,8 +100,9 @@
             <MenuBarItem x:Uid="ViewMenu" Title="View">
                 <MenuFlyoutItem x:Uid="Fullscreen" x:Name="FullscreenMenuItem" Text="Fullscreen" Click="OnFullscreenClick" />
                 <MenuFlyoutSeparator />
+                <ToggleMenuFlyoutItem x:Uid="ShowBottomPanel" x:Name="ShowBottomPanelMenuItem" Text="Timeline" IsChecked="True" Click="OnToggleBottomPanelClick" />
+                <ToggleMenuFlyoutItem x:Uid="ShowStatusPanel" x:Name="ShowStatusPanelMenuItem" Text="Status bar" IsChecked="True" Click="OnToggleStatusPanelClick" />
                 <ToggleMenuFlyoutItem x:Uid="ShowRightPanel" x:Name="ShowRightPanelMenuItem" Text="Show side panel" IsChecked="True" Click="OnToggleRightPanelClick" />
-                <ToggleMenuFlyoutItem x:Uid="ShowBottomPanel" x:Name="ShowBottomPanelMenuItem" Text="Show timeline panel" IsChecked="True" Click="OnToggleBottomPanelClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="ToolsMenu" Title="Tools">
                 <MenuFlyoutItem x:Uid="CameraCaptions" Text="Camera and live captions…" Click="OnCameraClick" />
@@ -149,6 +150,11 @@
                 <ToggleButton x:Name="BottomPanelToggleButton" Style="{StaticResource PanelToggleButtonStyle}" IsChecked="True" Click="OnBottomPanelToggleButtonClick" AutomationProperties.Name="Toggle bottom panel">
                     <Image x:Name="BottomPanelToggleIcon" Width="18" Height="18">
                         <Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Panels/bottom-panel.svg" /></Image.Source>
+                    </Image>
+                </ToggleButton>
+                <ToggleButton x:Name="StatusPanelToggleButton" Style="{StaticResource PanelToggleButtonStyle}" IsChecked="True" Click="OnStatusPanelToggleButtonClick" AutomationProperties.Name="Toggle status bar">
+                    <Image x:Name="StatusPanelToggleIcon" Width="18" Height="18">
+                        <Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Panels/status-panel.svg" /></Image.Source>
                     </Image>
                 </ToggleButton>
                 <ToggleButton x:Name="RightPanelToggleButton" Style="{StaticResource PanelToggleButtonStyle}" IsChecked="True" Click="OnRightPanelToggleButtonClick" AutomationProperties.Name="Toggle side panel">

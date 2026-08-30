@@ -19,6 +19,7 @@ internal sealed class WindowChromeController
     private readonly Func<string> _getRepeatIconName;
     private readonly Func<bool> _getRightPanelVisible;
     private readonly Func<bool> _getBottomPanelVisible;
+    private readonly Func<bool> _getStatusPanelVisible;
 
     public WindowChromeController(
         AppWindow? appWindow,
@@ -27,7 +28,8 @@ internal sealed class WindowChromeController
         Func<bool> getMuted,
         Func<string> getRepeatIconName,
         Func<bool> getRightPanelVisible,
-        Func<bool> getBottomPanelVisible)
+        Func<bool> getBottomPanelVisible,
+        Func<bool> getStatusPanelVisible)
     {
         _appWindow = appWindow;
         _view = view;
@@ -36,6 +38,7 @@ internal sealed class WindowChromeController
         _getRepeatIconName = getRepeatIconName;
         _getRightPanelVisible = getRightPanelVisible;
         _getBottomPanelVisible = getBottomPanelVisible;
+        _getStatusPanelVisible = getStatusPanelVisible;
     }
 
     public void ApplySavedWindowPlacement(WindowLayoutSettings layout)
@@ -110,6 +113,7 @@ internal sealed class WindowChromeController
     public void UpdatePanelToggleIcons()
     {
         _view.BottomPanelToggleIcon.Source = PanelToggleIconSource("bottom-panel", _getBottomPanelVisible());
+        _view.StatusPanelToggleIcon.Source = PanelToggleIconSource("status-panel", _getStatusPanelVisible());
         _view.RightPanelToggleIcon.Source = PanelToggleIconSource("right-panel", _getRightPanelVisible());
     }
 
@@ -183,4 +187,5 @@ internal sealed record WindowChromeViewElements(
     Image MuteIcon,
     Image RepeatIcon,
     Image BottomPanelToggleIcon,
+    Image StatusPanelToggleIcon,
     Image RightPanelToggleIcon);

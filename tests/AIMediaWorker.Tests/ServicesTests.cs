@@ -22,6 +22,7 @@ public sealed class ServicesTests : IDisposable
     [InlineData("Ctrl+B", "B", true, false, false, true)]
     [InlineData("Ctrl+1", "Number1", true, false, false, true)]
     [InlineData("Ctrl+2", "Number2", true, false, false, true)]
+    [InlineData("Ctrl+3", "Number3", true, false, false, true)]
     [InlineData("Ctrl+1", "D1", true, false, false, true)]
     [InlineData("Ctrl+2", "NumberPad2", true, false, false, true)]
     public void ShortcutGesturesMatchExactModifiers(string gesture, string key, bool control, bool shift, bool alt, bool expected)
@@ -48,6 +49,7 @@ public sealed class ServicesTests : IDisposable
         settings.Window.Width = 1440;
         settings.Window.Height = 900;
         settings.Window.IsMaximized = true;
+        settings.Window.IsStatusPanelVisible = false;
         settings.Window.RightPanelWidth = 440;
         settings.Window.BottomPanelHeight = 220;
         await service.SaveAsync(settings);
@@ -61,6 +63,7 @@ public sealed class ServicesTests : IDisposable
         Assert.True(loaded.Playback.UseLargeToolbarIcons);
         Assert.False(loaded.Playback.ShowSubtitles);
         Assert.True(loaded.Window.HasPlacement);
+        Assert.False(loaded.Window.IsStatusPanelVisible);
         Assert.Equal((120, 80, 1440, 900, true), (loaded.Window.X, loaded.Window.Y, loaded.Window.Width, loaded.Window.Height, loaded.Window.IsMaximized));
         Assert.Equal((440, 220), (loaded.Window.RightPanelWidth, loaded.Window.BottomPanelHeight));
         await File.WriteAllTextAsync(path, "{ definitely broken");
@@ -104,7 +107,8 @@ public sealed class ServicesTests : IDisposable
         Assert.Equal("Ctrl+B", loaded.General.Shortcuts[ShortcutActions.PreviousMedia]);
         Assert.Equal("Ctrl+F", loaded.General.Shortcuts[ShortcutActions.NextMedia]);
         Assert.Equal("Ctrl+1", loaded.General.Shortcuts[ShortcutActions.ToggleTimelinePanel]);
-        Assert.Equal("Ctrl+2", loaded.General.Shortcuts[ShortcutActions.ToggleSidePanel]);
+        Assert.Equal("Ctrl+3", loaded.General.Shortcuts[ShortcutActions.ToggleSidePanel]);
+        Assert.Equal("Ctrl+2", loaded.General.Shortcuts[ShortcutActions.ToggleStatusPanel]);
         Assert.Equal(GeneralSettings.DefaultUiFontFamily, loaded.General.UiFontFamily);
     }
 
@@ -416,6 +420,20 @@ public sealed class ServicesTests : IDisposable
         Assert.Contains("caption", Encoding.UTF8.GetString(bytes));
         Assert.Equal("Basic", handler.Authorization?.Scheme);
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("user:password")), handler.Authorization?.Parameter);
+    }
+
+    [Fact]
+    public async Task SettingsMigrateLegacyPanelShortcuts()
+    {
+        var path = Path.Combine(_folder, "settings-old-panel-shortcuts.json");
+        Directory.CreateDirectory(_folder);
+        await File.WriteAllTextAsync(path, "{\"SchemaVersion\":7,\"General\":{\"Shortcuts\":{\"ToggleTimelinePanel\":\"Ctrl+1\",\"ToggleSidePanel\":\"Ctrl+2\",\"ToggleStatusPanel\":\"Ctrl+3\"}}}");
+
+        var loaded = await new SettingsService(path).LoadAsync();
+
+        Assert.Equal("Ctrl+1", loaded.General.Shortcuts[ShortcutActions.ToggleTimelinePanel]);
+        Assert.Equal("Ctrl+2", loaded.General.Shortcuts[ShortcutActions.ToggleStatusPanel]);
+        Assert.Equal("Ctrl+3", loaded.General.Shortcuts[ShortcutActions.ToggleSidePanel]);
     }
 
     [Fact]

@@ -132,7 +132,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             new PanelLayoutViewElements(
                 SubtitlePanel, RightPanelSplitter, RightPanelSplitterColumn, RightPanelColumn,
                 VisualizationPanel, BottomPanelSplitter, BottomPanelSplitterRow, BottomPanelRow, StatusPanel,
-                ShowRightPanelMenuItem, ShowBottomPanelMenuItem, RightPanelToggleButton, BottomPanelToggleButton),
+                ShowRightPanelMenuItem, ShowBottomPanelMenuItem, ShowStatusPanelMenuItem,
+                RightPanelToggleButton, BottomPanelToggleButton, StatusPanelToggleButton),
             () => _settings.Window,
             UpdatePanelToggleIcons);
         // Apply the saved font to already-created elements as well as the app resource.
@@ -196,12 +197,14 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             _appWindow,
             new WindowChromeViewElements(
                 RootGrid, AppTitleBarArea, BeginningIcon, PreviousIcon, SeekBackIcon, PlayPauseIcon,
-                StopIcon, SeekForwardIcon, NextIcon, MuteIcon, RepeatIcon, BottomPanelToggleIcon, RightPanelToggleIcon),
+                StopIcon, SeekForwardIcon, NextIcon, MuteIcon, RepeatIcon,
+                BottomPanelToggleIcon, StatusPanelToggleIcon, RightPanelToggleIcon),
             () => _playback.State,
             () => _playback.IsMuted,
             () => _playbackController.RepeatIconName,
             () => _panels.IsRightVisible,
-            () => _panels.IsBottomVisible);
+            () => _panels.IsBottomVisible,
+            () => _panels.IsStatusVisible);
         _chrome.ResizeToAvailableWorkArea(1280, 820);
         _auxiliaryWindows = new AuxiliaryWindowController(
             this,
@@ -282,7 +285,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
                 RootGrid, VideoFocusTarget, SaveSubtitleMenuItem, SaveSubtitleAsMenuItem, ExitMenuItem,
                 PlayPauseMenuItem, DeleteCueMenuItem, PreviousSubtitleMenuItem, NextSubtitleMenuItem,
                 UndoMenuItem, RedoMenuItem, SubtitleVisibilityMenuItem, ShowBottomPanelMenuItem,
-                ShowRightPanelMenuItem, FullscreenMenuItem, BottomPanelToggleButton, RightPanelToggleButton,
+                ShowRightPanelMenuItem, ShowStatusPanelMenuItem, FullscreenMenuItem,
+                BottomPanelToggleButton, RightPanelToggleButton, StatusPanelToggleButton,
                 PlayPauseButton, BeginningButton, PreviousButton, NextButton, SeekBackButton,
                 SeekForwardButton, StopButton, MuteButton, VolumeSlider, PositionSlider, SubtitleList,
                 CloseButton, FullscreenButton, FullscreenButtonIcon),
@@ -308,6 +312,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
                 ToggleSubtitleVisibility,
                 ToggleBottomPanel,
                 ToggleRightPanel,
+                ToggleStatusPanel,
                 _playbackController.ToggleMute,
                 _playbackController.AdjustVolume,
                 _playbackController.GoToBeginning,
@@ -729,8 +734,10 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     }
     private void OnToggleRightPanelClick(object sender, RoutedEventArgs e) { _panels.IsRightVisible = ShowRightPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
     private void OnToggleBottomPanelClick(object sender, RoutedEventArgs e) { _panels.IsBottomVisible = ShowBottomPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
+    private void OnToggleStatusPanelClick(object sender, RoutedEventArgs e) { _panels.IsStatusVisible = ShowStatusPanelMenuItem.IsChecked; ApplyPanelVisibility(); }
     private void OnRightPanelToggleButtonClick(object sender, RoutedEventArgs e) { _panels.IsRightVisible = RightPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
     private void OnBottomPanelToggleButtonClick(object sender, RoutedEventArgs e) { _panels.IsBottomVisible = BottomPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
+    private void OnStatusPanelToggleButtonClick(object sender, RoutedEventArgs e) { _panels.IsStatusVisible = StatusPanelToggleButton.IsChecked == true; ApplyPanelVisibility(); }
 
     private void ToggleRightPanel()
     {
@@ -741,6 +748,12 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void ToggleBottomPanel()
     {
         _panels.IsBottomVisible = !_panels.IsBottomVisible;
+        ApplyPanelVisibility();
+    }
+
+    private void ToggleStatusPanel()
+    {
+        _panels.IsStatusVisible = !_panels.IsStatusVisible;
         ApplyPanelVisibility();
     }
 

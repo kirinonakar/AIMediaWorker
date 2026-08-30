@@ -20,7 +20,7 @@
                 <AppBarButton.Icon><FontIcon x:Name="SortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon>
             </AppBarButton>
         </CommandBar>
-        <BreadcrumbBar x:Name="BreadcrumbBar" Grid.Row="1" ItemClicked="OnBreadcrumbItemClick">
+        <BreadcrumbBar x:Name="BreadcrumbBar" Grid.Row="1" Margin="4,0" ItemClicked="OnBreadcrumbItemClick">
             <BreadcrumbBar.ItemTemplate>
                 <DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
             </BreadcrumbBar.ItemTemplate>
