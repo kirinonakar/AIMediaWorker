@@ -123,6 +123,7 @@ internal sealed record PlaylistEntry(
     IMediaSource? MediaSource = null)
 {
     public string SourceIconGlyph => MediaSource?.Kind == MediaSourceKind.WebDav ? "\uE774" : string.Empty;
+    public string IconGlyph => MediaFileClassifier.GetFileIconGlyph(DisplayName);
 
     public static PlaylistEntry FromLocal(string path)
     {
