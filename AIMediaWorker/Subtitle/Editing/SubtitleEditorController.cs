@@ -534,6 +534,7 @@ internal sealed class SubtitleEditorController
                 content.Children.Add(new TextBlock
                 {
                     Text = cue.GetDisplayText(SubtitleDisplayMode.OriginalAndTranslation),
+                    FontFamily = UiFontService.CurrentFontFamily,
                     TextWrapping = TextWrapping.Wrap,
                     TextTrimming = TextTrimming.CharacterEllipsis,
                     MaxLines = 4,

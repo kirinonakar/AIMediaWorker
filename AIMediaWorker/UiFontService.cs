@@ -11,6 +11,9 @@ public static class UiFontService
     private const string ThemeFontResourceKey = "ContentControlThemeFontFamily";
     private static readonly ConditionalWeakTable<DependencyObject, object> AppliedElements = new();
     private static readonly object AppliedMarker = new();
+    private static FontFamily _currentFontFamily = new(GeneralSettings.DefaultUiFontFamily);
+
+    public static FontFamily CurrentFontFamily => _currentFontFamily;
 
     public static void Apply(string? fontFamily, DependencyObject? visualRoot = null)
     {
@@ -18,6 +21,7 @@ public static class UiFontService
             ? GeneralSettings.DefaultUiFontFamily
             : fontFamily.Trim();
         var family = new FontFamily(normalized);
+        _currentFontFamily = family;
         Application.Current.Resources[ThemeFontResourceKey] = family;
         if (visualRoot is not null) ApplyToVisualTree(visualRoot, family);
     }
