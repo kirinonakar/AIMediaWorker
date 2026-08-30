@@ -44,9 +44,11 @@ internal enum OcrCaptureAction
 public sealed partial class CaptureRecorderOverlayWindow : Window
 {
     private const int GwlStyle = -16;
+    private const int GwlExStyle = -20;
     private const nint WsBorder = 0x00800000;
     private const nint WsDlgFrame = 0x00400000;
     private const nint WsThickFrame = 0x00040000;
+    private const nint WsExTopmost = 0x00000008;
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoMove = 0x0002;
     private const uint SwpNoZOrder = 0x0004;
@@ -74,6 +76,8 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     private bool _allowClose;
     private bool _hasUserPosition;
     private bool _isDraggingOverlay;
+    private bool _topmostRepairPending;
+    private bool _isClosed;
     private ScreenCaptureInterop.POINT _dragStartCursor;
     private PointInt32 _dragStartWindowPosition;
 
@@ -103,9 +107,11 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
             RemoveNativeWindowFrame();
             _appWindow.ResizeClient(new SizeInt32(460, 42));
             _appWindow.Closing += OnAppWindowClosing;
+            _appWindow.Changed += OnAppWindowChanged;
         }
 
-        EnsureAlwaysOnTop();
+        Activated += OnWindowActivated;
+        EnsureAlwaysOnTop(forceZOrder: true);
 
         _elapsedTimer = DispatcherQueue.CreateTimer();
         _elapsedTimer.Interval = TimeSpan.FromMilliseconds(250);
@@ -121,6 +127,9 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
 
         Closed += (_, _) =>
         {
+            _isClosed = true;
+            Activated -= OnWindowActivated;
+            if (_appWindow is not null) _appWindow.Changed -= OnAppWindowChanged;
             _elapsedTimer.Stop();
             _shutdownTask ??= ShutdownAsync();
         };
@@ -175,7 +184,7 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
         _startupWindowCloaked = !SetWindowCloak(_selfHandle, cloak: false);
         if (!_startupWindowCloaked)
         {
-            EnsureAlwaysOnTop();
+            EnsureAlwaysOnTop(forceZOrder: true);
             StartupProfiler.Mark("capture-window-revealed");
         }
     }
@@ -315,19 +324,42 @@ public sealed partial class CaptureRecorderOverlayWindow : Window
     {
         _appWindow?.Show();
         RemoveNativeWindowFrame();
-        EnsureAlwaysOnTop();
+        EnsureAlwaysOnTop(forceZOrder: true);
         Activate();
-        EnsureAlwaysOnTop();
+        EnsureAlwaysOnTop(forceZOrder: true);
         FocusSink.Focus(FocusState.Programmatic);
     }
 
-    private void EnsureAlwaysOnTop()
-    {
-        if (_appWindow?.Presenter is OverlappedPresenter presenter)
-            presenter.IsAlwaysOnTop = true;
+    private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
+        => EnsureAlwaysOnTop(forceZOrder: true);
 
-        SetWindowPos(_selfHandle, HwndTopmost, 0, 0, 0, 0,
-            SwpNoSize | SwpNoMove | SwpNoActivate);
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        if (_isClosed || _topmostRepairPending) return;
+        _topmostRepairPending = true;
+        if (!DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, RepairAlwaysOnTop))
+            _topmostRepairPending = false;
+    }
+
+    private void RepairAlwaysOnTop()
+    {
+        _topmostRepairPending = false;
+        if (_isClosed) return;
+        EnsureAlwaysOnTop();
+    }
+
+    private void EnsureAlwaysOnTop(bool forceZOrder = false)
+    {
+        var presenter = _appWindow?.Presenter as OverlappedPresenter;
+        var presenterNeedsRepair = presenter is not null && !presenter.IsAlwaysOnTop;
+        if (presenterNeedsRepair) presenter!.IsAlwaysOnTop = true;
+
+        var nativeNeedsRepair = (GetWindowLong(_selfHandle, GwlExStyle) & WsExTopmost) == 0;
+        if (forceZOrder || presenterNeedsRepair || nativeNeedsRepair)
+        {
+            SetWindowPos(_selfHandle, HwndTopmost, 0, 0, 0, 0,
+                SwpNoSize | SwpNoMove | SwpNoActivate);
+        }
     }
 
     private void HideOverlay() => _appWindow?.Hide();
