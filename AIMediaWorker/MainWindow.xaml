@@ -292,18 +292,19 @@
         <Grid x:Name="VisualizationPanel" Grid.Row="5" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
             <Canvas x:Name="TimelineCanvas" Background="Transparent" SizeChanged="OnVisualizationSizeChanged" PointerPressed="OnTimelinePointerPressed" PointerMoved="OnTimelinePointerMoved" PointerReleased="OnTimelinePointerReleased" PointerCanceled="OnTimelinePointerReleased" PointerWheelChanged="OnTimelinePointerWheelChanged" />
         </Grid>
-        <Grid x:Name="StatusPanel" Grid.Row="3" Padding="8,4" ColumnSpacing="8">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <Grid x:Name="StatusPanel" Grid.Row="3" Height="44" Padding="8,2" ColumnSpacing="8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="500" /></Grid.ColumnDefinitions>
             <Grid>
-                <TextBlock x:Uid="ReadyStatus" x:Name="StatusText" Text="Ready" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
+                <TextBlock x:Name="StatusText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
                 <ProgressBar x:Name="AsrDownloadProgressBar" Minimum="0" Maximum="1" Height="3" VerticalAlignment="Bottom" Visibility="Collapsed" />
             </Grid>
-            <TextBlock x:Uid="AudioLabel" Grid.Column="1" Text="Audio" VerticalAlignment="Center" /><ComboBox x:Name="AudioTrackCombo" Grid.Column="2" DisplayMemberPath="DisplayName" SelectionChanged="OnAudioTrackChanged" />
-            <TextBlock x:Uid="SubtitlesLabel" Grid.Column="3" Text="Subtitles" VerticalAlignment="Center" /><ComboBox x:Name="SubtitleTrackCombo" Grid.Column="4" DisplayMemberPath="DisplayName" />
-            <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                <TextBlock x:Name="ResolutionText" Opacity="0.7" />
-                <TextBlock x:Name="DecoderText" Opacity="0.7" />
-            </StackPanel>
+            <TextBlock x:Uid="AudioLabel" Grid.Column="1" Text="Audio" VerticalAlignment="Center" /><ComboBox x:Name="AudioTrackCombo" Grid.Column="2" VerticalAlignment="Center" DisplayMemberPath="DisplayName" SelectionChanged="OnAudioTrackChanged" />
+            <TextBlock x:Uid="SubtitlesLabel" Grid.Column="3" Text="Subtitles" VerticalAlignment="Center" /><ComboBox x:Name="SubtitleTrackCombo" Grid.Column="4" VerticalAlignment="Center" DisplayMemberPath="DisplayName" />
+            <Grid Grid.Column="5" ColumnSpacing="8" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <TextBlock x:Name="ResolutionText" Opacity="0.7" VerticalAlignment="Center" />
+                <TextBlock x:Name="DecoderText" Grid.Column="1" Opacity="0.7" VerticalAlignment="Center" TextWrapping="Wrap" MaxLines="2" LineHeight="16" />
+            </Grid>
         </Grid>
     </Grid>
 </Window>
