@@ -10,6 +10,38 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
                 <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="RightPanelSurfaceBrush" Color="#FCFCFC" />
+                    <SolidColorBrush x:Key="RightPanelRailBrush" Color="#F4F4F4" />
+                    <SolidColorBrush x:Key="RightPanelSubtleFillBrush" Color="#F7F7F7" />
+                    <SolidColorBrush x:Key="RightPanelBorderBrush" Color="#16000000" />
+                    <SolidColorBrush x:Key="RightPanelMutedTextBrush" Color="#99000000" />
+                    <SolidColorBrush x:Key="BottomPanelSurfaceBrush" Color="#FCFCFC" />
+                    <SolidColorBrush x:Key="TimelineCanvasBrush" Color="#F7F7F7" />
+                    <SolidColorBrush x:Key="TimelineRulerBrush" Color="#F1F1F1" />
+                    <SolidColorBrush x:Key="TimelineGridLineBrush" Color="#14000000" />
+                    <SolidColorBrush x:Key="TimelineCueFillBrush" Color="#DDECF7" />
+                    <SolidColorBrush x:Key="TimelineCueSelectedFillBrush" Color="#C7E6FA" />
+                    <SolidColorBrush x:Key="TimelineCueBorderBrush" Color="#3A96D8" />
+                    <SolidColorBrush x:Key="TimelinePlayheadBrush" Color="#E74856" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="RightPanelSurfaceBrush" Color="#202020" />
+                    <SolidColorBrush x:Key="RightPanelRailBrush" Color="#282828" />
+                    <SolidColorBrush x:Key="RightPanelSubtleFillBrush" Color="#292929" />
+                    <SolidColorBrush x:Key="RightPanelBorderBrush" Color="#18FFFFFF" />
+                    <SolidColorBrush x:Key="RightPanelMutedTextBrush" Color="#A6FFFFFF" />
+                    <SolidColorBrush x:Key="BottomPanelSurfaceBrush" Color="#202020" />
+                    <SolidColorBrush x:Key="TimelineCanvasBrush" Color="#1B1B1B" />
+                    <SolidColorBrush x:Key="TimelineRulerBrush" Color="#252525" />
+                    <SolidColorBrush x:Key="TimelineGridLineBrush" Color="#16FFFFFF" />
+                    <SolidColorBrush x:Key="TimelineCueFillBrush" Color="#263B4A" />
+                    <SolidColorBrush x:Key="TimelineCueSelectedFillBrush" Color="#19577F" />
+                    <SolidColorBrush x:Key="TimelineCueBorderBrush" Color="#4BA7E8" />
+                    <SolidColorBrush x:Key="TimelinePlayheadBrush" Color="#FF6673" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
             <FontFamily x:Key="ContentControlThemeFontFamily">Noto Sans CJK JP</FontFamily>
             <!--
                 FontFamily is inherited. Keep icon glyphs on the platform symbol font
@@ -17,6 +49,56 @@
             -->
             <Style TargetType="FontIcon">
                 <Setter Property="FontFamily" Value="{ThemeResource SymbolThemeFontFamily}" />
+            </Style>
+            <Style x:Key="RightPanelTitleTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            </Style>
+            <Style x:Key="RightPanelSectionLabelTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Foreground" Value="{ThemeResource RightPanelMutedTextBrush}" />
+                <Setter Property="CharacterSpacing" Value="20" />
+            </Style>
+            <Style x:Key="RightPanelCommandBarStyle" TargetType="CommandBar">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="MinHeight" Value="40" />
+                <Setter Property="DefaultLabelPosition" Value="Collapsed" />
+            </Style>
+            <Style x:Key="RightPanelListStyle" TargetType="ListView">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            </Style>
+            <Style x:Key="RightPanelListItemStyle" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+                <Setter Property="MinHeight" Value="44" />
+                <Setter Property="Padding" Value="8,0" />
+                <Setter Property="Margin" Value="0,2" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+            </Style>
+            <Style x:Key="RightPanelTextBoxStyle" TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
+                <Setter Property="MinHeight" Value="36" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="FontSize" Value="13" />
+            </Style>
+            <Style x:Key="RightPanelButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="MinHeight" Value="36" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="FontSize" Value="13" />
+            </Style>
+            <Style x:Key="RightPanelIconButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="Width" Value="32" />
+                <Setter Property="MinWidth" Value="32" />
+                <Setter Property="Height" Value="32" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="6" />
             </Style>
             <!-- Other app resources here -->
         </ResourceDictionary>

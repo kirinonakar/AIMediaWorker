@@ -49,6 +49,70 @@
                 <Setter Property="HorizontalContentAlignment" Value="Center" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
             </Style>
+            <Style x:Key="VerticalPanelSplitterStyle" TargetType="primitives:Thumb">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="primitives:Thumb">
+                            <Grid Background="Transparent">
+                                <Border x:Name="SplitterGrip"
+                                        Width="2"
+                                        Margin="0,8"
+                                        HorizontalAlignment="Center"
+                                        Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                        CornerRadius="1"
+                                        Opacity="0" />
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal">
+                                            <Storyboard><DoubleAnimation Storyboard.TargetName="SplitterGrip" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12" /></Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="PointerOver">
+                                            <Storyboard><DoubleAnimation Storyboard.TargetName="SplitterGrip" Storyboard.TargetProperty="Opacity" To="0.72" Duration="0:0:0.12" /></Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <Storyboard><DoubleAnimation Storyboard.TargetName="SplitterGrip" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.06" /></Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled" />
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="HorizontalPanelSplitterStyle" TargetType="primitives:Thumb">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="primitives:Thumb">
+                            <Grid Background="Transparent">
+                                <Border x:Name="SplitterGrip"
+                                        Height="2"
+                                        Margin="8,0"
+                                        VerticalAlignment="Center"
+                                        Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                        CornerRadius="1"
+                                        Opacity="0" />
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal">
+                                            <Storyboard><DoubleAnimation Storyboard.TargetName="SplitterGrip" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12" /></Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="PointerOver">
+                                            <Storyboard><DoubleAnimation Storyboard.TargetName="SplitterGrip" Storyboard.TargetProperty="Opacity" To="0.72" Duration="0:0:0.12" /></Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <Storyboard><DoubleAnimation Storyboard.TargetName="SplitterGrip" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.06" /></Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled" />
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
         </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
@@ -178,37 +242,42 @@
                     <Button x:Name="VideoFocusTarget" Width="1" Height="1" Opacity="0" IsTabStop="True" IsHitTestVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top" />
                 </Grid>
             </Border>
-            <primitives:Thumb x:Name="RightPanelSplitter" Grid.Column="1" DragDelta="OnRightPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+            <primitives:Thumb x:Name="RightPanelSplitter" Grid.Column="1" Style="{StaticResource VerticalPanelSplitterStyle}" DragDelta="OnRightPanelSplitterDragDelta" />
             <Grid x:Name="SubtitlePanel" Grid.Column="2" Margin="4,4,8,4">
-                <Grid ColumnSpacing="4">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
-                    <Grid>
+                <Border Background="{ThemeResource RightPanelSurfaceBrush}"
+                        BorderBrush="{ThemeResource RightPanelBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="10">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="52" /></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="50" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Border Grid.Column="0" Padding="14,0,12,0" BorderBrush="{ThemeResource RightPanelBorderBrush}" BorderThickness="0,0,0,1">
+                        <TextBlock x:Name="RightPanelTitleText" Text="Explorer" Style="{StaticResource RightPanelTitleTextStyle}" />
+                    </Border>
+                    <Grid Grid.Row="1" Grid.Column="0">
                     <Grid x:Name="ExplorerSection">
                         <views:LocalMediaBrowserView x:Name="MediaBrowser" />
                     </Grid>
-                    <Grid x:Name="PlaylistSection" Visibility="Collapsed">
-                        <Grid RowSpacing="6"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><TextBlock x:Name="PlaylistTitleText" Grid.Row="0" Text="Playlist" FontWeight="SemiBold" Margin="4,4,4,0" /><CommandBar Grid.Row="1" DefaultLabelPosition="Collapsed"><AppBarButton x:Uid="PlaylistAddMedia" Icon="OpenFile" Label="Add media" Click="OnOpenMediaClick" /><AppBarButton x:Uid="PlaylistClear" Icon="Delete" Label="Clear" Click="OnClearPlaylistClick" /></CommandBar><ListView x:Name="PlaylistList" Grid.Row="2" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnPlaylistItemClick"><ListView.ItemTemplate><DataTemplate><Grid Padding="5" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding SourceIconGlyph}" VerticalAlignment="Center" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" /><TextBlock Grid.Column="1" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding DisplayName}" /></Grid></DataTemplate></ListView.ItemTemplate></ListView></Grid>
+                    <Grid x:Name="PlaylistSection" Visibility="Collapsed" Padding="10,8,10,10">
+                        <Grid RowSpacing="8"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><CommandBar Grid.Row="0" Style="{StaticResource RightPanelCommandBarStyle}"><AppBarButton x:Uid="PlaylistAddMedia" Icon="OpenFile" Label="Add media" Click="OnOpenMediaClick" /><AppBarButton x:Uid="PlaylistClear" Icon="Delete" Label="Clear" Click="OnClearPlaylistClick" /></CommandBar><ListView x:Name="PlaylistList" Grid.Row="1" Style="{StaticResource RightPanelListStyle}" ItemContainerStyle="{StaticResource RightPanelListItemStyle}" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnPlaylistItemClick"><ListView.ItemTemplate><DataTemplate><Grid Padding="2,0" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Glyph="{Binding SourceIconGlyph}" FontSize="16" VerticalAlignment="Center" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" /><TextBlock Grid.Column="1" Text="{Binding DisplayName}" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding DisplayName}" /></Grid></DataTemplate></ListView.ItemTemplate></ListView></Grid>
                     </Grid>
                     <Grid x:Name="WebDavSection" Visibility="Collapsed">
                         <views:WebDavBrowserView x:Name="WebDavBrowser" />
                     </Grid>
-                    <Grid x:Name="FavoritesSection" Visibility="Collapsed">
-                        <Grid RowSpacing="6">
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                            <TextBlock x:Name="FavoritesTitleText" Grid.Row="0" Text="Favorites" FontWeight="SemiBold" Margin="4,4,4,0" />
-                            <Grid Grid.Row="1">
-                                <ListView x:Name="FavoriteList" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnFavoriteItemClick" CanDragItems="True" CanReorderItems="True" AllowDrop="True" DragItemsCompleted="OnFavoriteDragItemsCompleted">
+                    <Grid x:Name="FavoritesSection" Visibility="Collapsed" Padding="10,8,10,10">
+                            <Grid>
+                                <ListView x:Name="FavoriteList" Style="{StaticResource RightPanelListStyle}" ItemContainerStyle="{StaticResource RightPanelListItemStyle}" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnFavoriteItemClick" CanDragItems="True" CanReorderItems="True" AllowDrop="True" DragItemsCompleted="OnFavoriteDragItemsCompleted">
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid Padding="6" ColumnSpacing="8">
+                                            <Grid Padding="2,0" ColumnSpacing="10">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <FontIcon Glyph="{Binding SourceIconGlyph}" VerticalAlignment="Center" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                                                 <FontIcon Grid.Column="1" Glyph="{Binding IconGlyph}" VerticalAlignment="Center" />
                                                 <StackPanel Grid.Column="2" Spacing="2">
                                                     <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{Binding Details}" TextTrimming="CharacterEllipsis" Opacity="0.55" FontSize="11" />
+                                                    <TextBlock Text="{Binding Details}" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource RightPanelMutedTextBrush}" FontSize="11" />
                                                 </StackPanel>
-                                                <Button Grid.Column="3" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0" Click="OnRemoveFavoriteItemClick" ToolTipService.ToolTip="{Binding RemoveLabel}" AutomationProperties.Name="{Binding RemoveLabel}">
+                                                <Button Grid.Column="3" Style="{StaticResource RightPanelIconButtonStyle}" Click="OnRemoveFavoriteItemClick" ToolTipService.ToolTip="{Binding RemoveLabel}" AutomationProperties.Name="{Binding RemoveLabel}">
                                                     <SymbolIcon Symbol="Delete" />
                                                 </Button>
                                             </Grid>
@@ -217,20 +286,18 @@
                                 </ListView>
                                 <TextBlock x:Uid="FavoritesEmptyText" x:Name="FavoritesEmptyText" Text="No favorites" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" IsHitTestVisible="False" />
                             </Grid>
-                        </Grid>
                     </Grid>
-                    <Grid x:Name="SubtitlesSection" Visibility="Collapsed">
-                        <Grid RowSpacing="6">
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <TextBlock x:Name="SubtitlesTitleText" Grid.Row="0" Text="Subtitles" FontWeight="SemiBold" Margin="4,4,4,0" />
-                            <ListView x:Name="SubtitleList" Grid.Row="1" SelectionMode="Multiple" IsItemClickEnabled="True" ItemClick="OnSubtitleItemClick">
+                    <Grid x:Name="SubtitlesSection" Visibility="Collapsed" Padding="10,8,10,10">
+                        <Grid RowSpacing="8">
+                            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <ListView x:Name="SubtitleList" Grid.Row="0" Style="{StaticResource RightPanelListStyle}" SelectionMode="Multiple" IsItemClickEnabled="True" ItemClick="OnSubtitleItemClick">
                                 <ListView.ItemTemplate><DataTemplate><Grid Padding="4" MinWidth="280"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions><Grid ColumnSpacing="4"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBox x:Uid="CueStart" Header="Start (µs)" Text="{Binding StartMicroseconds, Mode=OneWay}" Tag="Start" FontFamily="Consolas" FontSize="11" GotFocus="OnCueTimeGotFocus" LostFocus="OnCueTimeLostFocus" /><TextBox x:Uid="CueEnd" Grid.Column="1" Header="End (µs)" Text="{Binding EndMicroseconds, Mode=OneWay}" Tag="End" FontFamily="Consolas" FontSize="11" GotFocus="OnCueTimeGotFocus" LostFocus="OnCueTimeLostFocus" /><TextBox x:Uid="CueDuration" Grid.Column="2" Header="Duration (µs)" Text="{Binding DurationMicroseconds, Mode=OneWay}" Tag="Duration" FontFamily="Consolas" FontSize="11" GotFocus="OnCueTimeGotFocus" LostFocus="OnCueTimeLostFocus" /></Grid><StackPanel Grid.Row="1" Spacing="2"><TextBox Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="52" GotFocus="OnCueTextGotFocus" LostFocus="OnCueTextLostFocus" /><TextBlock Text="{Binding TranslatedText, Mode=OneWay}" Visibility="{Binding HasDistinctTranslation, Converter={StaticResource BooleanToVisibilityConverter}}" TextWrapping="Wrap" Opacity="0.72" /></StackPanel></Grid></DataTemplate></ListView.ItemTemplate>
                             </ListView>
-                            <CommandBar Grid.Row="2" DefaultLabelPosition="Collapsed"><AppBarButton x:Uid="SaveSubtitleButton" Icon="Save" Label="Save subtitle" Click="OnSaveSubtitleClick" /><AppBarSeparator /><AppBarButton x:Uid="AddCueButton" Icon="Add" Label="Add" Click="OnAddCueClick" /><AppBarButton x:Uid="SplitCueButton" Icon="Cut" Label="Split" Click="OnSplitCueClick" /><AppBarButton x:Uid="DeleteCueButton" Icon="Delete" Label="Delete" Click="OnDeleteCueClick" /><AppBarSeparator /><AppBarButton x:Uid="UndoButton" Icon="Undo" Label="Undo" Click="OnUndoClick" /><AppBarButton x:Uid="RedoButton" Icon="Redo" Label="Redo" Click="OnRedoClick" /></CommandBar>
+                            <CommandBar Grid.Row="1" Style="{StaticResource RightPanelCommandBarStyle}"><AppBarButton x:Uid="SaveSubtitleButton" Icon="Save" Label="Save subtitle" Click="OnSaveSubtitleClick" /><AppBarSeparator /><AppBarButton x:Uid="AddCueButton" Icon="Add" Label="Add" Click="OnAddCueClick" /><AppBarButton x:Uid="SplitCueButton" Icon="Cut" Label="Split" Click="OnSplitCueClick" /><AppBarButton x:Uid="DeleteCueButton" Icon="Delete" Label="Delete" Click="OnDeleteCueClick" /><AppBarSeparator /><AppBarButton x:Uid="UndoButton" Icon="Undo" Label="Undo" Click="OnUndoClick" /><AppBarButton x:Uid="RedoButton" Icon="Redo" Label="Redo" Click="OnRedoClick" /></CommandBar>
                         </Grid>
                     </Grid>
                     </Grid>
-                    <Border Grid.Column="1" Padding="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="0">
+                    <Border Grid.RowSpan="2" Grid.Column="1" Padding="4,6" Background="{ThemeResource RightPanelRailBrush}" BorderBrush="{ThemeResource RightPanelBorderBrush}" BorderThickness="1,0,0,0" CornerRadius="0,10,10,0">
                         <ListView x:Name="RightPanelSectionList"
                                   SelectionMode="Single"
                                   HorizontalContentAlignment="Stretch"
@@ -238,11 +305,12 @@
                                   ScrollViewer.VerticalScrollBarVisibility="Hidden">
                             <ListView.ItemContainerStyle>
                                 <Style TargetType="ListViewItem">
-                                    <Setter Property="Width" Value="48" />
-                                    <Setter Property="Height" Value="48" />
+                                    <Setter Property="Width" Value="42" />
+                                    <Setter Property="Height" Value="42" />
                                     <Setter Property="MinWidth" Value="0" />
                                     <Setter Property="Padding" Value="0" />
-                                    <Setter Property="Margin" Value="0" />
+                                    <Setter Property="Margin" Value="0,2" />
+                                    <Setter Property="CornerRadius" Value="8" />
                                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                                     <Setter Property="VerticalContentAlignment" Value="Stretch" />
                                 </Style>
@@ -250,13 +318,14 @@
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <Grid ToolTipService.ToolTip="{Binding Label}">
-                                        <FontIcon Glyph="{Binding IconGlyph}" FontSize="18" Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <FontIcon Glyph="{Binding IconGlyph}" FontSize="17" Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
                     </Border>
                 </Grid>
+                </Border>
             </Grid>
         </Grid>
         <Grid x:Name="PlaybackControls" Grid.Row="6" Padding="8,4" ColumnSpacing="6">
@@ -294,24 +363,39 @@
             </ToggleButton>
             <Button x:Name="CloseButton" Grid.Column="16" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnExitClick" ToolTipService.ToolTip="Close (Ctrl+W)"><FontIcon x:Name="CloseButtonIcon" Glyph="&#xE8BB;" FontSize="19" /></Button>
         </Grid>
-        <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="4" DragDelta="OnBottomPanelSplitterDragDelta" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
-        <Grid x:Name="VisualizationPanel" Grid.Row="5" Margin="8,2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-            <Canvas x:Name="TimelineCanvas" Background="Transparent" SizeChanged="OnVisualizationSizeChanged" PointerPressed="OnTimelinePointerPressed" PointerMoved="OnTimelinePointerMoved" PointerReleased="OnTimelinePointerReleased" PointerCanceled="OnTimelinePointerReleased" PointerWheelChanged="OnTimelinePointerWheelChanged" />
-        </Grid>
-        <Grid x:Name="StatusPanel" Grid.Row="3" Height="44" Padding="8,2" ColumnSpacing="8">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="500" /></Grid.ColumnDefinitions>
+        <primitives:Thumb x:Name="BottomPanelSplitter" Grid.Row="4" Style="{StaticResource HorizontalPanelSplitterStyle}" DragDelta="OnBottomPanelSplitterDragDelta" />
+        <Border x:Name="VisualizationPanel" Grid.Row="5" Margin="8,2,8,4"
+                Background="{ThemeResource BottomPanelSurfaceBrush}"
+                BorderBrush="{ThemeResource RightPanelBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="10">
             <Grid>
-                <TextBlock x:Name="StatusText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
-                <ProgressBar x:Name="AsrDownloadProgressBar" Minimum="0" Maximum="1" Height="3" VerticalAlignment="Bottom" Visibility="Collapsed" />
+                <Canvas x:Name="TimelineCanvas" Background="{ThemeResource TimelineCanvasBrush}" SizeChanged="OnVisualizationSizeChanged" PointerPressed="OnTimelinePointerPressed" PointerMoved="OnTimelinePointerMoved" PointerReleased="OnTimelinePointerReleased" PointerCanceled="OnTimelinePointerReleased" PointerWheelChanged="OnTimelinePointerWheelChanged" />
             </Grid>
-            <TextBlock x:Uid="AudioLabel" Grid.Column="1" Text="Audio" VerticalAlignment="Center" /><ComboBox x:Name="AudioTrackCombo" Grid.Column="2" VerticalAlignment="Center" DisplayMemberPath="DisplayName" SelectionChanged="OnAudioTrackChanged" />
-            <TextBlock x:Uid="SubtitlesLabel" Grid.Column="3" Text="Subtitles" VerticalAlignment="Center" /><ComboBox x:Name="SubtitleTrackCombo" Grid.Column="4" VerticalAlignment="Center" DisplayMemberPath="DisplayName" />
-            <Grid Grid.Column="5" ColumnSpacing="8" VerticalAlignment="Center">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <TextBlock x:Name="ResolutionText" Opacity="0.7" VerticalAlignment="Center" />
-                <TextBlock x:Name="DecoderText" Grid.Column="1" Opacity="0.7" VerticalAlignment="Center" TextWrapping="Wrap" MaxLines="2" LineHeight="16" />
-                <TextBlock x:Name="AudioCodecText" Grid.Column="2" Opacity="0.7" VerticalAlignment="Center" />
+        </Border>
+        <Border x:Name="StatusPanel" Grid.Row="3" Height="44" Margin="8,2,8,0"
+                Padding="10,3"
+                Background="{ThemeResource BottomPanelSurfaceBrush}"
+                BorderBrush="{ThemeResource RightPanelBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="500" /></Grid.ColumnDefinitions>
+                <Grid>
+                    <TextBlock x:Name="StatusText" VerticalAlignment="Center" FontSize="13" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
+                    <ProgressBar x:Name="AsrDownloadProgressBar" Minimum="0" Maximum="1" Height="3" VerticalAlignment="Bottom" Visibility="Collapsed" />
+                </Grid>
+                <TextBlock x:Uid="AudioLabel" Grid.Column="1" Text="Audio" FontSize="12" Foreground="{ThemeResource RightPanelMutedTextBrush}" VerticalAlignment="Center" />
+                <ComboBox x:Name="AudioTrackCombo" Grid.Column="2" MinHeight="32" CornerRadius="6" FontSize="13" VerticalAlignment="Center" DisplayMemberPath="DisplayName" SelectionChanged="OnAudioTrackChanged" />
+                <TextBlock x:Uid="SubtitlesLabel" Grid.Column="3" Text="Subtitles" FontSize="12" Foreground="{ThemeResource RightPanelMutedTextBrush}" VerticalAlignment="Center" />
+                <ComboBox x:Name="SubtitleTrackCombo" Grid.Column="4" MinHeight="32" CornerRadius="6" FontSize="13" VerticalAlignment="Center" DisplayMemberPath="DisplayName" />
+                <Grid Grid.Column="5" ColumnSpacing="10" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock x:Name="ResolutionText" FontSize="12" Foreground="{ThemeResource RightPanelMutedTextBrush}" VerticalAlignment="Center" />
+                    <TextBlock x:Name="DecoderText" Grid.Column="1" FontSize="12" Foreground="{ThemeResource RightPanelMutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" MaxLines="2" LineHeight="16" />
+                    <TextBlock x:Name="AudioCodecText" Grid.Column="2" FontSize="12" Foreground="{ThemeResource RightPanelMutedTextBrush}" VerticalAlignment="Center" />
+                </Grid>
             </Grid>
-        </Grid>
+        </Border>
     </Grid>
 </Window>

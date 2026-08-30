@@ -155,7 +155,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _rightPanel = new RightPanelController(
             new RightPanelViewElements(
                 RightPanelSectionList, ExplorerSection, PlaylistSection, WebDavSection, FavoritesSection,
-                SubtitlesSection, PlaylistTitleText, FavoritesTitleText, SubtitlesTitleText),
+                SubtitlesSection, RightPanelTitleText),
             () =>
             {
                 _panels.IsRightVisible = true;

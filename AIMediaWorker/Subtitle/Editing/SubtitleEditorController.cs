@@ -466,6 +466,61 @@ internal sealed class SubtitleEditorController
     {
         _timelineCanvas.Children.Clear();
         _timelinePlayhead = null;
+        var canvasWidth = Math.Max(0, _timelineCanvas.ActualWidth);
+        var canvasHeight = Math.Max(0, _timelineCanvas.ActualHeight);
+        const double rulerHeight = 28;
+        const double cueTop = 34;
+
+        _timelineCanvas.Children.Add(new Rectangle
+        {
+            Width = canvasWidth,
+            Height = rulerHeight,
+            Fill = ThemeBrush("TimelineRulerBrush", Windows.UI.Color.FromArgb(255, 37, 37, 37)),
+            IsHitTestVisible = false
+        });
+
+        var visibleRange = _timelineTransform.VisibleRange(canvasWidth);
+        var tickInterval = ChooseTickInterval(visibleRange.End - visibleRange.Start, canvasWidth);
+        var firstTick = (long)Math.Ceiling(visibleRange.Start / (double)tickInterval) * tickInterval;
+        for (var tick = firstTick; tick <= visibleRange.End; tick += tickInterval)
+        {
+            var x = _timelineTransform.TimeToX(tick);
+            var tickLine = new Line
+            {
+                X1 = x,
+                X2 = x,
+                Y1 = rulerHeight,
+                Y2 = canvasHeight,
+                Stroke = ThemeBrush("TimelineGridLineBrush", Windows.UI.Color.FromArgb(22, 255, 255, 255)),
+                StrokeThickness = 1,
+                IsHitTestVisible = false
+            };
+            _timelineCanvas.Children.Add(tickLine);
+
+            var label = new TextBlock
+            {
+                Text = FormatTimelineTick(tick),
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 11,
+                Foreground = ThemeBrush("TextFillColorSecondaryBrush", Windows.UI.Color.FromArgb(166, 255, 255, 255)),
+                IsHitTestVisible = false
+            };
+            Canvas.SetLeft(label, x + 6);
+            Canvas.SetTop(label, 6);
+            _timelineCanvas.Children.Add(label);
+        }
+
+        _timelineCanvas.Children.Add(new Line
+        {
+            X1 = 0,
+            X2 = canvasWidth,
+            Y1 = rulerHeight,
+            Y2 = rulerHeight,
+            Stroke = ThemeBrush("TimelineGridLineBrush", Windows.UI.Color.FromArgb(22, 255, 255, 255)),
+            StrokeThickness = 1,
+            IsHitTestVisible = false
+        });
+
         if (_document().ActiveTrack?.Cues is { } cues)
         {
             foreach (var cue in cues)
@@ -474,35 +529,58 @@ internal sealed class SubtitleEditorController
                 var right = _timelineTransform.TimeToX(cue.EndMicroseconds);
                 if (right < 0) continue;
                 if (left > _timelineCanvas.ActualWidth) break;
+                var selected = _subtitleList.SelectedItems.Contains(cue);
+                var content = new Grid();
+                content.Children.Add(new TextBlock
+                {
+                    Text = cue.GetDisplayText(SubtitleDisplayMode.OriginalAndTranslation),
+                    TextWrapping = TextWrapping.Wrap,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    MaxLines = 4,
+                    Margin = new Thickness(7, 4, 7, 4),
+                    FontSize = 12,
+                    LineHeight = 16,
+                    Foreground = ThemeBrush("TextFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255))
+                });
+                content.Children.Add(new Border
+                {
+                    Width = 2,
+                    Margin = new Thickness(3, 6, 0, 6),
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Background = ThemeBrush("TimelineCueBorderBrush", Windows.UI.Color.FromArgb(255, 75, 167, 232)),
+                    CornerRadius = new CornerRadius(1),
+                    Opacity = 0.72
+                });
+                content.Children.Add(new Border
+                {
+                    Width = 2,
+                    Margin = new Thickness(0, 6, 3, 6),
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Background = ThemeBrush("TimelineCueBorderBrush", Windows.UI.Color.FromArgb(255, 75, 167, 232)),
+                    CornerRadius = new CornerRadius(1),
+                    Opacity = 0.72
+                });
                 var border = new Border
                 {
                     Width = Math.Max(3, right - left),
-                    Height = Math.Max(20, _timelineCanvas.ActualHeight - 8),
-                    Background = ThemeBrush("AccentFillColorDefaultBrush", Windows.UI.Color.FromArgb(255, 40, 130, 220)),
-                    CornerRadius = new CornerRadius(3),
-                    Padding = new Thickness(4, 2, 4, 2),
-                    Child = new TextBlock
-                    {
-                        Text = cue.GetDisplayText(SubtitleDisplayMode.OriginalAndTranslation),
-                        TextWrapping = TextWrapping.Wrap,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        MaxLines = 4,
-                        FontSize = 13,
-                        LineHeight = 17,
-                        Foreground = ThemeBrush("TextOnAccentFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255))
-                    },
+                    Height = Math.Max(20, canvasHeight - cueTop - 8),
+                    Background = ThemeBrush(selected ? "TimelineCueSelectedFillBrush" : "TimelineCueFillBrush", Windows.UI.Color.FromArgb(255, 38, 59, 74)),
+                    BorderBrush = ThemeBrush("TimelineCueBorderBrush", Windows.UI.Color.FromArgb(255, 75, 167, 232)),
+                    BorderThickness = new Thickness(selected ? 2 : 1),
+                    CornerRadius = new CornerRadius(6),
+                    Child = content,
                     Tag = cue
                 };
                 Canvas.SetLeft(border, left);
-                Canvas.SetTop(border, 4);
+                Canvas.SetTop(border, cueTop);
                 _timelineCanvas.Children.Add(border);
             }
         }
         _timelinePlayhead = new Rectangle
         {
             Width = 2,
-            Height = _timelineCanvas.ActualHeight,
-            Fill = ThemeBrush("SystemFillColorCriticalBrush", Windows.UI.Color.FromArgb(255, 255, 69, 0)),
+            Height = canvasHeight,
+            Fill = ThemeBrush("TimelinePlayheadBrush", Windows.UI.Color.FromArgb(255, 255, 102, 115)),
             IsHitTestVisible = false
         };
         Canvas.SetTop(_timelinePlayhead, 0);
@@ -553,6 +631,22 @@ internal sealed class SubtitleEditorController
             "End" => before.End.ToString(),
             _ => (before.End - before.Start).ToString()
         };
+
+    private static long ChooseTickInterval(long visibleMicroseconds, double width)
+    {
+        var targetTicks = Math.Max(2, width / 120d);
+        var ideal = Math.Max(1, visibleMicroseconds / targetTicks);
+        long[] intervals = [100_000, 250_000, 500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000, 30_000_000, 60_000_000, 300_000_000, 600_000_000, 1_800_000_000, 3_600_000_000];
+        return intervals.FirstOrDefault(interval => interval >= ideal, intervals[^1]);
+    }
+
+    private static string FormatTimelineTick(long microseconds)
+    {
+        var time = TimeSpan.FromTicks(microseconds * 10);
+        return time.TotalHours >= 1
+            ? $"{(int)time.TotalHours:00}:{time.Minutes:00}:{time.Seconds:00}"
+            : $"{time.Minutes:00}:{time.Seconds:00}.{time.Milliseconds / 100}";
+    }
 
     private static Brush ThemeBrush(string resourceKey, Windows.UI.Color fallback) =>
         Application.Current.Resources.TryGetValue(resourceKey, out var value) && value is Brush brush

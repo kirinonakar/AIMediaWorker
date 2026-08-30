@@ -45,9 +45,6 @@ internal sealed class RightPanelController : IDisposable
             new RightPanelSectionEntry("\uE734", L("RightPanelFavorites")),
             new RightPanelSectionEntry("\uE8C1", L("RightPanelSubtitles"))
         };
-        _view.PlaylistTitle.Text = L("RightPanelPlaylist");
-        _view.FavoritesTitle.Text = L("RightPanelFavorites");
-        _view.SubtitlesTitle.Text = L("RightPanelSubtitles");
         _view.SectionList.SelectedIndex = Math.Clamp(selectedIndex, 0, (int)RightPanelSection.Subtitles);
         Apply(CurrentSection, notify: false);
     }
@@ -69,6 +66,15 @@ internal sealed class RightPanelController : IDisposable
 
     private void Apply(RightPanelSection section, bool notify)
     {
+        _view.SectionTitle.Text = L(section switch
+        {
+            RightPanelSection.Explorer => "RightPanelExplorer",
+            RightPanelSection.Playlist => "RightPanelPlaylist",
+            RightPanelSection.WebDav => "RightPanelWebDav",
+            RightPanelSection.Favorites => "RightPanelFavorites",
+            RightPanelSection.Subtitles => "RightPanelSubtitles",
+            _ => "RightPanelExplorer"
+        });
         _view.ExplorerSection.Visibility = VisibilityFor(section == RightPanelSection.Explorer);
         _view.PlaylistSection.Visibility = VisibilityFor(section == RightPanelSection.Playlist);
         _view.WebDavSection.Visibility = VisibilityFor(section == RightPanelSection.WebDav);
@@ -90,6 +96,4 @@ internal sealed record RightPanelViewElements(
     FrameworkElement WebDavSection,
     FrameworkElement FavoritesSection,
     FrameworkElement SubtitlesSection,
-    TextBlock PlaylistTitle,
-    TextBlock FavoritesTitle,
-    TextBlock SubtitlesTitle);
+    TextBlock SectionTitle);

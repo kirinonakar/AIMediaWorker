@@ -3,7 +3,7 @@
     x:Class="AIMediaWorker.Views.LocalMediaBrowserView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid RowSpacing="6">
+    <Grid Padding="10,8,10,10" RowSpacing="8">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -11,7 +11,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <CommandBar DefaultLabelPosition="Collapsed">
+        <CommandBar Style="{StaticResource RightPanelCommandBarStyle}">
             <AppBarButton x:Uid="BrowserChooseFolder" Icon="Folder" Label="Choose folder" Click="OnChooseFolderClick" />
             <AppBarButton x:Uid="BrowserHome" Icon="Home" Label="Home folder" Click="OnHomeClick" />
             <AppBarButton x:Uid="BrowserParentFolder" Icon="Back" Label="Parent folder" Click="OnParentClick" />
@@ -20,35 +20,35 @@
                 <AppBarButton.Icon><FontIcon x:Name="SortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon>
             </AppBarButton>
         </CommandBar>
-        <BreadcrumbBar x:Name="BreadcrumbBar" Grid.Row="1" Margin="4,0" ItemClicked="OnBreadcrumbItemClick">
+        <BreadcrumbBar x:Name="BreadcrumbBar" Grid.Row="1" Margin="0" ItemClicked="OnBreadcrumbItemClick">
             <BreadcrumbBar.ItemTemplate>
                 <DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" /></DataTemplate>
             </BreadcrumbBar.ItemTemplate>
         </BreadcrumbBar>
-        <Grid Grid.Row="2" ColumnSpacing="8" RowSpacing="2" Margin="4,0">
+        <Grid Grid.Row="2" ColumnSpacing="8" RowSpacing="4">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <SymbolIcon Symbol="Find" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
-            <TextBox x:Uid="BrowserSearch" x:Name="SearchBox" Grid.Column="1" PlaceholderText="Search subfolders" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" />
-            <ToggleButton x:Uid="BrowserRegexSearch" x:Name="RegexSearchToggle" Grid.Column="2" Content=".*" Click="OnRegexSearchClick" />
-            <Button x:Uid="BrowserSearchButton" x:Name="SearchButton" Grid.Column="3" Content="Search" Click="OnSearchClick" />
+            <SymbolIcon Symbol="Find" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource RightPanelMutedTextBrush}" IsHitTestVisible="False" />
+            <TextBox x:Uid="BrowserSearch" x:Name="SearchBox" Grid.Column="1" Style="{StaticResource RightPanelTextBoxStyle}" PlaceholderText="Search subfolders" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" />
+            <ToggleButton x:Uid="BrowserRegexSearch" x:Name="RegexSearchToggle" Grid.Column="2" MinWidth="38" Height="36" Padding="8,0" CornerRadius="6" Content=".*" Click="OnRegexSearchClick" />
+            <Button x:Uid="BrowserSearchButton" x:Name="SearchButton" Grid.Column="3" Style="{StaticResource RightPanelButtonStyle}" Content="Search" Click="OnSearchClick" />
             <ProgressRing x:Name="SearchProgressRing" Grid.Row="1" Width="16" Height="16" IsActive="False" />
-            <TextBlock x:Name="SearchStatusText" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" TextTrimming="CharacterEllipsis" Opacity="0.65" FontSize="11" />
+            <TextBlock x:Name="SearchStatusText" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource RightPanelMutedTextBrush}" FontSize="11" />
         </Grid>
-        <Grid Grid.Row="3" ColumnSpacing="8" Margin="4,0">
+        <Grid Grid.Row="3" ColumnSpacing="8">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <SymbolIcon Symbol="Filter" Width="20" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0.7" IsHitTestVisible="False" />
-            <TextBox x:Uid="BrowserFilter" x:Name="FilterBox" Grid.Column="1" PlaceholderText="Filter by name" TextChanged="OnFilterTextChanged" />
+            <SymbolIcon Symbol="Filter" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource RightPanelMutedTextBrush}" IsHitTestVisible="False" />
+            <TextBox x:Uid="BrowserFilter" x:Name="FilterBox" Grid.Column="1" Style="{StaticResource RightPanelTextBoxStyle}" PlaceholderText="Filter by name" TextChanged="OnFilterTextChanged" />
         </Grid>
-        <ListView x:Name="EntryList" Grid.Row="4" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnEntryClick">
+        <ListView x:Name="EntryList" Grid.Row="4" Style="{StaticResource RightPanelListStyle}" ItemContainerStyle="{StaticResource RightPanelListItemStyle}" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="OnEntryClick">
             <ListView.ItemTemplate>
                 <DataTemplate>
-                    <Grid Padding="5" ColumnSpacing="8" RightTapped="OnEntryRightTapped">
+                    <Grid Padding="2,0" ColumnSpacing="10" RightTapped="OnEntryRightTapped">
                         <Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem x:Uid="AddBrowserFavorite" Text="Add to favorites" Click="OnAddFavoriteClick" /></MenuFlyout></Grid.ContextFlyout>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <FontIcon Glyph="{Binding IconGlyph}" />
-                        <TextBlock Grid.Column="1" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding DisplayName}" />
-                        <TextBlock Grid.Column="2" Text="{Binding Details}" Opacity="0.6" />
+                        <FontIcon Glyph="{Binding IconGlyph}" FontSize="16" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding DisplayName}" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding DisplayName}" />
+                        <TextBlock Grid.Column="2" Text="{Binding Details}" FontSize="12" Foreground="{ThemeResource RightPanelMutedTextBrush}" VerticalAlignment="Center" />
                     </Grid>
                 </DataTemplate>
             </ListView.ItemTemplate>
