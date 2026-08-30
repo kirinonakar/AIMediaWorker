@@ -12,11 +12,11 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
         <CommandBar Style="{StaticResource RightPanelCommandBarStyle}">
-            <AppBarButton x:Uid="BrowserChooseFolder" Icon="Folder" Label="Choose folder" Click="OnChooseFolderClick" />
-            <AppBarButton x:Uid="BrowserHome" Icon="Home" Label="Home folder" Click="OnHomeClick" />
-            <AppBarButton x:Uid="BrowserParentFolder" Icon="Back" Label="Parent folder" Click="OnParentClick" />
-            <AppBarButton x:Uid="BrowserRefresh" Icon="Refresh" Label="Refresh" Click="OnRefreshClick" />
-            <AppBarButton x:Uid="BrowserSort" x:Name="SortButton" Label="Sort by name" Click="OnSortClick">
+            <AppBarButton x:Uid="BrowserChooseFolder" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Folder" Label="Choose folder" Click="OnChooseFolderClick" />
+            <AppBarButton x:Uid="BrowserHome" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Home" Label="Home folder" Click="OnHomeClick" />
+            <AppBarButton x:Uid="BrowserParentFolder" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Back" Label="Parent folder" Click="OnParentClick" />
+            <AppBarButton x:Uid="BrowserRefresh" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Refresh" Label="Refresh" Click="OnRefreshClick" />
+            <AppBarButton x:Uid="BrowserSort" x:Name="SortButton" Style="{StaticResource RightPanelAppBarButtonStyle}" Label="Sort by name" Click="OnSortClick">
                 <AppBarButton.Icon><FontIcon x:Name="SortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon>
             </AppBarButton>
         </CommandBar>

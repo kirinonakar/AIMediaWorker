@@ -32,10 +32,10 @@
             <TextBlock x:Uid="WebDavNoServersText" x:Name="EmptyServersText" Text="No servers added" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" />
         </Grid>
         <CommandBar Grid.Row="2" Style="{StaticResource RightPanelCommandBarStyle}">
-            <AppBarButton x:Uid="WebDavAddServerCommand" Icon="Add" Label="Add WebDAV server" Click="OnAddServerClick" />
-            <AppBarButton x:Uid="ParentButton" x:Name="ParentButton" Icon="Back" Label="Parent folder" Click="OnParentClick" IsEnabled="False" />
-            <AppBarButton x:Uid="RefreshCommand" x:Name="RefreshButton" Icon="Refresh" Label="Refresh" Click="OnRefreshClick" IsEnabled="False" />
-            <AppBarButton x:Uid="WebDavSort" x:Name="SortButton" Label="Sort by name" Click="OnSortClick">
+            <AppBarButton x:Uid="WebDavAddServerCommand" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Add" Label="Add WebDAV server" Click="OnAddServerClick" />
+            <AppBarButton x:Uid="ParentButton" x:Name="ParentButton" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Back" Label="Parent folder" Click="OnParentClick" IsEnabled="False" />
+            <AppBarButton x:Uid="RefreshCommand" x:Name="RefreshButton" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Refresh" Label="Refresh" Click="OnRefreshClick" IsEnabled="False" />
+            <AppBarButton x:Uid="WebDavSort" x:Name="SortButton" Style="{StaticResource RightPanelAppBarButtonStyle}" Label="Sort by name" Click="OnSortClick">
                 <AppBarButton.Icon><FontIcon x:Name="SortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon>
             </AppBarButton>
             <AppBarElementContainer VerticalContentAlignment="Center">

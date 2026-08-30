@@ -37,6 +37,9 @@ internal sealed class PanelLayoutController
 
     public void Apply(bool persist)
     {
+        _view.VideoSurface.Margin = IsRightVisible
+            ? new Thickness(8, 4, 2, 4)
+            : new Thickness(8, 4, 8, 4);
         _view.RightPanel.Visibility = IsRightVisible ? Visibility.Visible : Visibility.Collapsed;
         _view.RightPanelSplitter.Visibility = IsRightVisible ? Visibility.Visible : Visibility.Collapsed;
         _view.RightPanelSplitterColumn.Width = IsRightVisible ? new GridLength(6) : new GridLength(0);
@@ -90,6 +93,7 @@ internal sealed class PanelLayoutController
 }
 
 internal sealed record PanelLayoutViewElements(
+    FrameworkElement VideoSurface,
     FrameworkElement RightPanel,
     FrameworkElement RightPanelSplitter,
     ColumnDefinition RightPanelSplitterColumn,

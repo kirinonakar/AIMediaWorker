@@ -130,7 +130,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             TranslateMenuItem.IsChecked);
         _panels = new PanelLayoutController(
             new PanelLayoutViewElements(
-                SubtitlePanel, RightPanelSplitter, RightPanelSplitterColumn, RightPanelColumn,
+                VideoPlaceholder, SubtitlePanel, RightPanelSplitter, RightPanelSplitterColumn, RightPanelColumn,
                 VisualizationPanel, BottomPanelSplitter, BottomPanelSplitterRow, BottomPanelRow, StatusPanel,
                 ShowRightPanelMenuItem, ShowBottomPanelMenuItem, ShowStatusPanelMenuItem,
                 RightPanelToggleButton, BottomPanelToggleButton, StatusPanelToggleButton),

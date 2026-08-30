@@ -65,8 +65,20 @@
             <Style x:Key="RightPanelCommandBarStyle" TargetType="CommandBar">
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="Padding" Value="0" />
-                <Setter Property="MinHeight" Value="40" />
+                <Setter Property="Height" Value="44" />
+                <Setter Property="MinHeight" Value="44" />
                 <Setter Property="DefaultLabelPosition" Value="Collapsed" />
+            </Style>
+            <Style x:Key="RightPanelAppBarButtonStyle" TargetType="AppBarButton" BasedOn="{StaticResource DefaultAppBarButtonStyle}">
+                <Setter Property="Width" Value="44" />
+                <Setter Property="MinWidth" Value="44" />
+                <Setter Property="Height" Value="44" />
+                <Setter Property="MinHeight" Value="44" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Margin" Value="2,0" />
+                <Setter Property="CornerRadius" Value="7" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
             </Style>
             <Style x:Key="RightPanelListStyle" TargetType="ListView">
                 <Setter Property="Background" Value="Transparent" />
