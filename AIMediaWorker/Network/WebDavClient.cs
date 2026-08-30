@@ -9,7 +9,7 @@ namespace AIMediaWorker.Network;
 
 public sealed record WebDavEntry(string Name, Uri Uri, bool IsCollection, long? ContentLength, DateTimeOffset? LastModified, string? ContentType, string? SearchRelativePath = null)
 {
-    public string IconGlyph => IsCollection ? "\uE8B7" : "\uE8A5";
+    public string IconGlyph => IsCollection ? "\uE8B7" : MediaFileClassifier.GetFileIconGlyph(Name);
     public string DisplayName => SearchRelativePath ?? Name;
     public string SizeText => IsCollection || ContentLength is null ? string.Empty : FormatBytes(ContentLength.Value);
 

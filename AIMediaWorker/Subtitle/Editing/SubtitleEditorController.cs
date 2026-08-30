@@ -475,7 +475,7 @@ internal sealed class SubtitleEditorController
         {
             Width = canvasWidth,
             Height = rulerHeight,
-            Fill = ThemeBrush("TimelineRulerBrush", Windows.UI.Color.FromArgb(255, 37, 37, 37)),
+            Fill = ThemeBrush("TimelineRulerBrush", Color(255, 241, 241, 241), Color(255, 37, 37, 37)),
             IsHitTestVisible = false
         });
 
@@ -491,7 +491,7 @@ internal sealed class SubtitleEditorController
                 X2 = x,
                 Y1 = rulerHeight,
                 Y2 = canvasHeight,
-                Stroke = ThemeBrush("TimelineGridLineBrush", Windows.UI.Color.FromArgb(22, 255, 255, 255)),
+                Stroke = ThemeBrush("TimelineGridLineBrush", Color(20, 0, 0, 0), Color(22, 255, 255, 255)),
                 StrokeThickness = 1,
                 IsHitTestVisible = false
             };
@@ -502,7 +502,7 @@ internal sealed class SubtitleEditorController
                 Text = FormatTimelineTick(tick),
                 FontFamily = new FontFamily("Consolas"),
                 FontSize = 11,
-                Foreground = ThemeBrush("TextFillColorSecondaryBrush", Windows.UI.Color.FromArgb(166, 255, 255, 255)),
+                Foreground = ThemeBrush("TextFillColorSecondaryBrush", Color(153, 0, 0, 0), Color(166, 255, 255, 255)),
                 IsHitTestVisible = false
             };
             Canvas.SetLeft(label, x + 6);
@@ -516,7 +516,7 @@ internal sealed class SubtitleEditorController
             X2 = canvasWidth,
             Y1 = rulerHeight,
             Y2 = rulerHeight,
-            Stroke = ThemeBrush("TimelineGridLineBrush", Windows.UI.Color.FromArgb(22, 255, 255, 255)),
+            Stroke = ThemeBrush("TimelineGridLineBrush", Color(20, 0, 0, 0), Color(22, 255, 255, 255)),
             StrokeThickness = 1,
             IsHitTestVisible = false
         });
@@ -540,14 +540,14 @@ internal sealed class SubtitleEditorController
                     Margin = new Thickness(7, 4, 7, 4),
                     FontSize = 12,
                     LineHeight = 16,
-                    Foreground = ThemeBrush("TextFillColorPrimaryBrush", Windows.UI.Color.FromArgb(255, 255, 255, 255))
+                    Foreground = ThemeBrush("TextFillColorPrimaryBrush", Color(228, 0, 0, 0), Color(255, 255, 255, 255))
                 });
                 content.Children.Add(new Border
                 {
                     Width = 2,
                     Margin = new Thickness(3, 6, 0, 6),
                     HorizontalAlignment = HorizontalAlignment.Left,
-                    Background = ThemeBrush("TimelineCueBorderBrush", Windows.UI.Color.FromArgb(255, 75, 167, 232)),
+                    Background = ThemeBrush("TimelineCueBorderBrush", Color(255, 58, 150, 216), Color(255, 75, 167, 232)),
                     CornerRadius = new CornerRadius(1),
                     Opacity = 0.72
                 });
@@ -556,7 +556,7 @@ internal sealed class SubtitleEditorController
                     Width = 2,
                     Margin = new Thickness(0, 6, 3, 6),
                     HorizontalAlignment = HorizontalAlignment.Right,
-                    Background = ThemeBrush("TimelineCueBorderBrush", Windows.UI.Color.FromArgb(255, 75, 167, 232)),
+                    Background = ThemeBrush("TimelineCueBorderBrush", Color(255, 58, 150, 216), Color(255, 75, 167, 232)),
                     CornerRadius = new CornerRadius(1),
                     Opacity = 0.72
                 });
@@ -564,8 +564,10 @@ internal sealed class SubtitleEditorController
                 {
                     Width = Math.Max(3, right - left),
                     Height = Math.Max(20, canvasHeight - cueTop - 8),
-                    Background = ThemeBrush(selected ? "TimelineCueSelectedFillBrush" : "TimelineCueFillBrush", Windows.UI.Color.FromArgb(255, 38, 59, 74)),
-                    BorderBrush = ThemeBrush("TimelineCueBorderBrush", Windows.UI.Color.FromArgb(255, 75, 167, 232)),
+                    Background = selected
+                        ? ThemeBrush("TimelineCueSelectedFillBrush", Color(255, 199, 230, 250), Color(255, 25, 87, 127))
+                        : ThemeBrush("TimelineCueFillBrush", Color(255, 221, 236, 247), Color(255, 38, 59, 74)),
+                    BorderBrush = ThemeBrush("TimelineCueBorderBrush", Color(255, 58, 150, 216), Color(255, 75, 167, 232)),
                     BorderThickness = new Thickness(selected ? 2 : 1),
                     CornerRadius = new CornerRadius(6),
                     Child = content,
@@ -580,7 +582,7 @@ internal sealed class SubtitleEditorController
         {
             Width = 2,
             Height = canvasHeight,
-            Fill = ThemeBrush("TimelinePlayheadBrush", Windows.UI.Color.FromArgb(255, 255, 102, 115)),
+            Fill = ThemeBrush("TimelinePlayheadBrush", Color(255, 231, 72, 86), Color(255, 255, 102, 115)),
             IsHitTestVisible = false
         };
         Canvas.SetTop(_timelinePlayhead, 0);
@@ -648,10 +650,19 @@ internal sealed class SubtitleEditorController
             : $"{time.Minutes:00}:{time.Seconds:00}.{time.Milliseconds / 100}";
     }
 
-    private static Brush ThemeBrush(string resourceKey, Windows.UI.Color fallback) =>
-        Application.Current.Resources.TryGetValue(resourceKey, out var value) && value is Brush brush
-            ? brush
-            : new SolidColorBrush(fallback);
+    private Brush ThemeBrush(string resourceKey, Windows.UI.Color lightFallback, Windows.UI.Color darkFallback)
+    {
+        var isLight = _timelineCanvas.ActualTheme == ElementTheme.Light;
+        var themeKey = isLight ? "Light" : "Default";
+        if (Application.Current.Resources.ThemeDictionaries.TryGetValue(themeKey, out var themeResources) &&
+            themeResources is ResourceDictionary dictionary &&
+            dictionary.TryGetValue(resourceKey, out var value) && value is Brush brush)
+            return brush;
+        return new SolidColorBrush(isLight ? lightFallback : darkFallback);
+    }
+
+    private static Windows.UI.Color Color(byte a, byte r, byte g, byte b) =>
+        Windows.UI.Color.FromArgb(a, r, g, b);
 
     private enum TimelineDragMode { None, Move, ResizeStart, ResizeEnd }
 }

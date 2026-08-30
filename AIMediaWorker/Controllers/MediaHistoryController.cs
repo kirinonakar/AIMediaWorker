@@ -156,5 +156,5 @@ internal sealed record FavoriteListEntry(FavoriteItem Item, string Details, stri
 {
     public string DisplayName => Item.DisplayName;
     public string SourceIconGlyph => Item.SourceType == MediaSourceKind.WebDav ? "\uE774" : string.Empty;
-    public string IconGlyph => Item.IsFolder ? "\uE8B7" : "\uE8A5";
+    public string IconGlyph => Item.IsFolder ? "\uE8B7" : MediaFileClassifier.GetFileIconGlyph(Item.Location);
 }

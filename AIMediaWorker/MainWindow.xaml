@@ -230,7 +230,7 @@
         </Grid>
         <Grid x:Name="MainContentGrid" Grid.Row="2" MinHeight="260">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="320" /><ColumnDefinition x:Name="RightPanelSplitterColumn" Width="6" /><ColumnDefinition x:Name="RightPanelColumn" Width="360" MinWidth="0" /></Grid.ColumnDefinitions>
-            <Border x:Name="VideoPlaceholder" Grid.Column="0" Background="Black" Margin="8,4,4,4" DoubleTapped="OnVideoDoubleTapped">
+            <Border x:Name="VideoPlaceholder" Grid.Column="0" Background="Black" Margin="8,4,2,4" DoubleTapped="OnVideoDoubleTapped">
                 <Grid>
                     <Grid x:Name="AudioArtworkSurface" Visibility="Collapsed" IsHitTestVisible="False">
                         <Border Background="#101114" />
@@ -243,7 +243,7 @@
                 </Grid>
             </Border>
             <primitives:Thumb x:Name="RightPanelSplitter" Grid.Column="1" Style="{StaticResource VerticalPanelSplitterStyle}" DragDelta="OnRightPanelSplitterDragDelta" />
-            <Grid x:Name="SubtitlePanel" Grid.Column="2" Margin="4,4,8,4">
+            <Grid x:Name="SubtitlePanel" Grid.Column="2" Margin="2,4,8,4">
                 <Border Background="{ThemeResource RightPanelSurfaceBrush}"
                         BorderBrush="{ThemeResource RightPanelBorderBrush}"
                         BorderThickness="1"

@@ -348,7 +348,7 @@ public sealed partial class LocalMediaBrowserView : UserControl
     {
         public string Name => System.IO.Path.GetFileName(Path.TrimEnd(System.IO.Path.DirectorySeparatorChar));
         public string DisplayName => SearchRelativePath ?? Name;
-        public string IconGlyph => IsDirectory ? "\uE8B7" : "\uE8A5";
+        public string IconGlyph => IsDirectory ? "\uE8B7" : MediaFileClassifier.GetFileIconGlyph(Path);
         public string Details => IsDirectory || Length is null ? string.Empty : FormatBytes(Length.Value);
 
         public static BrowserEntry FromDirectory(string path, string? searchRelativePath = null)

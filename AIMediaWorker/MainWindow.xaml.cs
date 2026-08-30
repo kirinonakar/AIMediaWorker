@@ -862,8 +862,11 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
 
     private void UpdatePanelToggleIcons() => _chrome.UpdatePanelToggleIcons();
 
-    private void OnRootActualThemeChanged(FrameworkElement sender, object args) =>
+    private void OnRootActualThemeChanged(FrameworkElement sender, object args)
+    {
         _chrome.ActualThemeChanged(sender.ActualTheme);
+        _subtitleEditor.DrawTimeline();
+    }
 
     private async void OnPlaylistItemClick(object sender, ItemClickEventArgs e) =>
         await _mediaNavigation.OpenPlaylistItemAsync(e.ClickedItem);

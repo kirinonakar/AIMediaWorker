@@ -37,6 +37,17 @@ public sealed class MediaSearchTests : IDisposable
         Assert.ThrowsAny<ArgumentException>(() => SearchPatternMatcher.Create("[", useRegex: true));
     }
 
+    [Theory]
+    [InlineData("movie.mkv", MediaFileClassifier.VideoIconGlyph)]
+    [InlineData("recording.MP4", MediaFileClassifier.VideoIconGlyph)]
+    [InlineData("song.flac", MediaFileClassifier.AudioIconGlyph)]
+    [InlineData("podcast.OPUS", MediaFileClassifier.AudioIconGlyph)]
+    [InlineData("notes.txt", MediaFileClassifier.FileIconGlyph)]
+    public void FileIconMatchesMediaType(string path, string expectedGlyph)
+    {
+        Assert.Equal(expectedGlyph, MediaFileClassifier.GetFileIconGlyph(path));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_folder)) Directory.Delete(_folder, recursive: true);
