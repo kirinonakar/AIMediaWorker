@@ -53,6 +53,9 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public string? DecoderDescription { get; private set; }
     public int? VideoWidth { get; private set; }
     public int? VideoHeight { get; private set; }
+    public double? VideoFrameRate { get; private set; }
+    public double? VideoBitrate { get; private set; }
+    public double? AudioBitrate { get; private set; }
     public string? LibraryVersion { get; private set; }
     public string HdrOutputStatus { get; private set; } = "Automatic HDR output is pending initialization.";
     public string DolbyVisionCompatibilityStatus { get; private set; } = "Not active.";
@@ -249,6 +252,9 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         Duration = TimeSpan.Zero;
         VideoWidth = null;
         VideoHeight = null;
+        VideoFrameRate = null;
+        VideoBitrate = null;
+        AudioBitrate = null;
         CancelPendingEditorSubtitleSelection();
         _editorSubtitlePath = null;
         cancellationToken.ThrowIfCancellationRequested();
@@ -677,7 +683,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                     _firstFrameReady = true;
                     var codec = GetString("video-codec");
                     var decoder = GetString("hwdec-current") ?? "software";
-                    DecoderDescription = codec is null ? decoder : $"{codec} / {decoder}";
+                    DecoderDescription = FormatDecoderDescription(codec, decoder);
                     StartupProfiler.CompleteAtFirstFrame(DecoderDescription);
                     FirstFrameReady?.Invoke(this, EventArgs.Empty);
                     ScheduleTrackRefresh();
@@ -742,7 +748,13 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
             if (GetDouble("duration") is { } duration) Duration = TimeSpan.FromSeconds(Math.Max(0, duration));
             VideoWidth = GetInt("dwidth") ?? GetInt("width");
             VideoHeight = GetInt("dheight") ?? GetInt("height");
-            DecoderDescription = GetString("video-codec") is { } codec ? $"{codec} / {GetString("hwdec-current") ?? "software"}" : null;
+            var frameRate = GetDouble("container-fps") ?? GetDouble("estimated-vf-fps");
+            VideoFrameRate = frameRate is > 0 && double.IsFinite(frameRate.Value) ? frameRate : null;
+            var videoBitrate = GetDouble("video-bitrate") ?? GetDouble("current-tracks/video/demux-bitrate");
+            VideoBitrate = videoBitrate is > 0 && double.IsFinite(videoBitrate.Value) ? videoBitrate : null;
+            var audioBitrate = GetDouble("audio-bitrate") ?? GetDouble("current-tracks/audio/demux-bitrate");
+            AudioBitrate = audioBitrate is > 0 && double.IsFinite(audioBitrate.Value) ? audioBitrate : null;
+            DecoderDescription = FormatDecoderDescription(GetString("video-codec"), GetString("hwdec-current") ?? "software");
         }
         if (changed) PositionChanged?.Invoke(this, EventArgs.Empty);
         if (eofReached) RaiseMediaEnded();
@@ -770,6 +782,35 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         lock (_sync) { _tracks.Clear(); _tracks.AddRange(result); }
         RestoreSubtitleVisibility();
         TracksChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static string FormatDecoderDescription(string? codec, string decoder) =>
+        string.IsNullOrWhiteSpace(codec) ? decoder : $"{ShortenVideoCodec(codec)} / {decoder}";
+
+    private static string ShortenVideoCodec(string codec)
+    {
+        var name = codec.Trim();
+        var detailsStart = name.IndexOf(" (", StringComparison.Ordinal);
+        if (detailsStart > 0) name = name[..detailsStart];
+        else
+        {
+            var aliasStart = name.IndexOf(" / ", StringComparison.Ordinal);
+            if (aliasStart > 0) name = name[..aliasStart];
+        }
+
+        return name.ToLowerInvariant() switch
+        {
+            "h264" or "avc" => "H.264",
+            "h265" or "hevc" => "H.265",
+            "av1" => "AV1",
+            "vp9" => "VP9",
+            "vp8" => "VP8",
+            "mpeg2video" => "MPEG-2",
+            "mpeg4" => "MPEG-4",
+            "vc1" => "VC-1",
+            "prores" => "ProRes",
+            _ => name
+        };
     }
 
     private async Task EnsureEditorSubtitleSelectedAsync(string fullPath, CancellationToken cancellationToken)

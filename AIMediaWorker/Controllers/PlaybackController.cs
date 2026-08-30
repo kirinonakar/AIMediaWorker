@@ -329,10 +329,10 @@ internal sealed class PlaybackController : IDisposable
                 _view.PositionSlider.Value = Math.Clamp(position.TotalSeconds, 0, _view.PositionSlider.Maximum);
             _updatingPosition = false;
             _view.PositionText.Text = $"{FormatTime(position)} / {FormatTime(duration)}";
-            _view.DecoderText.Text = _playback.DecoderDescription ?? string.Empty;
-            _view.ResolutionText.Text = _playback.VideoWidth is { } width && _playback.VideoHeight is { } height
-                ? $"{width}×{height}"
-                : string.Empty;
+            _view.DecoderText.Text = FormatDecoderStatus(_playback.DecoderDescription, _playback.VideoBitrate);
+            RefreshAudioCodecText();
+            _view.ResolutionText.Text = FormatVideoDimensions(
+                _playback.VideoWidth, _playback.VideoHeight, _playback.VideoFrameRate);
             _host.PositionChanged(Math.Max(0, position.Ticks / 10));
             UpdateTaskbarProgress();
         }
@@ -350,8 +350,19 @@ internal sealed class PlaybackController : IDisposable
     {
         _view.AudioTrackCombo.ItemsSource = _playback.Tracks.Where(track => track.Type == MediaTrackType.Audio).ToArray();
         _view.AudioTrackCombo.SelectedItem = _playback.Tracks.FirstOrDefault(track => track.Type == MediaTrackType.Audio && track.IsSelected);
+        RefreshAudioCodecText();
         _host.TracksChanged();
     });
+
+    private void RefreshAudioCodecText()
+    {
+        var codec = _playback.Tracks.FirstOrDefault(track => track.Type == MediaTrackType.Audio && track.IsSelected)?.Codec;
+        var codecText = string.IsNullOrWhiteSpace(codec) ? string.Empty : codec.ToUpperInvariant();
+        var bitrateText = _playback.AudioBitrate is > 0
+            ? $"{Math.Round(_playback.AudioBitrate.Value / 1_000, MidpointRounding.AwayFromZero):0} kbps"
+            : string.Empty;
+        _view.AudioCodecText.Text = string.Join(' ', new[] { codecText, bitrateText }.Where(value => value.Length > 0));
+    }
 
     private void OnMediaEnded(object? sender, EventArgs e) => _host.DispatcherQueue.TryEnqueue(async () =>
     {
@@ -438,6 +449,24 @@ internal sealed class PlaybackController : IDisposable
         return $"{totalSeconds / 3600:00}:{totalSeconds / 60 % 60:00}:{totalSeconds % 60:00}";
     }
 
+    private static string FormatVideoDimensions(int? width, int? height, double? frameRate)
+    {
+        if (width is null || height is null) return string.Empty;
+        var parts = new List<string> { $"{width}×{height}" };
+        if (frameRate is > 0 && double.IsFinite(frameRate.Value)) parts.Add($"{frameRate.Value:0.###} FPS");
+        return string.Join(' ', parts);
+    }
+
+    private static string FormatDecoderStatus(string? decoder, double? bitrate)
+    {
+        var bitrateText = bitrate is > 0 && double.IsFinite(bitrate.Value) ? FormatBitrate(bitrate.Value) : string.Empty;
+        return string.Join(' ', new[] { decoder ?? string.Empty, bitrateText }.Where(value => value.Length > 0));
+    }
+
+    private static string FormatBitrate(double bitsPerSecond) => bitsPerSecond >= 1_000_000
+        ? $"{bitsPerSecond / 1_000_000:0.#} Mbps"
+        : $"{Math.Round(bitsPerSecond / 1_000, MidpointRounding.AwayFromZero):0} kbps";
+
     private static string L(string key) => LocalizationService.Get(key);
     private static string F(string key, params object[] arguments) =>
         string.Format(System.Globalization.CultureInfo.CurrentCulture, L(key), arguments);
@@ -486,6 +515,7 @@ internal sealed record PlaybackViewElements(
     ComboBox AudioTrackCombo,
     TextBlock ResolutionText,
     TextBlock DecoderText,
+    TextBlock AudioCodecText,
     Button RepeatButton,
     IReadOnlyList<ButtonBase> ToolbarButtons,
     Image BeginningIcon,

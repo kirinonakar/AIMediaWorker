@@ -307,9 +307,10 @@
             <TextBlock x:Uid="AudioLabel" Grid.Column="1" Text="Audio" VerticalAlignment="Center" /><ComboBox x:Name="AudioTrackCombo" Grid.Column="2" VerticalAlignment="Center" DisplayMemberPath="DisplayName" SelectionChanged="OnAudioTrackChanged" />
             <TextBlock x:Uid="SubtitlesLabel" Grid.Column="3" Text="Subtitles" VerticalAlignment="Center" /><ComboBox x:Name="SubtitleTrackCombo" Grid.Column="4" VerticalAlignment="Center" DisplayMemberPath="DisplayName" />
             <Grid Grid.Column="5" ColumnSpacing="8" VerticalAlignment="Center">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <TextBlock x:Name="ResolutionText" Opacity="0.7" VerticalAlignment="Center" />
                 <TextBlock x:Name="DecoderText" Grid.Column="1" Opacity="0.7" VerticalAlignment="Center" TextWrapping="Wrap" MaxLines="2" LineHeight="16" />
+                <TextBlock x:Name="AudioCodecText" Grid.Column="2" Opacity="0.7" VerticalAlignment="Center" />
             </Grid>
         </Grid>
     </Grid>

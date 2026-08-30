@@ -16,6 +16,9 @@ public interface IPlaybackEngine : IAsyncDisposable
     string? DecoderDescription { get; }
     int? VideoWidth { get; }
     int? VideoHeight { get; }
+    double? VideoFrameRate { get; }
+    double? VideoBitrate { get; }
+    double? AudioBitrate { get; }
     string? LibraryVersion { get; }
     string HdrOutputStatus { get; }
     string DolbyVisionCompatibilityStatus { get; }

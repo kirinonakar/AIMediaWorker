@@ -258,7 +258,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             _playback,
             new PlaybackViewElements(
                 PlaybackControls, PositionSlider, PositionText, VolumeSlider, RateCombo,
-                AudioTrackCombo, ResolutionText, DecoderText, RepeatButton,
+                AudioTrackCombo, ResolutionText, DecoderText, AudioCodecText, RepeatButton,
                 [BeginningButton, PreviousButton, SeekBackButton, PlayPauseButton, StopButton,
                     SeekForwardButton, NextButton, ScreenshotButton, MuteButton, RepeatButton,
                     FullscreenButton, CloseButton],
