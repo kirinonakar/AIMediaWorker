@@ -1,5 +1,6 @@
 using AIMediaWorker.Localization;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 
 namespace AIMediaWorker.Views;
@@ -24,6 +25,7 @@ internal sealed class RightPanelController : IDisposable
         _view = view;
         _ensurePanelVisible = ensurePanelVisible;
         _view.SectionList.SelectionChanged += OnSectionChanged;
+        _view.SectionList.ContainerContentChanging += OnSectionContainerContentChanging;
         RefreshLabels();
     }
 
@@ -56,7 +58,27 @@ internal sealed class RightPanelController : IDisposable
         Apply(section, notify: true);
     }
 
-    public void Dispose() => _view.SectionList.SelectionChanged -= OnSectionChanged;
+    public void Dispose()
+    {
+        _view.SectionList.SelectionChanged -= OnSectionChanged;
+        _view.SectionList.ContainerContentChanging -= OnSectionContainerContentChanging;
+    }
+
+    private void OnSectionContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (args.InRecycleQueue)
+        {
+            args.ItemContainer.ClearValue(ToolTipService.ToolTipProperty);
+            args.ItemContainer.ClearValue(AutomationProperties.NameProperty);
+            return;
+        }
+
+        if (args.Item is not RightPanelSectionEntry entry) return;
+
+        // Attach to the interactive container so the entire navigation item exposes its label.
+        ToolTipService.SetToolTip(args.ItemContainer, entry.Label);
+        AutomationProperties.SetName(args.ItemContainer, entry.Label);
+    }
 
     private void OnSectionChanged(object sender, SelectionChangedEventArgs e)
     {

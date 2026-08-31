@@ -32,10 +32,10 @@
             <TextBlock x:Uid="WebDavNoServersText" x:Name="EmptyServersText" Text="No servers added" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" />
         </Grid>
         <CommandBar Grid.Row="2" Style="{StaticResource RightPanelCommandBarStyle}">
-            <AppBarButton x:Uid="WebDavAddServerCommand" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Add" Label="Add WebDAV server" Click="OnAddServerClick" />
-            <AppBarButton x:Uid="ParentButton" x:Name="ParentButton" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Back" Label="Parent folder" Click="OnParentClick" IsEnabled="False" />
-            <AppBarButton x:Uid="RefreshCommand" x:Name="RefreshButton" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Refresh" Label="Refresh" Click="OnRefreshClick" IsEnabled="False" />
-            <AppBarButton x:Uid="WebDavSort" x:Name="SortButton" Style="{StaticResource RightPanelAppBarButtonStyle}" Label="Sort by name" Click="OnSortClick">
+            <AppBarButton x:Uid="WebDavAddServerCommand" Style="{StaticResource RightPanelAppBarButtonStyle}" ToolTipService.ToolTip="{Binding Label, RelativeSource={RelativeSource Self}}" Icon="Add" Label="Add WebDAV server" Click="OnAddServerClick" />
+            <AppBarButton x:Uid="ParentButton" x:Name="ParentButton" Style="{StaticResource RightPanelAppBarButtonStyle}" ToolTipService.ToolTip="{Binding Label, RelativeSource={RelativeSource Self}}" Icon="Back" Label="Parent folder" Click="OnParentClick" IsEnabled="False" />
+            <AppBarButton x:Uid="RefreshCommand" x:Name="RefreshButton" Style="{StaticResource RightPanelAppBarButtonStyle}" ToolTipService.ToolTip="{Binding Label, RelativeSource={RelativeSource Self}}" Icon="Refresh" Label="Refresh" Click="OnRefreshClick" IsEnabled="False" />
+            <AppBarButton x:Uid="WebDavSort" x:Name="SortButton" Style="{StaticResource RightPanelAppBarButtonStyle}" ToolTipService.ToolTip="{Binding Label, RelativeSource={RelativeSource Self}}" Label="Sort by name" Click="OnSortClick">
                 <AppBarButton.Icon><FontIcon x:Name="SortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon>
             </AppBarButton>
             <AppBarElementContainer VerticalContentAlignment="Center">
@@ -60,7 +60,7 @@
             <SymbolIcon Symbol="Find" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource RightPanelMutedTextBrush}" IsHitTestVisible="False" />
             <TextBox x:Uid="WebDavSearch" x:Name="SearchBox" Grid.Column="1" Style="{StaticResource RightPanelTextBoxStyle}" PlaceholderText="Search subfolders" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" IsEnabled="False" />
             <ToggleButton x:Uid="WebDavRegexSearch" x:Name="RegexSearchToggle" Grid.Column="2" MinWidth="38" Height="36" Padding="8,0" CornerRadius="6" Content=".*" Click="OnRegexSearchClick" IsEnabled="False" />
-            <Button x:Uid="WebDavSearchButton" x:Name="SearchButton" Grid.Column="3" Style="{StaticResource RightPanelButtonStyle}" Content="Search" Click="OnSearchClick" IsEnabled="False" />
+            <Button x:Uid="WebDavSearchButton" x:Name="SearchButton" Grid.Column="3" ToolTipService.ToolTip="{Binding Content, RelativeSource={RelativeSource Self}}" Style="{StaticResource RightPanelButtonStyle}" Content="Search" Click="OnSearchClick" IsEnabled="False" />
         </Grid>
         <Grid Grid.Row="5" ColumnSpacing="8">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>

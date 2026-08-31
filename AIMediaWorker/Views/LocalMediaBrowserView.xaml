@@ -11,11 +11,11 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
         <CommandBar Style="{StaticResource RightPanelCommandBarStyle}">
-            <AppBarButton x:Uid="BrowserChooseFolder" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Folder" Label="Choose folder" Click="OnChooseFolderClick" />
-            <AppBarButton x:Uid="BrowserHome" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Home" Label="Home folder" Click="OnHomeClick" />
-            <AppBarButton x:Uid="BrowserParentFolder" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Back" Label="Parent folder" Click="OnParentClick" />
-            <AppBarButton x:Uid="BrowserRefresh" Style="{StaticResource RightPanelAppBarButtonStyle}" Icon="Refresh" Label="Refresh" Click="OnRefreshClick" />
-            <AppBarButton x:Uid="BrowserSort" x:Name="SortButton" Style="{StaticResource RightPanelAppBarButtonStyle}" Label="Sort by name" Click="OnSortClick">
+            <AppBarButton x:Uid="BrowserChooseFolder" Style="{StaticResource RightPanelAppBarButtonStyle}" ToolTipService.ToolTip="{Binding Label, RelativeSource={RelativeSource Self}}" Icon="Folder" Label="Choose folder" Click="OnChooseFolderClick" />
+            <AppBarButton x:Uid="BrowserHome" Style="{StaticResource RightPanelAppBarButtonStyle}" ToolTipService.ToolTip="{Binding Label, RelativeSource={RelativeSource Self}}" Icon="Home" Label="Home folder" Click="OnHomeClick" />
+            <AppBarButton x:Uid="BrowserParentFolder" Style="{StaticResource RightPanelAppBarButtonStyle}" ToolTipService.ToolTip="{Binding Label, RelativeSource={RelativeSource Self}}" Icon="Back" Label="Parent folder" Click="OnParentClick" />
+            <AppBarButton x:Uid="BrowserRefresh" Style="{StaticResource RightPanelAppBarButtonStyle}" ToolTipService.ToolTip="{Binding Label, RelativeSource={RelativeSource Self}}" Icon="Refresh" Label="Refresh" Click="OnRefreshClick" />
+            <AppBarButton x:Uid="BrowserSort" x:Name="SortButton" Style="{StaticResource RightPanelAppBarButtonStyle}" ToolTipService.ToolTip="{Binding Label, RelativeSource={RelativeSource Self}}" Label="Sort by name" Click="OnSortClick">
                 <AppBarButton.Icon><FontIcon x:Name="SortIcon" Glyph="&#xE8CB;" /></AppBarButton.Icon>
             </AppBarButton>
         </CommandBar>
@@ -31,7 +31,7 @@
                 <SymbolIcon Symbol="Find" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource RightPanelMutedTextBrush}" IsHitTestVisible="False" />
                 <TextBox x:Uid="BrowserSearch" x:Name="SearchBox" Grid.Column="1" Style="{StaticResource RightPanelTextBoxStyle}" PlaceholderText="Search subfolders" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" />
                 <ToggleButton x:Uid="BrowserRegexSearch" x:Name="RegexSearchToggle" Grid.Column="2" MinWidth="38" Height="36" Padding="8,0" CornerRadius="6" Content=".*" Click="OnRegexSearchClick" />
-                <Button x:Uid="BrowserSearchButton" x:Name="SearchButton" Grid.Column="3" Style="{StaticResource RightPanelButtonStyle}" Content="Search" Click="OnSearchClick" />
+                <Button x:Uid="BrowserSearchButton" x:Name="SearchButton" Grid.Column="3" ToolTipService.ToolTip="{Binding Content, RelativeSource={RelativeSource Self}}" Style="{StaticResource RightPanelButtonStyle}" Content="Search" Click="OnSearchClick" />
                 <ProgressRing x:Name="SearchProgressRing" Grid.Row="1" Width="16" Height="16" IsActive="False" />
                 <TextBlock x:Name="SearchStatusText" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource RightPanelMutedTextBrush}" FontSize="11" />
             </Grid>
