@@ -166,13 +166,13 @@
 <data name="RecordModeToggle.Content"><value>録画</value></data>
 <data name="AreaFullscreen.Content"><value>全画面</value></data>
 <data name="AreaWindow.Content"><value>ウィンドウ</value></data>
-<data name="ScrollCaptureTooltip"><value>ウィンドウをスクロールし、内容全体をつなげてキャプチャします</value></data>
+<data name="ScrollCaptureTooltip"><value>スクロールキャプチャ</value></data>
 <data name="AreaRegion.Content"><value>範囲</value></data>
 <data name="OcrAction.Content"><value>OCR</value></data>
-<data name="OcrTooltip"><value>選択した範囲からテキストを抽出します</value></data>
+<data name="OcrTooltip"><value>OCR</value></data>
 <data name="OcrTranslateAction.Content"><value>翻訳</value></data>
-<data name="OcrTranslateTooltip"><value>認識した原文と翻訳文を一緒にコピーします</value></data>
-<data name="OcrVlmTooltip"><value>VLMで画像内の文字を認識し、そのまま翻訳します</value></data>
+<data name="OcrTranslateTooltip"><value>OCR+翻訳</value></data>
+<data name="OcrVlmTooltip"><value>VLM OCR+翻訳</value></data>
 <data name="StatusOcrVlmProcessing"><value>VLMで文字を認識して翻訳しています…</value></data>
 <data name="StatusOcrVlmCopied"><value>VLMで抽出した原文と翻訳文をクリップボードにコピーしました</value></data>
 <data name="RecordPause.Content"><value>一時停止</value></data>
@@ -196,7 +196,7 @@
 <data name="RecordingErrorTitle"><value>録画に失敗しました</value></data>
 <data name="CloseTooltip"><value>閉じる</value></data>
 <data name="InvalidWebDavHttpsAddressMessage"><value>有効なHTTPSアドレスと1～65535のポートを入力してください。https://は省略できます。</value></data>
-<data name="DictationTooltip"><value>最後のカーソル位置にリアルタイム音声入力</value></data>
+<data name="DictationTooltip"><value>音声入力</value></data>
 <data name="DictationTargetMissing"><value>別のアプリにカーソルを置いてから、もう一度マイクボタンを押してください。</value></data>
 <data name="DictationListening"><value>音声を認識してカーソル位置に入力しています…</value></data>
 <data name="DictationReady"><value>準備完了：別のアプリの入力欄をクリックしてから話してください。</value></data>
