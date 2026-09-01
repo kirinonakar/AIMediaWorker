@@ -258,10 +258,11 @@ public sealed partial class WindowsCaptionWindow : Window
         if (!_translating) return;
         if (displayAdvanced)
         {
+            // Keep pending and displayed translations intact. This revision is
+            // only a signal to replace the display after the next translation
+            // actually arrives; clearing here loses committed ASR text and
+            // leaves the caption area blank while the provider is responding.
             _translationDisplayRevision++;
-            _pendingFlushTimer.Stop();
-            _pendingCommittedSource = string.Empty;
-            MoveLatestTranslationToPrevious();
         }
         QueueStableTranslation(update.CommittedDelta, update.IsFinal);
     });
@@ -332,12 +333,12 @@ public sealed partial class WindowsCaptionWindow : Window
         var activeDisplayRevision = -1L;
         var translatedSentence = string.Empty;
         var sentenceCompleted = false;
+        var replaceDisplayedTranslation = false;
         try
         {
             await foreach (var firstItem in _translationQueue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
                 if (!_translating || firstItem.Generation != _translationGeneration ||
-                    firstItem.DisplayRevision != _translationDisplayRevision ||
                     string.IsNullOrWhiteSpace(firstItem.Text)) continue;
                 if (firstItem.Generation != activeGeneration)
                 {
@@ -345,45 +346,59 @@ public sealed partial class WindowsCaptionWindow : Window
                     activeDisplayRevision = firstItem.DisplayRevision;
                     translatedSentence = string.Empty;
                     sentenceCompleted = false;
+                    replaceDisplayedTranslation = false;
                 }
                 else if (firstItem.DisplayRevision != activeDisplayRevision)
                 {
                     activeDisplayRevision = firstItem.DisplayRevision;
                     translatedSentence = string.Empty;
                     sentenceCompleted = false;
+                    replaceDisplayedTranslation = true;
                 }
                 if (sentenceCompleted)
                 {
-                    DispatcherQueue.TryEnqueue(() =>
-                    {
-                        if (_translating && firstItem.Generation == _translationGeneration) MoveLatestTranslationToPrevious();
-                    });
                     translatedSentence = string.Empty;
                     sentenceCompleted = false;
+                    replaceDisplayedTranslation = true;
                 }
 
-                var translated = await TranslateAsync(firstItem, translatedSentence, cancellationToken).ConfigureAwait(false);
+                var translated = await TranslateAsync(
+                    firstItem,
+                    translatedSentence,
+                    replaceDisplayedTranslation,
+                    cancellationToken).ConfigureAwait(false);
                 if (translated.Length == 0) continue;
                 translatedSentence = AppendTranslation(translatedSentence, translated);
                 sentenceCompleted = firstItem.CompletesSentence;
+                replaceDisplayedTranslation = false;
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception exception) { await AppLog.WriteAsync("error", "captions", "CAPTION_TRANSLATION_ERROR", exception.Message, exception); }
     }
 
-    private async Task<string> TranslateAsync(TranslationRequest request, string prefix, CancellationToken cancellationToken)
+    private async Task<string> TranslateAsync(
+        TranslationRequest request,
+        string prefix,
+        bool replaceDisplayedTranslation,
+        CancellationToken cancellationToken)
     {
         var llm = _llm;
         if (llm is null) return string.Empty;
         try
         {
+            var replacementApplied = false;
             var progress = new InlineProgress<string>(partial => DispatcherQueue.TryEnqueue(() =>
             {
                 if (!_translating || request.Generation != _translationGeneration ||
-                    request.DisplayRevision != _translationDisplayRevision ||
                     request.Sequence < _latestTranslationRevision) return;
-                SetLatestTranslation(AppendTranslation(prefix, partial), request.Sequence);
+                if (SetLatestTranslation(
+                    AppendTranslation(prefix, partial),
+                    request.Sequence,
+                    replaceDisplayedTranslation && !replacementApplied))
+                {
+                    replacementApplied = true;
+                }
                 UpdateCaptionFontSize();
             }));
             var translated = await llm.TranslateLiveAsync(
@@ -396,9 +411,14 @@ public sealed partial class WindowsCaptionWindow : Window
             if (!string.IsNullOrWhiteSpace(translated))
                 DispatcherQueue.TryEnqueue(() =>
                 {
-                    if (!_translating || request.Generation != _translationGeneration ||
-                        request.DisplayRevision != _translationDisplayRevision) return;
-                    SetLatestTranslation(AppendTranslation(prefix, translated), request.Sequence);
+                    if (!_translating || request.Generation != _translationGeneration) return;
+                    if (SetLatestTranslation(
+                        AppendTranslation(prefix, translated),
+                        request.Sequence,
+                        replaceDisplayedTranslation && !replacementApplied))
+                    {
+                        replacementApplied = true;
+                    }
                     UpdateCaptionFontSize();
                 });
             return translated;
@@ -561,23 +581,21 @@ public sealed partial class WindowsCaptionWindow : Window
         return true;
     }
 
-    private void SetLatestTranslation(string translated, long revision)
+    private bool SetLatestTranslation(string translated, long revision, bool preserveCurrentAsPrevious = false)
     {
         var current = NormalizeHistoryText(translated);
-        if (string.IsNullOrWhiteSpace(current) || revision < _latestTranslationRevision) return;
+        if (string.IsNullOrWhiteSpace(current) || revision < _latestTranslationRevision) return false;
 
+        if (preserveCurrentAsPrevious &&
+            !string.IsNullOrWhiteSpace(_latestTranslationText) &&
+            !string.Equals(current, _latestTranslationText, StringComparison.OrdinalIgnoreCase))
+        {
+            AddTranslationToPrevious(_latestTranslationText);
+        }
         _latestTranslationRevision = revision;
         _latestTranslationText = current;
         RebuildHistoryText();
-    }
-
-    private void MoveLatestTranslationToPrevious()
-    {
-        if (!string.IsNullOrWhiteSpace(_latestTranslationText))
-            AddTranslationToPrevious(_latestTranslationText);
-        _latestTranslationText = string.Empty;
-        _latestTranslationRevision = -1;
-        RebuildHistoryText();
+        return true;
     }
 
     private void AddTranslationToPrevious(string text)
