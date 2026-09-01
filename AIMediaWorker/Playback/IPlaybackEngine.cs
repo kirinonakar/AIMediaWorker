@@ -39,6 +39,7 @@ public interface IPlaybackEngine : IAsyncDisposable
     void TogglePause();
     void Stop();
     void Seek(TimeSpan position, bool exact = false);
+    void SeekSmooth(TimeSpan position, bool exact = false);
     void SeekRelative(TimeSpan offset);
     void SetVolume(double volume);
     void ShowOsdText(string text, double durationSeconds = 1.2);

@@ -12,7 +12,10 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         LazyThreadSafetyMode.ExecutionAndPublication);
     private readonly object _sync = new();
     private readonly object _subtitleCommandSync = new();
+    private readonly object _volumeSync = new();
+    private readonly object _smoothSeekStateSync = new();
     private readonly SemaphoreSlim _openLock = new(1, 1);
+    private readonly SemaphoreSlim _smoothSeekLock = new(1, 1);
     private readonly List<MediaTrack> _tracks = [];
     private nint _context;
     private CancellationTokenSource? _eventLoopCancellation;
@@ -21,6 +24,8 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private Task? _initializationTask;
     private CancellationTokenSource? _trackRefreshCancellation;
     private CancellationTokenSource? _editorSubtitleSelectionCancellation;
+    private CancellationTokenSource? _smoothSeekCancellation;
+    private TaskCompletionSource? _smoothSeekRestart;
     private long _nextCommandId;
     private PlaybackState _state = PlaybackState.Uninitialized;
     private string? _editorSubtitlePath;
@@ -38,6 +43,11 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private string _subtitleBackground = "#80000000";
     private double _subtitleOutline = 2;
     private int _subtitleBottomMargin = 45;
+    private double _seekVolumeScale = 1;
+
+    private const int SeekFadeSteps = 4;
+    private static readonly TimeSpan SeekFadeStepDuration = TimeSpan.FromMilliseconds(5);
+    private static readonly TimeSpan SeekRestartTimeout = TimeSpan.FromMilliseconds(750);
 
     public PlaybackState State => _state;
     public bool IsAvailable => _context != 0 && !_disposed && _state is not PlaybackState.Uninitialized and not PlaybackState.Failed;
@@ -235,6 +245,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private void OpenCore(string source, IReadOnlyDictionary<string, string>? httpHeaders, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        CancelSmoothSeek();
         var trackRefreshCancellation = Interlocked.Exchange(ref _trackRefreshCancellation, null);
         trackRefreshCancellation?.Cancel();
         trackRefreshCancellation?.Dispose();
@@ -288,18 +299,54 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     private ulong NextCommandId() => unchecked((ulong)Interlocked.Increment(ref _nextCommandId));
 
     public void Play() { SetProperty("pause", "no"); SetState(PlaybackState.Playing); }
-    public void Pause() { SetProperty("pause", "yes"); SetState(PlaybackState.Paused); }
+    public void Pause() { CancelSmoothSeek(); SetProperty("pause", "yes"); SetState(PlaybackState.Paused); }
     public void TogglePause() { if (State == PlaybackState.Playing) Pause(); else Play(); }
-    public void Stop() { Command("stop"); SetState(PlaybackState.Idle); Position = TimeSpan.Zero; PositionChanged?.Invoke(this, EventArgs.Empty); }
+    public void Stop() { CancelSmoothSeek(); Command("stop"); SetState(PlaybackState.Idle); Position = TimeSpan.Zero; PositionChanged?.Invoke(this, EventArgs.Empty); }
 
-    public void Seek(TimeSpan position, bool exact = false) => Command("seek", Math.Max(0, position.TotalSeconds).ToString("0.######", CultureInfo.InvariantCulture), "absolute" + (exact ? "+exact" : "+keyframes"));
-    public void SeekRelative(TimeSpan offset) => Command("seek", offset.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture), "relative");
+    public void Seek(TimeSpan position, bool exact = false)
+    {
+        CancelSmoothSeek();
+        SeekCore(position, exact);
+    }
+
+    /// <summary>
+    /// Seeks through a short volume envelope so the old and new PCM waveforms are not
+    /// joined at arbitrary non-zero samples. This is intended for interactive timeline
+    /// seeking while audio is actively playing.
+    /// </summary>
+    public void SeekSmooth(TimeSpan position, bool exact = false)
+    {
+        EnsureAvailable();
+        if (State != PlaybackState.Playing || IsMuted || Volume <= 0)
+        {
+            Seek(position, exact);
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        lock (_smoothSeekStateSync)
+        {
+            _smoothSeekCancellation?.Cancel();
+            _smoothSeekCancellation = cancellation;
+        }
+        _ = SmoothSeekAsync(position, exact, cancellation);
+    }
+
+    public void SeekRelative(TimeSpan offset)
+    {
+        CancelSmoothSeek();
+        Command("seek", offset.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture), "relative");
+    }
+
     public void SetVolume(double volume)
     {
         if (!double.IsFinite(volume)) throw new ArgumentOutOfRangeException(nameof(volume));
         var normalizedVolume = Math.Clamp(volume, 0, 130);
-        SetProperty("volume", normalizedVolume.ToString("0.##", CultureInfo.InvariantCulture));
-        Volume = normalizedVolume;
+        lock (_volumeSync)
+        {
+            Volume = normalizedVolume;
+            SetRawVolume(normalizedVolume * _seekVolumeScale);
+        }
     }
 
     public void ShowOsdText(string text, double durationSeconds = 1.2)
@@ -578,6 +625,13 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
+        CancellationTokenSource? smoothSeekCancellation;
+        lock (_smoothSeekStateSync)
+        {
+            smoothSeekCancellation = _smoothSeekCancellation;
+            _smoothSeekCancellation = null;
+            smoothSeekCancellation?.Cancel();
+        }
         _disposed = true;
         CancelPendingEditorSubtitleSelection();
         if (_initializationTask is { } initialization)
@@ -677,6 +731,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                 if (_firstFrameReady) ScheduleTrackRefresh();
                 break;
             case MpvInterop.MpvEventId.PlaybackRestart:
+                Volatile.Read(ref _smoothSeekRestart)?.TrySetResult();
                 ApplyDolbyVisionCompatibilityFallbackIfNeeded();
                 if (!_firstFrameReady)
                 {
@@ -851,6 +906,116 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         cancellation?.Cancel();
         cancellation?.Dispose();
     }
+
+    private void SeekCore(TimeSpan position, bool exact) =>
+        Command("seek", Math.Max(0, position.TotalSeconds).ToString("0.######", CultureInfo.InvariantCulture), "absolute" + (exact ? "+exact" : "+keyframes"));
+
+    private async Task SmoothSeekAsync(TimeSpan position, bool exact, CancellationTokenSource cancellation)
+    {
+        var lockTaken = false;
+        TaskCompletionSource? restart = null;
+        var cancellationToken = cancellation.Token;
+        try
+        {
+            await _smoothSeekLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lockTaken = true;
+
+            await FadeSeekVolumeAsync(0, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            restart = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _smoothSeekRestart, restart);
+            SeekCore(position, exact);
+
+            try
+            {
+                await restart.Task.WaitAsync(SeekRestartTimeout, cancellationToken).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                // Some audio-only streams do not report PlaybackRestart consistently.
+                // Still use the same gentle fade-in instead of restoring volume abruptly.
+            }
+            await FadeSeekVolumeAsync(1, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) when (!_disposed)
+        {
+            RaiseError("PLAYBACK_ERROR", "The seek operation failed.", exception);
+        }
+        finally
+        {
+            if (restart is not null)
+                Interlocked.CompareExchange(ref _smoothSeekRestart, null, restart);
+
+            var restoreVolume = false;
+            lock (_smoothSeekStateSync)
+            {
+                if (ReferenceEquals(_smoothSeekCancellation, cancellation))
+                {
+                    _smoothSeekCancellation = null;
+                    restoreVolume = true;
+                }
+                else if (_smoothSeekCancellation is null)
+                {
+                    restoreVolume = true;
+                }
+            }
+            if (restoreVolume) RestoreSeekVolume();
+            if (lockTaken) _smoothSeekLock.Release();
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task FadeSeekVolumeAsync(double targetScale, CancellationToken cancellationToken)
+    {
+        double startScale;
+        lock (_volumeSync) startScale = _seekVolumeScale;
+
+        for (var step = 1; step <= SeekFadeSteps; step++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var progress = (double)step / SeekFadeSteps;
+            var easedProgress = progress * progress * (3 - (2 * progress));
+            ApplySeekVolumeScale(startScale + ((targetScale - startScale) * easedProgress));
+            if (step < SeekFadeSteps)
+                await Task.Delay(SeekFadeStepDuration, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void ApplySeekVolumeScale(double scale)
+    {
+        lock (_volumeSync)
+        {
+            _seekVolumeScale = Math.Clamp(scale, 0, 1);
+            SetRawVolume(Volume * _seekVolumeScale);
+        }
+    }
+
+    private void RestoreSeekVolume()
+    {
+        lock (_volumeSync)
+        {
+            _seekVolumeScale = 1;
+            if (_disposed || _context == 0) return;
+            try { SetRawVolume(Volume); }
+            catch (Exception exception) when (exception is MpvException or ObjectDisposedException or InvalidOperationException) { }
+        }
+    }
+
+    private void CancelSmoothSeek()
+    {
+        lock (_smoothSeekStateSync)
+        {
+            var cancellation = _smoothSeekCancellation;
+            _smoothSeekCancellation = null;
+            cancellation?.Cancel();
+            if (cancellation is null && _seekVolumeScale < 1) RestoreSeekVolume();
+        }
+    }
+
+    private void SetRawVolume(double volume) =>
+        SetProperty("volume", Math.Clamp(volume, 0, 130).ToString("0.##", CultureInfo.InvariantCulture));
 
     private List<int> FindExternalSubtitleTrackIds(string fullPath, bool selectedOnly = false)
     {

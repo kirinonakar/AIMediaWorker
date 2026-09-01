@@ -204,7 +204,7 @@ internal sealed class PlaybackController : IDisposable
         }
 
         if (!_updatingPosition && _playback.IsAvailable && _view.PositionSlider.Maximum > 0)
-            Seek(TimeSpan.FromSeconds(value), () => _playback.Seek(TimeSpan.FromSeconds(value)));
+            Seek(TimeSpan.FromSeconds(value), () => _playback.SeekSmooth(TimeSpan.FromSeconds(value)));
     }
 
     public void PositionSliderPressed()
@@ -219,7 +219,7 @@ internal sealed class PlaybackController : IDisposable
         _positionSliderDragging = false;
         var position = TimeSpan.FromSeconds(_view.PositionSlider.Value);
         _view.PositionText.Text = $"{FormatTime(position)} / {FormatTime(_playback.Duration)}";
-        if (_playback.IsAvailable) Seek(position, () => _playback.Seek(position, true));
+        if (_playback.IsAvailable) Seek(position, () => _playback.SeekSmooth(position, true));
     }
 
     public void SelectAudioTrack(object? selectedItem)
