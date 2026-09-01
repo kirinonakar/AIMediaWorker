@@ -250,7 +250,7 @@ public sealed partial class WindowsCaptionWindow : Window
         var update = _captionStabilizer.UpdateState(result);
         var text = NormalizeHistoryText(update.DisplayText);
         if (string.IsNullOrWhiteSpace(text)) return;
-        if (UpdateCaptionSentences(text)) UpdateCaptionFontSize();
+        if (UpdateCaptionSentences(text, result.Segments)) UpdateCaptionFontSize();
         if (!_translating) return;
         QueueStableTranslation(update.CommittedDelta, update.IsFinal);
     });
@@ -296,7 +296,7 @@ public sealed partial class WindowsCaptionWindow : Window
             // Translation can be enabled midway through a sentence. Seed the
             // new generation with the currently visible stable sentence once.
             var currentStable = NormalizeHistoryText(_captionStabilizer.ConfirmedText);
-            var currentSentence = SplitSentences(currentStable).LastOrDefault();
+            var currentSentence = LiveCaptionDisplaySegmenter.Split(currentStable, _settings.Asr.Language).LastOrDefault();
             if (!string.IsNullOrWhiteSpace(currentSentence)) QueueStableTranslation(currentSentence, false);
         }
         else
@@ -498,9 +498,9 @@ public sealed partial class WindowsCaptionWindow : Window
         TranslationLatestText.FontSize = fontSize;
     }
 
-    private bool UpdateCaptionSentences(string text)
+    private bool UpdateCaptionSentences(string text, IReadOnlyList<AsrSegment>? currentSegments)
     {
-        var sentences = SplitSentences(text);
+        var sentences = LiveCaptionDisplaySegmenter.Split(text, _settings.Asr.Language, currentSegments);
         if (sentences.Count == 0) return false;
 
         var latest = sentences[^1];
@@ -516,24 +516,6 @@ public sealed partial class WindowsCaptionWindow : Window
         _latestCaptionText = latest;
         RebuildHistoryText();
         return true;
-    }
-
-    private static IReadOnlyList<string> SplitSentences(string text)
-    {
-        var sentences = new List<string>();
-        var builder = new System.Text.StringBuilder();
-        foreach (var character in text)
-        {
-            builder.Append(character);
-            if (!IsSentenceTerminator(character)) continue;
-            var sentence = builder.ToString().Trim();
-            if (sentence.Length > 0) sentences.Add(sentence);
-            builder.Clear();
-        }
-
-        var remainder = builder.ToString().Trim();
-        if (remainder.Length > 0) sentences.Add(remainder);
-        return sentences;
     }
 
     private static bool IsSentenceTerminator(char character) => ".!?。！？…".Contains(character);

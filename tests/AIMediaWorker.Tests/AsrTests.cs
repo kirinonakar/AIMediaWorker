@@ -253,6 +253,56 @@ public sealed class AsrTests
         Assert.Contains("오늘 날씨가 정말 좋네요.", display, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void LiveCaptionDisplaySegmenterRollsUnpunctuatedJapaneseText()
+    {
+        var source = string.Concat(Enumerable.Repeat("今日はとても良い天気なので公園へ散歩に行きます", 3));
+
+        var sentences = LiveCaptionDisplaySegmenter.Split(source, "auto");
+
+        Assert.True(sentences.Count >= 2);
+        Assert.All(sentences, sentence => Assert.InRange(sentence.Length, 1, 32));
+        Assert.Equal(source, string.Concat(sentences));
+        Assert.DoesNotContain(sentences[0], sentences[^1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LiveCaptionDisplaySegmenterPrefersJapaneseClauseAndAsrSegmentBoundaries()
+    {
+        var withClause = new string('あ', 20) + "、" + new string('い', 20);
+        var clauseUnits = LiveCaptionDisplaySegmenter.Split(withClause, "ja");
+        var firstSegment = new string('か', 8);
+        var secondSegment = new string('き', 10);
+        var segments = new[]
+        {
+            new AsrSegment { Text = firstSegment },
+            new AsrSegment { Text = secondSegment }
+        };
+
+        var segmentUnits = LiveCaptionDisplaySegmenter.Split(firstSegment + secondSegment, "ja", segments);
+
+        Assert.EndsWith("、", clauseUnits[0], StringComparison.Ordinal);
+        Assert.Equal([firstSegment, secondSegment], segmentUnits);
+    }
+
+    [Fact]
+    public void LiveCaptionDisplaySegmenterKeepsJapaneseClosingQuoteWithItsSentence()
+    {
+        var sentences = LiveCaptionDisplaySegmenter.Split("「おはよう。」今日は晴れです。", "ja");
+
+        Assert.Equal(["「おはよう。」", "今日は晴れです。"], sentences);
+    }
+
+    [Fact]
+    public void LiveCaptionDisplaySegmenterDoesNotChunkUnpunctuatedEnglish()
+    {
+        var source = string.Join(' ', Enumerable.Repeat("continuous speech without punctuation", 4));
+
+        var sentences = LiveCaptionDisplaySegmenter.Split(source, "en");
+
+        Assert.Equal([source], sentences);
+    }
+
     private static AsrWord Word(string text, long endMicroseconds) => new()
     {
         StartMicroseconds = Math.Max(0, endMicroseconds - 400_000),
