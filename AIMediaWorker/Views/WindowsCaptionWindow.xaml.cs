@@ -409,8 +409,18 @@ public sealed partial class WindowsCaptionWindow : Window
             _pendingCommittedSource = string.Empty;
         }
 
-        _pendingFlushTimer.Stop();
-        if (_pendingCommittedSource.Length > 0) _pendingFlushTimer.Start();
+        if (_pendingCommittedSource.Length > 0)
+        {
+            // Do not restart the debounce window for every rolling ASR update.
+            // Live recognition commonly commits another delta before 1.2 s;
+            // continually resetting the timer meant punctuation-free speech
+            // could remain buffered forever and no translation was displayed.
+            if (!_pendingFlushTimer.IsRunning) _pendingFlushTimer.Start();
+        }
+        else if (_pendingFlushTimer.IsRunning)
+        {
+            _pendingFlushTimer.Stop();
+        }
     }
 
     private void EnqueueTranslationChunk(string text, bool completesSentence)

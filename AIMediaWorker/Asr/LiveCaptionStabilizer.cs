@@ -142,7 +142,7 @@ public sealed class LiveCaptionStabilizer
         return overlap.NewLength > 0 ? current[overlap.NewLength..].TrimStart() : current;
     }
 
-    private static IReadOnlyList<TimedText> CreateTimedUnits(IReadOnlyList<AsrSegment> segments)
+    private IReadOnlyList<TimedText> CreateTimedUnits(IReadOnlyList<AsrSegment> segments)
     {
         var units = new List<TimedText>();
         foreach (var segment in segments.OrderBy(segment => segment.StartMicroseconds))
@@ -287,7 +287,7 @@ public sealed class LiveCaptionStabilizer
             normalized.Contains("일본", StringComparison.Ordinal);
     }
 
-    private static IReadOnlyList<TimedText>? CreateSourceTimedUnits(AsrSegment segment)
+    private IReadOnlyList<TimedText>? CreateSourceTimedUnits(AsrSegment segment)
     {
         var source = segment.Text.Trim();
         var words = segment.Words?
@@ -307,6 +307,22 @@ public sealed class LiveCaptionStabilizer
         }
 
         var result = new List<TimedText>();
+        if (!source.Any(char.IsWhiteSpace) && source.Any(IsNoSpaceCjk))
+        {
+            // Japanese (and other unspaced CJK) must retain the source's exact
+            // character flow, but it still needs multiple timed units. Treating
+            // the complete sentence as one unit keeps its end inside the
+            // holdback window forever during rolling recognition, so no stable
+            // delta reaches live translation until the stream is stopped.
+            for (var index = 0; index < words.Length; index++)
+            {
+                var start = index == 0 ? 0 : starts[index];
+                var end = index + 1 < words.Length ? starts[index + 1] : source.Length;
+                AddSourceUnit(result, source[start..end], words[index].EndMicroseconds);
+            }
+            return result.Count == 0 ? null : result;
+        }
+
         // Keep punctuation that the aligner does not expose as a word (for
         // example an opening Japanese quote) in the rendered transcript.
         var groupStart = 0;

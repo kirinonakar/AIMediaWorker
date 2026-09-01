@@ -206,6 +206,30 @@ public sealed class AsrTests
     }
 
     [Fact]
+    public void LiveCaptionStabilizerCommitsJapaneseTextForLiveTranslation()
+    {
+        var stabilizer = new LiveCaptionStabilizer(2_000_000, "ja");
+        var source = new AsrSegment
+        {
+            StartMicroseconds = 0,
+            EndMicroseconds = 4_000_000,
+            Text = "おはよう。今日は晴れです。",
+            Words =
+            [
+                Word("おはよう", 700_000), Word("。", 800_000),
+                Word("今日", 1_500_000), Word("は", 1_700_000),
+                Word("晴れ", 2_500_000), Word("です", 3_000_000), Word("。", 3_100_000)
+            ]
+        };
+
+        var update = stabilizer.UpdateState(new AsrEvent { Event = "partial", Segments = [source] });
+
+        Assert.Equal("おはよう。", update.CommittedDelta);
+        Assert.Equal("今日は晴れです。", update.UnstableText);
+        Assert.Equal(source.Text, update.DisplayText);
+    }
+
+    [Fact]
     public void LiveCaptionStabilizerPreservesKoreanWordSpacingWhenAlignerReturnsSubwords()
     {
         var stabilizer = new LiveCaptionStabilizer(language: "ko");
