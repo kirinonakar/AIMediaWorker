@@ -53,6 +53,8 @@ public sealed partial class WindowsCaptionWindow : Window
     private long _latestTranslationRevision = -1;
     private long _translationRequestSequence;
     private long _translationGeneration;
+    private long _translationDisplayRevision;
+    private int _captionDisplayUnitCount;
     private bool _translating;
     private bool _translationOnly;
     private bool _showPrevious = true;
@@ -65,6 +67,7 @@ public sealed partial class WindowsCaptionWindow : Window
         string SourceContext,
         long Generation,
         long Sequence,
+        long DisplayRevision,
         bool CompletesSentence);
 
     private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
@@ -250,8 +253,16 @@ public sealed partial class WindowsCaptionWindow : Window
         var update = _captionStabilizer.UpdateState(result);
         var text = NormalizeHistoryText(update.DisplayText);
         if (string.IsNullOrWhiteSpace(text)) return;
-        if (UpdateCaptionSentences(text, result.Segments)) UpdateCaptionFontSize();
+        var captionChanged = UpdateCaptionSentences(text, result.Segments, out var displayAdvanced);
+        if (captionChanged) UpdateCaptionFontSize();
         if (!_translating) return;
+        if (displayAdvanced)
+        {
+            _translationDisplayRevision++;
+            _pendingFlushTimer.Stop();
+            _pendingCommittedSource = string.Empty;
+            MoveLatestTranslationToPrevious();
+        }
         QueueStableTranslation(update.CommittedDelta, update.IsFinal);
     });
 
@@ -285,6 +296,7 @@ public sealed partial class WindowsCaptionWindow : Window
             }
             _translating = true;
             _translationGeneration++;
+            _translationDisplayRevision = 0;
             _pendingCommittedSource = string.Empty;
             _translationSourceContext = string.Empty;
             TranslationOnlyButton.IsEnabled = true;
@@ -303,6 +315,7 @@ public sealed partial class WindowsCaptionWindow : Window
         {
             _translating = false;
             _translationGeneration++;
+            _translationDisplayRevision = 0;
             _pendingCommittedSource = string.Empty;
             _translationSourceContext = string.Empty;
             _pendingFlushTimer.Stop();
@@ -316,16 +329,26 @@ public sealed partial class WindowsCaptionWindow : Window
     private async Task TranslationLoopAsync(CancellationToken cancellationToken)
     {
         var activeGeneration = -1L;
+        var activeDisplayRevision = -1L;
         var translatedSentence = string.Empty;
         var sentenceCompleted = false;
         try
         {
             await foreach (var firstItem in _translationQueue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
-                if (!_translating || firstItem.Generation != _translationGeneration || string.IsNullOrWhiteSpace(firstItem.Text)) continue;
+                if (!_translating || firstItem.Generation != _translationGeneration ||
+                    firstItem.DisplayRevision != _translationDisplayRevision ||
+                    string.IsNullOrWhiteSpace(firstItem.Text)) continue;
                 if (firstItem.Generation != activeGeneration)
                 {
                     activeGeneration = firstItem.Generation;
+                    activeDisplayRevision = firstItem.DisplayRevision;
+                    translatedSentence = string.Empty;
+                    sentenceCompleted = false;
+                }
+                else if (firstItem.DisplayRevision != activeDisplayRevision)
+                {
+                    activeDisplayRevision = firstItem.DisplayRevision;
                     translatedSentence = string.Empty;
                     sentenceCompleted = false;
                 }
@@ -357,7 +380,9 @@ public sealed partial class WindowsCaptionWindow : Window
         {
             var progress = new InlineProgress<string>(partial => DispatcherQueue.TryEnqueue(() =>
             {
-                if (!_translating || request.Generation != _translationGeneration || request.Sequence < _latestTranslationRevision) return;
+                if (!_translating || request.Generation != _translationGeneration ||
+                    request.DisplayRevision != _translationDisplayRevision ||
+                    request.Sequence < _latestTranslationRevision) return;
                 SetLatestTranslation(AppendTranslation(prefix, partial), request.Sequence);
                 UpdateCaptionFontSize();
             }));
@@ -371,7 +396,8 @@ public sealed partial class WindowsCaptionWindow : Window
             if (!string.IsNullOrWhiteSpace(translated))
                 DispatcherQueue.TryEnqueue(() =>
                 {
-                    if (!_translating || request.Generation != _translationGeneration) return;
+                    if (!_translating || request.Generation != _translationGeneration ||
+                        request.DisplayRevision != _translationDisplayRevision) return;
                     SetLatestTranslation(AppendTranslation(prefix, translated), request.Sequence);
                     UpdateCaptionFontSize();
                 });
@@ -397,9 +423,20 @@ public sealed partial class WindowsCaptionWindow : Window
         {
             var character = _pendingCommittedSource[index];
             if (!IsClauseBoundary(character)) continue;
-            var chunk = _pendingCommittedSource[consumed..(index + 1)].Trim();
-            if (chunk.Length > 0) EnqueueTranslationChunk(chunk, IsSentenceTerminator(character));
-            consumed = index + 1;
+            var completesSentence = SubtitlePunctuation.IsSentenceTerminator(character) ||
+                SubtitlePunctuation.IsComma(character) &&
+                LiveCaptionDisplaySegmenter.IsJapaneseText(_settings.Asr.Language, _pendingCommittedSource);
+            var end = index + 1;
+            if (completesSentence)
+            {
+                while (end < _pendingCommittedSource.Length &&
+                    (SubtitlePunctuation.IsSentenceTerminator(_pendingCommittedSource[end]) ||
+                     SubtitlePunctuation.IsClosingCharacter(_pendingCommittedSource[end]))) end++;
+            }
+            var chunk = _pendingCommittedSource[consumed..end].Trim();
+            if (chunk.Length > 0) EnqueueTranslationChunk(chunk, completesSentence);
+            consumed = end;
+            index = end - 1;
         }
 
         _pendingCommittedSource = _pendingCommittedSource[consumed..].TrimStart();
@@ -432,18 +469,19 @@ public sealed partial class WindowsCaptionWindow : Window
             _translationSourceContext,
             _translationGeneration,
             ++_translationRequestSequence,
+            _translationDisplayRevision,
             completesSentence);
         _translationQueue.Writer.TryWrite(request);
         _translationSourceContext = AppendSource(_translationSourceContext, normalized);
         if (_translationSourceContext.Length > 480) _translationSourceContext = _translationSourceContext[^480..].TrimStart();
     }
 
-    private static bool IsClauseBoundary(char character) => IsSentenceTerminator(character) || ",;:、，；：".Contains(character);
+    private static bool IsClauseBoundary(char character) =>
+        SubtitlePunctuation.IsSentenceTerminator(character) || SubtitlePunctuation.IsClauseTerminator(character);
 
     private static bool IsSentenceComplete(string text)
     {
-        var trimmed = text.TrimEnd();
-        return trimmed.Length > 0 && IsSentenceTerminator(trimmed[^1]);
+        return SubtitlePunctuation.EndsSentence(text);
     }
 
     private static string AppendSource(string current, string next) =>
@@ -498,9 +536,14 @@ public sealed partial class WindowsCaptionWindow : Window
         TranslationLatestText.FontSize = fontSize;
     }
 
-    private bool UpdateCaptionSentences(string text, IReadOnlyList<AsrSegment>? currentSegments)
+    private bool UpdateCaptionSentences(
+        string text,
+        IReadOnlyList<AsrSegment>? currentSegments,
+        out bool displayAdvanced)
     {
         var sentences = LiveCaptionDisplaySegmenter.Split(text, _settings.Asr.Language, currentSegments);
+        displayAdvanced = _captionDisplayUnitCount > 0 && sentences.Count > _captionDisplayUnitCount;
+        _captionDisplayUnitCount = sentences.Count;
         if (sentences.Count == 0) return false;
 
         var latest = sentences[^1];
@@ -518,8 +561,6 @@ public sealed partial class WindowsCaptionWindow : Window
         return true;
     }
 
-    private static bool IsSentenceTerminator(char character) => ".!?。！？…".Contains(character);
-
     private void SetLatestTranslation(string translated, long revision)
     {
         var current = NormalizeHistoryText(translated);
@@ -532,10 +573,11 @@ public sealed partial class WindowsCaptionWindow : Window
 
     private void MoveLatestTranslationToPrevious()
     {
-        if (string.IsNullOrWhiteSpace(_latestTranslationText)) return;
-        AddTranslationToPrevious(_latestTranslationText);
+        if (!string.IsNullOrWhiteSpace(_latestTranslationText))
+            AddTranslationToPrevious(_latestTranslationText);
         _latestTranslationText = string.Empty;
         _latestTranslationRevision = -1;
+        RebuildHistoryText();
     }
 
     private void AddTranslationToPrevious(string text)
@@ -575,6 +617,7 @@ public sealed partial class WindowsCaptionWindow : Window
         CaptionLatestText.Text = string.Empty;
         _captionPreviousItems.Clear();
         _latestCaptionText = string.Empty;
+        _captionDisplayUnitCount = 0;
         _pendingCommittedSource = string.Empty;
         _translationSourceContext = string.Empty;
         _captionStabilizer.Reset();

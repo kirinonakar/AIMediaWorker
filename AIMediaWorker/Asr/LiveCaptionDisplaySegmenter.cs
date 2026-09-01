@@ -1,3 +1,5 @@
+using AIMediaWorker.Subtitle;
+
 namespace AIMediaWorker.Asr;
 
 /// <summary>
@@ -20,11 +22,17 @@ public static class LiveCaptionDisplaySegmenter
 
         var segmentBoundaries = FindSegmentBoundaries(normalized, currentSegments);
         var sentences = new List<string>();
+        var japanese = IsJapaneseText(language, normalized);
         var start = 0;
         for (var index = 0; index < normalized.Length; index++)
         {
-            if (!IsSentenceTerminator(normalized[index])) continue;
-            while (index + 1 < normalized.Length && IsClosingPunctuation(normalized[index + 1])) index++;
+            var sentenceEnd = SubtitlePunctuation.IsSentenceTerminator(normalized[index]);
+            var commaBoundary = japanese && SubtitlePunctuation.IsComma(normalized[index]);
+            if (!sentenceEnd && !commaBoundary) continue;
+            while (index + 1 < normalized.Length &&
+                (sentenceEnd && SubtitlePunctuation.IsSentenceTerminator(normalized[index + 1]) ||
+                 commaBoundary && SubtitlePunctuation.IsComma(normalized[index + 1]) ||
+                 SubtitlePunctuation.IsClosingCharacter(normalized[index + 1]))) index++;
             AddDisplayUnit(sentences, normalized[start..(index + 1)], start, language, segmentBoundaries);
             start = index + 1;
         }
@@ -44,7 +52,7 @@ public static class LiveCaptionDisplaySegmenter
         var leadingWhitespace = value.Length - value.TrimStart().Length;
         var unit = value.Trim();
         if (unit.Length == 0) return;
-        if (!IsJapanese(language, unit))
+        if (!IsJapaneseText(language, unit))
         {
             output.Add(unit);
             return;
@@ -83,7 +91,7 @@ public static class LiveCaptionDisplaySegmenter
     {
         for (var index = maximum; index >= minimum; index--)
         {
-            if (index < text.Length && IsClauseBoundary(text[index - 1])) return index;
+            if (index < text.Length && SubtitlePunctuation.IsClauseTerminator(text[index - 1])) return index;
         }
         return maximum;
     }
@@ -106,7 +114,7 @@ public static class LiveCaptionDisplaySegmenter
         return boundaries;
     }
 
-    private static bool IsJapanese(string? language, string text)
+    public static bool IsJapaneseText(string? language, string text)
     {
         if (!string.IsNullOrWhiteSpace(language))
         {
@@ -116,12 +124,13 @@ public static class LiveCaptionDisplaySegmenter
                 normalized.Contains("日本", StringComparison.Ordinal) ||
                 normalized.Contains("일본", StringComparison.Ordinal)) return true;
         }
-        return text.Any(character => character is >= '\u3040' and <= '\u30ff');
+        if (text.Any(character => character is >= '\u3040' and <= '\u30ff' || "、。｡「」『』".Contains(character)))
+            return true;
+        return !text.Any(char.IsWhiteSpace) &&
+            text.Any(character => character is >= '\u3400' and <= '\u9fff') &&
+            text.Any(SubtitlePunctuation.IsComma);
     }
 
-    private static bool IsSentenceTerminator(char character) => ".!?。！？…".Contains(character);
-    private static bool IsClauseBoundary(char character) => "、，,；;：:".Contains(character);
-    private static bool IsClosingPunctuation(char character) => ")]}>」』】》）〕〉］｝】”’\"'".Contains(character);
     private static string CollapseWhitespace(string text) =>
         string.Join(' ', text.Split([' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 }

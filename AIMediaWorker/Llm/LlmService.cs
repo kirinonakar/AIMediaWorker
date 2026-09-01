@@ -573,7 +573,7 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
         var end = text.Length - 1;
         while (end >= 0)
         {
-            while (end >= 0 && (char.IsWhiteSpace(text[end]) || "\"'”’」』】）》）]}".Contains(text[end]))) end--;
+            while (end >= 0 && (char.IsWhiteSpace(text[end]) || SubtitlePunctuation.IsClosingCharacter(text[end]))) end--;
             if (end >= 0 && text[end] == '>')
             {
                 var tagStart = text.LastIndexOf('<', end);
@@ -586,7 +586,7 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
             }
             break;
         }
-        return end >= 0 && ".!?。！？…".Contains(text[end]);
+        return end >= 0 && SubtitlePunctuation.IsSentenceTerminator(text[end]);
     }
 
     private static List<string> BuildTranscriptChunks(IEnumerable<SubtitleCue> cues, int maximumCharacters)

@@ -1,3 +1,5 @@
+using AIMediaWorker.Subtitle;
+
 namespace AIMediaWorker.Asr;
 
 /// <summary>
@@ -7,8 +9,6 @@ namespace AIMediaWorker.Asr;
 /// </summary>
 public static class AsrSubtitleSegmenter
 {
-    private const string SentenceTerminators = ".!?。！？…";
-    private const string ClosingPunctuation = ")]}>」』】》）〕〉］｝】”’\"'";
     private const string OpeningPunctuation = "([{<「『【《（〔〈［｛";
     private const string JapaneseNonStarters = "ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶーゝゞヽヾ々〻\u3099\u309a";
 
@@ -280,7 +280,9 @@ public static class AsrSubtitleSegmenter
         {
             if (!IsSentenceTerminator(text[index])) continue;
             var end = index + 1;
-            while (end < text.Length && ClosingPunctuation.Contains(text[end])) end++;
+            while (end < text.Length &&
+                (SubtitlePunctuation.IsSentenceTerminator(text[end]) ||
+                 SubtitlePunctuation.IsClosingCharacter(text[end]))) end++;
             result.Add(text[start..end]);
             start = end;
             index = end - 1;
@@ -315,7 +317,7 @@ public static class AsrSubtitleSegmenter
 
         var previousCharacter = current[^1];
         var nextCharacter = next[0];
-        if (IsClosingPunctuationCharacter(nextCharacter) || IsSentenceTerminator(nextCharacter) || nextCharacter is '、' or '，' or ',')
+        if (IsClosingPunctuationCharacter(nextCharacter) || IsSentenceTerminator(nextCharacter) || nextCharacter is '、' or '，' or '､' or ',')
             return current + next;
         if (OpeningPunctuation.Contains(previousCharacter)) return current + next;
         if (IsNoSpaceCjk(previousCharacter) && IsNoSpaceCjk(nextCharacter)) return current + next;
@@ -399,21 +401,11 @@ public static class AsrSubtitleSegmenter
 
     private static int CountCharacters(string text) => text.Count(character => !char.IsWhiteSpace(character));
 
-    private static bool IsSentenceBoundary(string text)
-    {
-        for (var index = text.Length - 1; index >= 0; index--)
-        {
-            var character = text[index];
-            if (char.IsWhiteSpace(character)) continue;
-            if (ClosingPunctuation.Contains(character)) continue;
-            return IsSentenceTerminator(character);
-        }
-        return false;
-    }
+    private static bool IsSentenceBoundary(string text) => SubtitlePunctuation.EndsSentence(text);
 
-    private static bool IsSentenceTerminator(char character) => SentenceTerminators.Contains(character);
+    private static bool IsSentenceTerminator(char character) => SubtitlePunctuation.IsSentenceTerminator(character);
 
-    private static bool IsClosingPunctuationCharacter(char character) => ClosingPunctuation.Contains(character);
+    private static bool IsClosingPunctuationCharacter(char character) => SubtitlePunctuation.IsClosingCharacter(character);
 
     private static bool IsWordLike(char character) => char.IsLetterOrDigit(character);
 

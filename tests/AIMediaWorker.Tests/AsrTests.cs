@@ -1,4 +1,5 @@
 using AIMediaWorker.Asr;
+using AIMediaWorker.Subtitle;
 using System.Collections.Concurrent;
 
 namespace AIMediaWorker.Tests;
@@ -291,6 +292,46 @@ public sealed class AsrTests
         var sentences = LiveCaptionDisplaySegmenter.Split("「おはよう。」今日は晴れです。", "ja");
 
         Assert.Equal(["「おはよう。」", "今日は晴れです。"], sentences);
+    }
+
+    [Fact]
+    public void LiveCaptionDisplaySegmenterRecognizesJapanesePunctuationVariants()
+    {
+        const string source = "「本当⁉」次です｡まだ続く⁈終わり‥驚いた‼";
+
+        var sentences = LiveCaptionDisplaySegmenter.Split(source, "ja");
+
+        Assert.Equal(["「本当⁉」", "次です｡", "まだ続く⁈", "終わり‥", "驚いた‼"], sentences);
+        Assert.True(SubtitlePunctuation.EndsSentence("「本当！？」"));
+        Assert.True(SubtitlePunctuation.EndsSentence("本当⁇』"));
+    }
+
+    [Fact]
+    public void LiveCaptionDisplaySegmenterKeepsRepeatedTerminatorsTogether()
+    {
+        var sentences = LiveCaptionDisplaySegmenter.Split("えっ！？本当……？次です。", "ja");
+
+        Assert.Equal(["えっ！？", "本当……？", "次です。"], sentences);
+    }
+
+    [Fact]
+    public void LiveCaptionDisplaySegmenterRecognizesJapaneseCommaVariants()
+    {
+        const string source = "今日は晴れ、でも風が強い､だから家にいます，明日は出ます,たぶん。";
+
+        var sentences = LiveCaptionDisplaySegmenter.Split(source, "auto");
+
+        Assert.Equal(["今日は晴れ、", "でも風が強い､", "だから家にいます，", "明日は出ます,", "たぶん。"], sentences);
+        Assert.All(new[] { '、', '､', '，', ',' }, character => Assert.True(SubtitlePunctuation.IsComma(character)));
+        Assert.Equal(["今日、", "晴天"], LiveCaptionDisplaySegmenter.Split("今日、晴天", "auto"));
+    }
+
+    [Fact]
+    public void LiveCaptionDisplaySegmenterKeepsEnglishCommaInsideSentence()
+    {
+        var sentences = LiveCaptionDisplaySegmenter.Split("Well, this continues.", "en");
+
+        Assert.Equal(["Well, this continues."], sentences);
     }
 
     [Fact]

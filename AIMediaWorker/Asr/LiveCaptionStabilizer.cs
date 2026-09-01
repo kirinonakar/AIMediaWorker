@@ -1,3 +1,5 @@
+using AIMediaWorker.Subtitle;
+
 namespace AIMediaWorker.Asr;
 
 public sealed record LiveCaptionUpdate(
@@ -244,14 +246,16 @@ public sealed class LiveCaptionStabilizer
 
         var previousCharacter = current[^1];
         var nextCharacter = next[0];
-        if (IsClosingPunctuation(nextCharacter) || IsSentenceTerminator(nextCharacter) || nextCharacter is '、' or '，' or ',')
+        if (SubtitlePunctuation.IsClosingCharacter(nextCharacter) ||
+            SubtitlePunctuation.IsSentenceTerminator(nextCharacter) ||
+            nextCharacter is '、' or '，' or '､' or ',')
             return current + next;
         if (IsOpeningPunctuation(previousCharacter)) return current + next;
         if (IsNoSpaceCjk(previousCharacter) && IsNoSpaceCjk(nextCharacter)) return current + next;
 
         // A comma/semicolon in Korean and Latin text is followed by a normal
         // word space. Japanese uses no space after its punctuation.
-        if (IsSentenceTerminator(previousCharacter) && !IsJapaneseContext(current + next))
+        if (SubtitlePunctuation.IsSentenceTerminator(previousCharacter) && !IsJapaneseContext(current + next))
             return $"{current} {next}";
         if ((previousCharacter is ',' or ';' or ':') && !IsJapaneseContext(current + next))
             return $"{current} {next}";
@@ -262,10 +266,6 @@ public sealed class LiveCaptionStabilizer
 
     private static string CollapseWhitespace(string text) =>
         string.Join(' ', text.Split([' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-
-    private static bool IsSentenceTerminator(char character) => ".!?。！？…".Contains(character);
-
-    private static bool IsClosingPunctuation(char character) => ")]}>」』】》）〕〉］｝】”’\"'".Contains(character);
 
     private static bool IsOpeningPunctuation(char character) => "([{<「『【《（〔〈［｛".Contains(character);
 
