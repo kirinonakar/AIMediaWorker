@@ -447,7 +447,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
         ChannelReader<SubtitleCue> reader, SubtitleDocument targetDocument, SubtitleTrack track,
         CancellationToken cancellationToken)
     {
-        const int batchSize = 6;
+        const int batchSize = 10;
         var pending = new List<SubtitleCue>(batchSize);
         DateTimeOffset? firstPendingAt = null;
         ILlmProvider? provider = null;
@@ -499,7 +499,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
                     batchCompleted: (result, token) => ApplyTranslationBatchAsync(targetDocument,
                         new TranslationBatch(result.Items, translatedBeforeBatch + result.Completed,
                             Math.Max(translatedBeforeBatch + result.Completed, track.Cues.Count)), cuesById, token),
-                    batchSize: batchSize, cancellationToken: cancellationToken);
+                    batchSize: batchSize, contextCues: track.Cues.ToArray(), cancellationToken: cancellationToken);
                 translatedCount += translated.Count;
                 await AppLog.WriteAsync("info", "translation", "TRANSLATION_BATCH_COMPLETED",
                     $"Realtime translation completed {translatedCount} cues; {pending.Count} queued.");
@@ -550,6 +550,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
         var translated = await service.TranslateAsync(cues, _host.Settings.Llm.TranslationLanguage,
             batchCompleted: (batch, token) => ApplyTranslationBatchAsync(targetDocument,
                 new TranslationBatch(batch.Items, translatedBefore + batch.Completed, track.Cues.Count), cuesById, token),
+            contextCues: track.Cues.ToArray(),
             cancellationToken: cancellationToken);
         if (!ReferenceEquals(_host.Document, targetDocument)) return false;
         _host.ScheduleSubtitleOverlaySync(force: true);

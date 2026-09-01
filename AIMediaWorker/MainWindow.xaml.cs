@@ -257,7 +257,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _playbackController = new PlaybackController(
             _playback,
             new PlaybackViewElements(
-                PlaybackControls, PositionSlider, PositionText, VolumeSlider, RateCombo,
+                PlaybackControls, PositionSlider, AbMarkerCanvas, AbStartMarker, AbEndMarker,
+                PositionText, VolumeSlider, RateCombo,
                 AudioTrackCombo, ResolutionText, DecoderText, AudioCodecText, RepeatButton,
                 [BeginningButton, PreviousButton, SeekBackButton, PlayPauseButton, StopButton,
                     SeekForwardButton, NextButton, ScreenshotButton, MuteButton, RepeatButton,
@@ -283,7 +284,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         _shortcuts = new ShortcutController(
             new ShortcutViewElements(
                 RootGrid, VideoFocusTarget, SaveSubtitleMenuItem, SaveSubtitleAsMenuItem, ExitMenuItem,
-                PlayPauseMenuItem, DeleteCueMenuItem, PreviousSubtitleMenuItem, NextSubtitleMenuItem,
+                PlayPauseMenuItem, SetAbStartMenuItem, SetAbEndMenuItem, ClearAbMenuItem,
+                DeleteCueMenuItem, PreviousSubtitleMenuItem, NextSubtitleMenuItem,
                 UndoMenuItem, RedoMenuItem, SubtitleVisibilityMenuItem, ShowBottomPanelMenuItem,
                 ShowRightPanelMenuItem, ShowStatusPanelMenuItem, FullscreenMenuItem,
                 BottomPanelToggleButton, RightPanelToggleButton, StatusPanelToggleButton,
@@ -300,6 +302,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
                 _subtitleSession.SaveCurrentAsync,
                 _subtitleSession.SaveAsAsync,
                 _playbackController.PlayFromBeginning,
+                _playbackController.PlayFromAbStartOrBeginning,
                 _playbackController.TogglePause,
                 _mediaNavigation.OpenPreviousAsync,
                 _mediaNavigation.OpenNextAsync,
@@ -317,6 +320,9 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
                 _playbackController.AdjustVolume,
                 _playbackController.GoToBeginning,
                 _playbackController.SeekToEnd,
+                _playbackController.SetAbStart,
+                _playbackController.SetAbEnd,
+                _playbackController.ClearAb,
                 _playbackController.RefreshRepeatToolTip));
         if (_appWindow is not null) { _appWindow.Closing += OnAppWindowClosing; _appWindow.Changed += OnAppWindowChanged; }
         Closed += OnWindowClosed;

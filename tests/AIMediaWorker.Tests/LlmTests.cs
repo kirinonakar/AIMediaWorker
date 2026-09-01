@@ -116,7 +116,7 @@ public sealed class LlmTests
     }
 
     [Fact]
-    public async Task TranslationProcessesSmallBatchesAndReportsEachCompletedBatch()
+    public async Task TranslationProcessesDynamicBatchesAndReportsEachCompletedBatch()
     {
         var calls = 0;
         var batchSizes = new List<int>();
@@ -124,9 +124,8 @@ public sealed class LlmTests
         var provider = new FakeProvider(prompt =>
         {
             calls++;
-            var input = prompt[(prompt.IndexOf("Input:\n", StringComparison.Ordinal) + "Input:\n".Length)..];
-            using var document = System.Text.Json.JsonDocument.Parse(input);
-            var items = document.RootElement.GetProperty("items").EnumerateArray().Select(item => new
+            using var document = ParseTranslationPayload(prompt);
+            var items = document.RootElement.GetProperty("targetItems").EnumerateArray().Select(item => new
             {
                 Id = item.GetProperty("id").GetGuid(),
                 Text = $"번역-{item.GetProperty("text").GetString()}"
@@ -143,10 +142,113 @@ public sealed class LlmTests
             return Task.CompletedTask;
         });
 
-        Assert.Equal(3, calls);
-        Assert.Equal([6, 6, 6], batchSizes);
-        Assert.Equal([6, 12, 18], completed);
+        Assert.Equal(2, calls);
+        Assert.Equal([10, 8], batchSizes);
+        Assert.Equal([10, 18], completed);
         Assert.Equal(18, result.Count);
+    }
+
+    [Fact]
+    public async Task TranslationUsesFutureContextAndRollsAcceptedTranslationsForward()
+    {
+        var payloads = new List<System.Text.Json.JsonElement>();
+        var provider = new FakeProvider(prompt =>
+        {
+            using var document = ParseTranslationPayload(prompt);
+            payloads.Add(document.RootElement.Clone());
+            var items = document.RootElement.GetProperty("targetItems").EnumerateArray().Select(item => new
+            {
+                id = item.GetProperty("id").GetGuid(),
+                text = $"번역-{item.GetProperty("text").GetString()}"
+            }).ToArray();
+            return System.Text.Json.JsonSerializer.Serialize(new { items });
+        });
+        var cues = Enumerable.Range(1, 16).Select(index => new SubtitleCue
+        {
+            StartMicroseconds = index * 1_000_000L,
+            EndMicroseconds = index * 1_000_000L + 900_000,
+            Text = $"cue-{index}"
+        }).ToArray();
+
+        await new LlmService(provider, "fake").TranslateAsync(cues, "Korean", contextCues: cues);
+
+        Assert.Equal(2, payloads.Count);
+        Assert.Empty(payloads[0].GetProperty("contextBefore").EnumerateArray());
+        Assert.Equal(5, payloads[0].GetProperty("contextAfter").GetArrayLength());
+        var rollingContext = payloads[1].GetProperty("contextBefore");
+        Assert.Equal(5, rollingContext.GetArrayLength());
+        Assert.Equal("cue-6", rollingContext[0].GetProperty("source").GetString());
+        Assert.Equal("번역-cue-6", rollingContext[0].GetProperty("translation").GetString());
+        Assert.Equal("번역-cue-10", rollingContext[4].GetProperty("translation").GetString());
+        Assert.Empty(payloads[1].GetProperty("contextAfter").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task TranslationKeepsAContinuedSentenceInsideOneDynamicBatch()
+    {
+        var batchSizes = new List<int>();
+        var cues = Enumerable.Range(1, 20).Select(index => new SubtitleCue
+        {
+            StartMicroseconds = index * 1_000_000L,
+            EndMicroseconds = index * 1_000_000L + 900_000,
+            Text = index switch
+            {
+                9 => "I don't think",
+                10 => "we should be doing",
+                11 => "this anymore.",
+                _ => $"Sentence {index}."
+            }
+        }).ToArray();
+        var provider = new FakeProvider(prompt =>
+        {
+            using var document = ParseTranslationPayload(prompt);
+            var targets = document.RootElement.GetProperty("targetItems").EnumerateArray().ToArray();
+            batchSizes.Add(targets.Length);
+            var items = targets.Select(item => new
+            {
+                id = item.GetProperty("id").GetGuid(),
+                text = item.GetProperty("text").GetString()
+            });
+            return System.Text.Json.JsonSerializer.Serialize(new { items });
+        });
+
+        await new LlmService(provider, "fake").TranslateAsync(cues, "Korean");
+
+        Assert.Equal([11, 9], batchSizes);
+    }
+
+    [Fact]
+    public async Task TranslationEndsADynamicBatchAtAThreeSecondSceneBreak()
+    {
+        var batchSizes = new List<int>();
+        var cues = Enumerable.Range(1, 20).Select(index =>
+        {
+            var start = index * 1_000_000L + (index >= 9 ? 3_000_000L : 0);
+            return new SubtitleCue
+            {
+                StartMicroseconds = start,
+                EndMicroseconds = start + 900_000,
+                Text = $"cue-{index}"
+            };
+        }).ToArray();
+        var provider = new FakeProvider(prompt =>
+        {
+            using var document = ParseTranslationPayload(prompt);
+            var targets = document.RootElement.GetProperty("targetItems").EnumerateArray().ToArray();
+            batchSizes.Add(targets.Length);
+            return System.Text.Json.JsonSerializer.Serialize(new
+            {
+                items = targets.Select(item => new
+                {
+                    id = item.GetProperty("id").GetGuid(),
+                    text = item.GetProperty("text").GetString()
+                })
+            });
+        });
+
+        await new LlmService(provider, "fake").TranslateAsync(cues, "Korean");
+
+        Assert.Equal([8, 12], batchSizes);
     }
 
     [Fact]
@@ -434,6 +536,14 @@ public sealed class LlmTests
         Assert.Equal(effort, root.GetProperty("reasoning_effort").GetString());
         Assert.Contains("日本語を韓国語に翻訳", body);
         Assert.DoesNotContain("\\u65e5", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static System.Text.Json.JsonDocument ParseTranslationPayload(string prompt)
+    {
+        const string marker = "Payload:\n";
+        var start = prompt.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start >= 0, "Translation prompt did not contain a payload.");
+        return System.Text.Json.JsonDocument.Parse(prompt[(start + marker.Length)..]);
     }
 
     private sealed class FakeProvider(Func<string, string> generate) : ILlmProvider

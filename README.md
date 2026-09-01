@@ -242,7 +242,10 @@ API keys are stored in Windows Credential Manager.
 | Enter / F / F11 | Toggle fullscreen |
 | Esc | Leave fullscreen |
 | Home / End | Seek to start/end |
-| Backspace / Ctrl+Shift+N | Play the current media from the beginning |
+| [ / ] | Set the A/B repeat start/end point (`]` returns to A immediately) |
+| \ | Clear A/B repeat |
+| Backspace | Play from A when set; otherwise play from the beginning |
+| Ctrl+Shift+N | Play the current media from the beginning |
 
 Double-clicking the video surface toggles play/pause.
 

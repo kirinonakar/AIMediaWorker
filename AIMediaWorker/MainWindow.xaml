@@ -142,7 +142,7 @@
                 <MenuFlyoutItem x:Uid="PlayPause" x:Name="PlayPauseMenuItem" Text="Play / Pause" Click="OnPlayPauseClick" /><MenuFlyoutItem x:Uid="Stop" Text="Stop" Click="OnStopClick" />
                 <MenuFlyoutItem x:Uid="FrameStep" Text="Frame step" Click="OnFrameStepClick" />
                 <MenuFlyoutItem x:Uid="SaveScreenshot" Text="Save current frame…" Click="OnSaveScreenshotClick" />
-                <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="SetAPoint" Text="Set A point" Click="OnSetAbStartClick" /><MenuFlyoutItem x:Uid="SetBPoint" Text="Set B point" Click="OnSetAbEndClick" /><MenuFlyoutItem x:Uid="ClearAb" Text="Clear A/B repeat" Click="OnClearAbClick" />
+                <MenuFlyoutSeparator /><MenuFlyoutItem x:Uid="SetAPoint" x:Name="SetAbStartMenuItem" Text="Set A point" Click="OnSetAbStartClick" /><MenuFlyoutItem x:Uid="SetBPoint" x:Name="SetAbEndMenuItem" Text="Set B point" Click="OnSetAbEndClick" /><MenuFlyoutItem x:Uid="ClearAb" x:Name="ClearAbMenuItem" Text="Clear A/B repeat" Click="OnClearAbClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="SubtitleMenu" Title="Subtitle">
                 <ToggleMenuFlyoutItem x:Uid="SubtitleVisibility" x:Name="SubtitleVisibilityMenuItem" Text="Show subtitles" IsChecked="True" Click="OnToggleSubtitleVisibilityClick" />
@@ -356,7 +356,23 @@
             <Button x:Name="SeekForwardButton" Grid.Column="5" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSeekForwardClick" ToolTipService.ToolTip="Seek forward"><Image x:Name="SeekForwardIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/seek-forward.svg" /></Image.Source></Image></Button>
             <Button x:Name="NextButton" Grid.Column="6" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnNextMediaClick" ToolTipService.ToolTip="Next media (Ctrl+F)"><Image x:Name="NextIcon" Width="19" Height="19"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/next.svg" /></Image.Source></Image></Button>
             <Button x:Uid="ScreenshotButton" x:Name="ScreenshotButton" Grid.Column="7" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnSaveScreenshotClick" ToolTipService.ToolTip="Save current frame"><FontIcon x:Name="ScreenshotButtonIcon" Glyph="&#xE722;" FontSize="19" /></Button>
-            <Slider x:Name="PositionSlider" Grid.Column="8" VerticalAlignment="Center" Minimum="0" Maximum="1" IsThumbToolTipEnabled="True" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
+            <Grid Grid.Column="8">
+                <Slider x:Name="PositionSlider" VerticalAlignment="Center" Minimum="0" Maximum="1" IsThumbToolTipEnabled="True" ValueChanged="OnPositionSliderChanged" PointerPressed="OnPositionSliderPointerPressed" PointerReleased="OnPositionSliderPointerReleased" PointerCanceled="OnPositionSliderPointerReleased" />
+                <Canvas x:Name="AbMarkerCanvas" Margin="8,0" IsHitTestVisible="False">
+                    <Grid x:Name="AbStartMarker" Width="14" Height="30" Visibility="Collapsed">
+                        <Rectangle Width="2" Height="20" Margin="0,8,0,0" HorizontalAlignment="Center" VerticalAlignment="Center" Fill="#FF16A34A" />
+                        <Border Width="14" Height="14" VerticalAlignment="Top" Background="#FF16A34A" CornerRadius="7">
+                            <TextBlock Text="A" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </Grid>
+                    <Grid x:Name="AbEndMarker" Width="14" Height="30" Visibility="Collapsed">
+                        <Rectangle Width="2" Height="20" Margin="0,8,0,0" HorizontalAlignment="Center" VerticalAlignment="Center" Fill="#FFDC2626" />
+                        <Border Width="14" Height="14" VerticalAlignment="Top" Background="#FFDC2626" CornerRadius="7">
+                            <TextBlock Text="B" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </Grid>
+                </Canvas>
+            </Grid>
             <TextBlock x:Name="PositionText" Grid.Column="9" Text="00:00:00 / 00:00:00" VerticalAlignment="Center" FontFamily="Consolas" />
             <Slider x:Name="VolumeSlider" Grid.Column="10" VerticalAlignment="Center" Minimum="0" Maximum="130" SmallChange="5" Value="100" ValueChanged="OnVolumeChanged" />
             <Button x:Name="MuteButton" Grid.Column="11" Style="{StaticResource PlaybackControlButtonStyle}" Click="OnMuteClick"><Image x:Name="MuteIcon" Width="20" Height="20"><Image.Source><SvgImageSource UriSource="ms-appx:///Assets/Playback/volume.svg" /></Image.Source></Image></Button>

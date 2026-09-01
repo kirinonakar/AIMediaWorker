@@ -34,6 +34,7 @@ internal sealed class PlaybackController : IDisposable
     private bool _powerManagementDisabled;
     private bool _disposed;
     private TimeSpan? _abStart;
+    private TimeSpan? _abEnd;
 
     public PlaybackController(MpvPlaybackEngine playback, PlaybackViewElements view, PlaybackControllerHost host)
     {
@@ -43,6 +44,7 @@ internal sealed class PlaybackController : IDisposable
         _taskbarProgress = new TaskbarProgressController(host.WindowHandle);
 
         _view.PositionSlider.ThumbToolTipValueConverter = new PositionSliderThumbToolTipValueConverter();
+        _view.AbMarkerCanvas.SizeChanged += OnAbMarkerCanvasSizeChanged;
         _playback.StateChanged += OnPlaybackStateChanged;
         _playback.PositionChanged += OnPlaybackPositionChanged;
         _playback.Seeked += OnPlaybackSeeked;
@@ -78,6 +80,16 @@ internal sealed class PlaybackController : IDisposable
         _playback.Seek(TimeSpan.Zero, true);
         _playback.Play();
     });
+
+    public void PlayFromAbStartOrBeginning()
+    {
+        var position = _abStart ?? TimeSpan.Zero;
+        Seek(position, () =>
+        {
+            _playback.Seek(position, true);
+            _playback.Play();
+        });
+    }
 
     public void GoToBeginning() => Seek(TimeSpan.Zero, () => _playback.Seek(TimeSpan.Zero, true));
 
@@ -150,27 +162,36 @@ internal sealed class PlaybackController : IDisposable
     public void SetAbStart()
     {
         _abStart = _playback.Position;
+        _abEnd = null;
         Try(() => _playback.SetAbLoop(_abStart, null));
+        RefreshAbMarkers();
         _host.SetStatus(F("StatusAPoint", FormatTime(_abStart.Value)));
     }
 
     public void SetAbEnd()
     {
         _abStart ??= TimeSpan.Zero;
-        if (_playback.Position <= _abStart)
+        var end = _playback.Position;
+        if (end <= _abStart)
         {
             _host.SetStatus(L("StatusBMustFollowA"));
             return;
         }
 
-        Try(() => _playback.SetAbLoop(_abStart, _playback.Position));
-        _host.SetStatus(F("StatusAbRepeat", FormatTime(_abStart.Value), FormatTime(_playback.Position)));
+        var start = _abStart.Value;
+        _abEnd = end;
+        Try(() => _playback.SetAbLoop(start, end));
+        RefreshAbMarkers();
+        Seek(start, () => _playback.Seek(start, true));
+        _host.SetStatus(F("StatusAbRepeat", FormatTime(start), FormatTime(end)));
     }
 
     public void ClearAb()
     {
         _abStart = null;
+        _abEnd = null;
         if (_playback.IsAvailable) Try(() => _playback.SetAbLoop(null, null));
+        RefreshAbMarkers();
         _host.SetStatus(L("StatusAbCleared"));
     }
 
@@ -285,6 +306,7 @@ internal sealed class PlaybackController : IDisposable
         _playback.TracksChanged -= OnTracksChanged;
         _playback.ErrorOccurred -= OnPlaybackError;
         _playback.MediaEnded -= OnMediaEnded;
+        _view.AbMarkerCanvas.SizeChanged -= OnAbMarkerCanvasSizeChanged;
         ReleasePowerRequirement();
         _taskbarProgress.Dispose();
         _powerManagement.Dispose();
@@ -293,6 +315,12 @@ internal sealed class PlaybackController : IDisposable
     private void OnPlaybackStateChanged(object? sender, EventArgs e) => _host.DispatcherQueue.TryEnqueue(() =>
     {
         var state = _playback.State;
+        if (state == PlaybackState.Loading)
+        {
+            _abStart = null;
+            _abEnd = null;
+            RefreshAbMarkers();
+        }
         UpdatePowerRequirement(state);
         _host.IconsChanged();
         _host.SetStatus(_host.GetAudioStatus() is { } audioTag && state != PlaybackState.Failed
@@ -325,6 +353,7 @@ internal sealed class PlaybackController : IDisposable
             var duration = _playback.Duration;
             _updatingPosition = true;
             _view.PositionSlider.Maximum = Math.Max(1, duration.TotalSeconds);
+            RefreshAbMarkers();
             if (!_positionSliderDragging)
                 _view.PositionSlider.Value = Math.Clamp(position.TotalSeconds, 0, _view.PositionSlider.Maximum);
             _updatingPosition = false;
@@ -345,6 +374,29 @@ internal sealed class PlaybackController : IDisposable
 
     private void OnPlaybackSeeked(object? sender, EventArgs e) =>
         _host.DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => _host.Seeked());
+
+    private void OnAbMarkerCanvasSizeChanged(object sender, SizeChangedEventArgs e) => RefreshAbMarkers();
+
+    private void RefreshAbMarkers()
+    {
+        var durationSeconds = _playback.Duration.TotalSeconds;
+        var width = _view.AbMarkerCanvas.ActualWidth;
+        UpdateAbMarker(_view.AbStartMarker, _abStart, durationSeconds, width);
+        UpdateAbMarker(_view.AbEndMarker, _abEnd, durationSeconds, width);
+    }
+
+    private static void UpdateAbMarker(FrameworkElement marker, TimeSpan? position, double durationSeconds, double width)
+    {
+        if (position is null || durationSeconds <= 0 || !double.IsFinite(durationSeconds) || width <= 0)
+        {
+            marker.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        marker.Visibility = Visibility.Visible;
+        var center = Math.Clamp(position.Value.TotalSeconds / durationSeconds, 0, 1) * width;
+        Canvas.SetLeft(marker, Math.Clamp(center - marker.Width / 2, 0, Math.Max(0, width - marker.Width)));
+    }
 
     private void OnTracksChanged(object? sender, EventArgs e) => _host.DispatcherQueue.TryEnqueue(() =>
     {
@@ -509,6 +561,9 @@ internal sealed record PlaybackControllerHost(
 internal sealed record PlaybackViewElements(
     Grid Container,
     Slider PositionSlider,
+    Canvas AbMarkerCanvas,
+    FrameworkElement AbStartMarker,
+    FrameworkElement AbEndMarker,
     TextBlock PositionText,
     Slider VolumeSlider,
     ComboBox RateCombo,

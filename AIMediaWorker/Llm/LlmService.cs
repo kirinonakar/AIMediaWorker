@@ -115,19 +115,57 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
         string targetLanguage,
         IProgress<TranslationProgress>? progress = null,
         Func<TranslationBatch, CancellationToken, Task>? batchCompleted = null,
-        int batchSize = 6,
+        int batchSize = 10,
+        IReadOnlyCollection<SubtitleCue>? contextCues = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(targetLanguage)) throw new ArgumentException("A target language is required.", nameof(targetLanguage));
         if (batchSize is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(batchSize));
-        var input = cues.ToArray();
+        var input = cues.OrderBy(cue => cue.StartMicroseconds).ThenBy(cue => cue.EndMicroseconds).ToArray();
+        var timeline = BuildTranslationTimeline(input, contextCues);
+        var timelineIndexes = timeline.Select((cue, index) => (cue.Id, index)).ToDictionary(item => item.Id, item => item.index);
         var result = new Dictionary<Guid, string>();
         const int maximumTranslationAttempts = 3;
-        for (var offset = 0; offset < input.Length; offset += batchSize)
+        for (var offset = 0; offset < input.Length;)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var batch = input.Skip(offset).Take(batchSize).Select(cue => new TranslationItem(cue.Id, cue.Text)).ToArray();
-            var prompt = $"Translate every item to {targetLanguage}. Preserve meaning, speaker labels, line breaks where useful, and formatting tags. Return one JSON object with an 'items' array. Every array item should contain the exact original 'id' and a 'text' string. Do not add, omit, merge, reorder, or change items. If an id cannot be copied exactly, still return every item in the original order and include its zero-based 'index'. Do not return commentary outside the JSON. Input:\n{JsonSerializer.Serialize(new { items = batch }, LlmJson.Options)}";
+            var batchLength = SelectTranslationBatchLength(input, offset, batchSize);
+            var batchCues = input.Skip(offset).Take(batchLength).ToArray();
+            var batch = batchCues.Select((cue, index) => new TranslationItem(
+                cue.Id,
+                index,
+                timelineIndexes[cue.Id] + 1,
+                cue.Text)).ToArray();
+            var firstTimelineIndex = timelineIndexes[batchCues[0].Id];
+            var lastTimelineIndex = timelineIndexes[batchCues[^1].Id];
+            var contextBefore = BuildTranslationContext(
+                timeline,
+                Math.Max(0, firstTimelineIndex - TranslationContextCueCount),
+                firstTimelineIndex,
+                result);
+            var contextAfter = BuildTranslationContext(
+                timeline,
+                lastTimelineIndex + 1,
+                Math.Min(timeline.Length, lastTimelineIndex + 1 + TranslationContextCueCount),
+                result,
+                includeTranslation: false);
+            var payload = JsonSerializer.Serialize(new
+            {
+                contextBefore,
+                targetItems = batch,
+                contextAfter
+            }, LlmJson.Options);
+            var prompt = $"""
+                Translate TARGET_ITEMS to {targetLanguage} as concise, natural subtitles.
+                READ_ONLY_CONTEXT_BEFORE and READ_ONLY_CONTEXT_AFTER exist only to resolve speakers, pronouns, omitted subjects, relationships, terminology, honorifics, and tone. Never translate or output a context item.
+                A translation in READ_ONLY_CONTEXT_BEFORE is already accepted. Keep its names, terms, honorifics, and speaking style consistent unless the source clearly requires otherwise.
+                Preserve meaning, speaker labels, useful line breaks, and formatting tags in every target item.
+                Return one JSON object with an 'items' array containing exactly {batch.Length} TARGET_ITEMS. Each output item must contain the exact target 'id' and its translated 'text'. Do not add, omit, merge, split, or reorder target items.
+                If an id cannot be copied exactly, still return every target item in its original order with its zero-based 'index'. Return no markdown or commentary outside the JSON.
+
+                Payload:
+                {payload}
+                """;
             ParsedTranslations? parsedTranslations = null;
             JsonException? parseException = null;
             for (var attempt = 1; attempt <= maximumTranslationAttempts; attempt++)
@@ -169,6 +207,7 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
             if (batchCompleted is not null)
                 await batchCompleted(new TranslationBatch(completedBatch, completed, input.Length), cancellationToken);
             progress?.Report(new TranslationProgress(completed, input.Length));
+            offset += batch.Length;
         }
         return result;
     }
@@ -434,6 +473,122 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
         return false;
     }
 
+    private const int TranslationContextCueCount = 5;
+    private const int MaximumTranslationSourceTokens = 1_500;
+    private const long SceneBreakMicroseconds = 3_000_000;
+
+    private static SubtitleCue[] BuildTranslationTimeline(
+        IReadOnlyCollection<SubtitleCue> targets,
+        IReadOnlyCollection<SubtitleCue>? contextCues)
+    {
+        var cuesById = new Dictionary<Guid, SubtitleCue>();
+        if (contextCues is not null)
+        {
+            foreach (var cue in contextCues) cuesById[cue.Id] = cue;
+        }
+        foreach (var cue in targets) cuesById[cue.Id] = cue;
+        return cuesById.Values
+            .OrderBy(cue => cue.StartMicroseconds)
+            .ThenBy(cue => cue.EndMicroseconds)
+            .ToArray();
+    }
+
+    private static TranslationContextItem[] BuildTranslationContext(
+        IReadOnlyList<SubtitleCue> timeline,
+        int start,
+        int end,
+        IReadOnlyDictionary<Guid, string> currentTranslations,
+        bool includeTranslation = true)
+    {
+        var context = new List<TranslationContextItem>(Math.Max(0, end - start));
+        for (var index = start; index < end; index++)
+        {
+            var cue = timeline[index];
+            string? translation = null;
+            if (includeTranslation)
+            {
+                if (!currentTranslations.TryGetValue(cue.Id, out translation)) translation = cue.TranslatedText;
+                if (string.IsNullOrWhiteSpace(translation)) translation = null;
+            }
+            context.Add(new TranslationContextItem(index + 1, cue.Text, translation));
+        }
+        return context.ToArray();
+    }
+
+    private static int SelectTranslationBatchLength(IReadOnlyList<SubtitleCue> cues, int offset, int targetSize)
+    {
+        var remaining = cues.Count - offset;
+        if (remaining <= 0) return 0;
+
+        var variation = targetSize >= 8 ? 2 : Math.Min(1, targetSize - 1);
+        var minimumSize = Math.Max(1, targetSize - variation);
+        var maximumSize = Math.Min(remaining, targetSize + variation);
+        var allowedSize = 0;
+        var estimatedTokens = 0;
+        while (allowedSize < maximumSize)
+        {
+            var nextTokens = EstimateSourceTokens(cues[offset + allowedSize].Text);
+            if (allowedSize > 0 && estimatedTokens + nextTokens > MaximumTranslationSourceTokens) break;
+            estimatedTokens += nextTokens;
+            allowedSize++;
+        }
+        if (allowedSize == 0) allowedSize = 1;
+        if (remaining <= allowedSize || allowedSize < minimumSize) return allowedSize;
+
+        var preferredSize = Math.Min(targetSize, allowedSize);
+        var bestSize = preferredSize;
+        var bestScore = int.MinValue;
+        for (var size = minimumSize; size <= allowedSize; size++)
+        {
+            var current = cues[offset + size - 1];
+            var next = cues[offset + size];
+            var sceneBreak = next.StartMicroseconds - current.EndMicroseconds >= SceneBreakMicroseconds;
+            var sentenceEnd = EndsSentence(current.Text);
+            if (!sceneBreak && !sentenceEnd) continue;
+
+            var score = (sceneBreak ? 1_000 : 0) + (sentenceEnd ? 100 : 0) - Math.Abs(size - targetSize) * 10;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestSize = size;
+            }
+        }
+        return bestSize;
+    }
+
+    private static int EstimateSourceTokens(string text)
+    {
+        double tokens = 0;
+        foreach (var character in text)
+        {
+            if (char.IsWhiteSpace(character)) tokens += 0.05;
+            else if (character <= 0x7f) tokens += 0.25;
+            else tokens += 0.8;
+        }
+        return Math.Max(1, (int)Math.Ceiling(tokens));
+    }
+
+    private static bool EndsSentence(string text)
+    {
+        var end = text.Length - 1;
+        while (end >= 0)
+        {
+            while (end >= 0 && (char.IsWhiteSpace(text[end]) || "\"'”’」』】）》）]}".Contains(text[end]))) end--;
+            if (end >= 0 && text[end] == '>')
+            {
+                var tagStart = text.LastIndexOf('<', end);
+                if (tagStart >= 0) { end = tagStart - 1; continue; }
+            }
+            if (end >= 0 && text[end] == '}')
+            {
+                var tagStart = text.LastIndexOf('{', end);
+                if (tagStart >= 0) { end = tagStart - 1; continue; }
+            }
+            break;
+        }
+        return end >= 0 && ".!?。！？…".Contains(text[end]);
+    }
+
     private static List<string> BuildTranscriptChunks(IEnumerable<SubtitleCue> cues, int maximumCharacters)
     {
         var chunks = new List<string>();
@@ -453,7 +608,14 @@ public sealed class LlmService(ILlmProvider provider, string model, Settings.Thi
 
     private sealed record TranslationItem(
         [property: JsonPropertyName("id")] Guid Id,
+        [property: JsonPropertyName("index")] int Index,
+        [property: JsonPropertyName("cue_number")] int CueNumber,
         [property: JsonPropertyName("text")] string Text);
+
+    private sealed record TranslationContextItem(
+        [property: JsonPropertyName("cue_number")] int CueNumber,
+        [property: JsonPropertyName("source")] string Source,
+        [property: JsonPropertyName("translation")] string? Translation);
 
     private sealed record ParsedTranslations(IReadOnlyList<ParsedTranslation> Items);
 

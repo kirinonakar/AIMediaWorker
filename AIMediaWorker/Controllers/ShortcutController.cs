@@ -12,6 +12,10 @@ namespace AIMediaWorker.Controllers;
 /// <summary>Owns keyboard gesture routing and the accelerator/tool-tip projection for those gestures.</summary>
 internal sealed class ShortcutController : IDisposable
 {
+    private const int OemLeftBracket = 0xDB;
+    private const int OemBackslash = 0xDC;
+    private const int OemRightBracket = 0xDD;
+
     private readonly ShortcutViewElements _view;
     private readonly ShortcutControllerHost _host;
     private readonly KeyEventHandler _previewKeyDownHandler;
@@ -40,6 +44,9 @@ internal sealed class ShortcutController : IDisposable
         _view.SaveSubtitleAsMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.SaveSubtitleAs);
         _view.ExitMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.CloseWindow);
         _view.PlayPauseMenuItem.KeyboardAcceleratorTextOverride = Combine(Shortcut(ShortcutActions.PlayPause), Shortcut(ShortcutActions.PlayPauseAlternate));
+        _view.SetAbStartMenuItem.KeyboardAcceleratorTextOverride = "[";
+        _view.SetAbEndMenuItem.KeyboardAcceleratorTextOverride = "]";
+        _view.ClearAbMenuItem.KeyboardAcceleratorTextOverride = "\\";
         _view.DeleteCueMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.DeleteCue);
         _view.PreviousSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.PreviousSubtitle);
         _view.NextSubtitleMenuItem.KeyboardAcceleratorTextOverride = Shortcut(ShortcutActions.NextSubtitle);
@@ -116,9 +123,12 @@ internal sealed class ShortcutController : IDisposable
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.M) { _host.ToggleMute(); e.Handled = true; return; }
         if (_view.PlaybackFocusTarget.FocusState != FocusState.Unfocused && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Up) { _host.AdjustVolume(5); e.Handled = true; return; }
         if (_view.PlaybackFocusTarget.FocusState != FocusState.Unfocused && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Down) { _host.AdjustVolume(-5); e.Handled = true; return; }
-        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Back) { _host.PlayFromBeginning(); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Back) { _host.PlayFromAbStartOrBeginning(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.Home) { _host.GoToBeginning(); e.Handled = true; return; }
         if (!isTextInput && !ctrl && !shift && !alt && e.Key == Windows.System.VirtualKey.End) { _host.SeekToEnd(); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && (int)e.Key == OemLeftBracket) { _host.SetAbStart(); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && (int)e.Key == OemRightBracket) { _host.SetAbEnd(); e.Handled = true; return; }
+        if (!isTextInput && !ctrl && !shift && !alt && (int)e.Key == OemBackslash) { _host.ClearAb(); e.Handled = true; return; }
 
         bool Matches(string action) => Is(action, key, ctrl, shift, alt);
         var save = Matches(ShortcutActions.SaveSubtitle);
@@ -193,6 +203,7 @@ internal sealed record ShortcutControllerHost(
     Func<Task> SaveSubtitleAsync,
     Func<Task> SaveSubtitleAsAsync,
     Action PlayFromBeginning,
+    Action PlayFromAbStartOrBeginning,
     Action TogglePause,
     Func<Task> OpenPreviousAsync,
     Func<Task> OpenNextAsync,
@@ -210,6 +221,9 @@ internal sealed record ShortcutControllerHost(
     Action<double> AdjustVolume,
     Action GoToBeginning,
     Action SeekToEnd,
+    Action SetAbStart,
+    Action SetAbEnd,
+    Action ClearAb,
     Action RefreshRepeatToolTip);
 
 internal sealed record ShortcutViewElements(
@@ -219,6 +233,9 @@ internal sealed record ShortcutViewElements(
     MenuFlyoutItem SaveSubtitleAsMenuItem,
     MenuFlyoutItem ExitMenuItem,
     MenuFlyoutItem PlayPauseMenuItem,
+    MenuFlyoutItem SetAbStartMenuItem,
+    MenuFlyoutItem SetAbEndMenuItem,
+    MenuFlyoutItem ClearAbMenuItem,
     MenuFlyoutItem DeleteCueMenuItem,
     MenuFlyoutItem PreviousSubtitleMenuItem,
     MenuFlyoutItem NextSubtitleMenuItem,
