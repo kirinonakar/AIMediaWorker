@@ -1,4 +1,5 @@
 using AIMediaWorker.History;
+using AIMediaWorker.Llm;
 using AIMediaWorker.Media;
 using AIMediaWorker.Network;
 using AIMediaWorker.Settings;
@@ -321,6 +322,18 @@ public sealed class ServicesTests : IDisposable
         var id = Guid.Parse("6e4f9d87-51b7-4cfb-a83d-e1009a728302");
         Assert.Equal("AIMediaWorker/WebDAV/6e4f9d87-51b7-4cfb-a83d-e1009a728302", CredentialIdentifier.ForWebDav(id));
         Assert.Equal("AIMediaWorker/LLM/opencode_zen", CredentialIdentifier.ForLlm("OpenCode_Zen"));
+    }
+
+    [Fact]
+    public void OpenCodeZenAllowsKeylessRequestsButOtherCloudProvidersRequireKeys()
+    {
+        var factory = new LlmProviderFactory(new MemoryCredentials());
+
+        var provider = factory.Create("OpenCodeZen");
+
+        Assert.Equal("OpenCodeZen", provider.Id);
+        ((IDisposable)provider).Dispose();
+        Assert.Throws<InvalidOperationException>(() => factory.Create("Google"));
     }
 
     [Fact]

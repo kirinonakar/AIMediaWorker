@@ -197,7 +197,7 @@ public sealed class OllamaCloudProvider(string apiKey, HttpClient? httpClient = 
     "OllamaCloud", "Ollama Cloud", new Uri("https://ollama.com/v1/"), apiKey,
     new(true, true, true, true, true, true), httpClient);
 
-public sealed class OpenCodeZenProvider(string apiKey, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
+public sealed class OpenCodeZenProvider(string? apiKey = null, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
     "OpenCodeZen", "OpenCode Zen", new Uri("https://opencode.ai/zen/v1/"), apiKey,
     new(true, true, true, true, true, true), httpClient);
 
