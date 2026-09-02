@@ -466,6 +466,21 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
+    public async Task WebDavSearchStreamsMatchingFoldersBeforeTraversalCompletes()
+    {
+        using var http = new HttpClient(new WebDavTreeHandler());
+        var credentials = new MemoryCredentials();
+        var server = new WebDavServerSettings();
+        new WebDavCredentialStore(credentials).Save(server.Id, new WebDavConnectionCredential("https://dav.example/root/", 443, "user", "password"));
+        using var client = new WebDavClient(credentials, http);
+        await using var search = client.SearchEntriesAsync(server, new Uri("https://dav.example/root/"), "folder", useRegex: false).GetAsyncEnumerator();
+
+        Assert.True(await search.MoveNextAsync());
+        Assert.True(search.Current.IsCollection);
+        Assert.Equal("folder", search.Current.SearchRelativePath);
+    }
+
+    [Fact]
     public async Task WebDavSearchListsSiblingFoldersConcurrently()
     {
         var handler = new ConcurrentWebDavTreeHandler();

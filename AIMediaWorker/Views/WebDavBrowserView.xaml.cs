@@ -3,6 +3,7 @@ using AIMediaWorker.Localization;
 using AIMediaWorker.Media;
 using AIMediaWorker.Network;
 using AIMediaWorker.Settings;
+using System.Collections.ObjectModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -18,8 +19,9 @@ public sealed partial class WebDavBrowserView : UserControl
     private WebDavCredentialStore? _credentials;
     private IReadOnlyList<WebDavServerSettings> _servers = [];
     private WebDavEntry[] _entries = [];
-    private WebDavEntry[]? _searchEntries;
+    private ObservableCollection<WebDavEntry>? _searchEntries;
     private CancellationTokenSource? _listingCancellation;
+    private CancellationTokenSource? _searchCancellation;
     private EntrySortMode _sortMode;
 
     public WebDavBrowserView()
@@ -28,6 +30,7 @@ public sealed partial class WebDavBrowserView : UserControl
         var regexSearchTooltip = LocalizationService.Get("RegexSearchTooltip");
         ToolTipService.SetToolTip(RegexSearchToggle, regexSearchTooltip);
         AutomationProperties.SetName(RegexSearchToggle, regexSearchTooltip);
+        UpdateSearchButton(false);
         UpdateBreadcrumbs();
     }
 
@@ -71,10 +74,10 @@ public sealed partial class WebDavBrowserView : UserControl
         var changedDirectory = CurrentServerId != server.Id || CurrentDirectory is null || !WebDavUri.Equals(CurrentDirectory, targetDirectory);
         CurrentServerId = server.Id;
         CurrentDirectory = targetDirectory;
-        if (changedDirectory)
+        if (changedDirectory || _searchEntries is not null || _searchCancellation is not null)
         {
             ClearSearch();
-            FilterBox.Text = string.Empty;
+            if (changedDirectory) FilterBox.Text = string.Empty;
         }
         ServerList.SelectedItem = server;
         await RefreshAsync();
@@ -87,10 +90,9 @@ public sealed partial class WebDavBrowserView : UserControl
         var server = _servers.FirstOrDefault(candidate => candidate.Id == serverId);
         if (server is null) return;
 
-        _listingCancellation?.Cancel();
-        _listingCancellation?.Dispose();
-        _listingCancellation = new CancellationTokenSource();
-        var operation = _listingCancellation;
+        CancelListing();
+        using var operation = new CancellationTokenSource();
+        _listingCancellation = operation;
         SetBusy(true);
         UpdateBreadcrumbs(server);
         ConnectionStatusText.Text = Format("WebDavConnectingMessage", server.Name);
@@ -113,7 +115,11 @@ public sealed partial class WebDavBrowserView : UserControl
         }
         finally
         {
-            if (ReferenceEquals(_listingCancellation, operation)) SetBusy(false);
+            if (ReferenceEquals(_listingCancellation, operation))
+            {
+                _listingCancellation = null;
+                SetBusy(false);
+            }
         }
     }
 
@@ -131,10 +137,10 @@ public sealed partial class WebDavBrowserView : UserControl
         CurrentServerId = server.Id;
         CurrentDirectory = directory;
         ServerList.SelectedItem = server;
-        if (changedDirectory)
+        if (changedDirectory || _searchEntries is not null || _searchCancellation is not null)
         {
             ClearSearch();
-            FilterBox.Text = string.Empty;
+            if (changedDirectory) FilterBox.Text = string.Empty;
         }
         _entries = entries.ToArray();
         UpdateBreadcrumbs(server);
@@ -165,15 +171,16 @@ public sealed partial class WebDavBrowserView : UserControl
 
     public void Cancel()
     {
-        var cancellation = _listingCancellation;
-        _listingCancellation = null;
-        cancellation?.Cancel();
-        cancellation?.Dispose();
+        CancelSearch();
+        CancelListing();
+        SetBusy(false);
+        SetSearchBusy(false);
     }
 
     private void ClearActiveConnection()
     {
         ClearSearch();
+        CancelListing();
         CurrentServerId = null;
         CurrentDirectory = null;
         _entries = [];
@@ -192,9 +199,26 @@ public sealed partial class WebDavBrowserView : UserControl
         EntryList.IsEnabled = !busy;
         ParentButton.IsEnabled = !busy && CurrentDirectory is not null;
         RefreshButton.IsEnabled = !busy && CurrentDirectory is not null;
-        SearchButton.IsEnabled = !busy && CurrentDirectory is not null;
-        SearchBox.IsEnabled = !busy && CurrentDirectory is not null;
-        RegexSearchToggle.IsEnabled = !busy && CurrentDirectory is not null;
+        UpdateSearchButton(_searchCancellation is not null);
+        SearchButton.IsEnabled = !busy && _searchCancellation is null && CurrentDirectory is not null;
+        SearchBox.IsEnabled = !busy && _searchCancellation is null && CurrentDirectory is not null;
+        RegexSearchToggle.IsEnabled = !busy && _searchCancellation is null && CurrentDirectory is not null;
+    }
+
+    private void SetSearchBusy(bool busy)
+    {
+        ProgressRing.IsActive = busy;
+        UpdateSearchButton(busy);
+        SearchButton.IsEnabled = (busy || _listingCancellation is null) && CurrentDirectory is not null;
+        SearchBox.IsEnabled = !busy && _listingCancellation is null && CurrentDirectory is not null;
+        RegexSearchToggle.IsEnabled = !busy && _listingCancellation is null && CurrentDirectory is not null;
+    }
+
+    private void CancelListing()
+    {
+        var operation = _listingCancellation;
+        _listingCancellation = null;
+        operation?.Cancel();
     }
 
     private async void OnServerClick(object sender, ItemClickEventArgs e)
@@ -226,8 +250,9 @@ public sealed partial class WebDavBrowserView : UserControl
         var root = WebDavUri.AsDirectory(credential.RootUri);
         var parent = WebDavUri.AsDirectory(new Uri(CurrentDirectory, "../"));
         if (!parent.AbsoluteUri.StartsWith(root.AbsoluteUri, StringComparison.OrdinalIgnoreCase)) parent = root;
-        if (!WebDavUri.Equals(parent, CurrentDirectory)) FilterBox.Text = string.Empty;
+        var changedDirectory = !WebDavUri.Equals(parent, CurrentDirectory);
         ClearSearch();
+        if (changedDirectory) FilterBox.Text = string.Empty;
         CurrentDirectory = parent;
         await RefreshAsync();
     }
@@ -241,8 +266,9 @@ public sealed partial class WebDavBrowserView : UserControl
     private async void OnBreadcrumbItemClick(BreadcrumbBar sender, BreadcrumbBarItemClickedEventArgs e)
     {
         if (e.Item is not WebDavBreadcrumbEntry entry || entry.Uri is null || entry.Uri == CurrentDirectory) return;
-        if (CurrentDirectory is null || !WebDavUri.Equals(entry.Uri, CurrentDirectory)) FilterBox.Text = string.Empty;
+        var changedDirectory = CurrentDirectory is null || !WebDavUri.Equals(entry.Uri, CurrentDirectory);
         ClearSearch();
+        if (changedDirectory) FilterBox.Text = string.Empty;
         CurrentDirectory = entry.Uri;
         await RefreshAsync();
     }
@@ -284,15 +310,21 @@ public sealed partial class WebDavBrowserView : UserControl
         if (entry.IsCollection)
         {
             var targetDirectory = WebDavUri.AsDirectory(entry.Uri);
-            if (CurrentDirectory is null || !WebDavUri.Equals(targetDirectory, CurrentDirectory)) FilterBox.Text = string.Empty;
+            var changedDirectory = CurrentDirectory is null || !WebDavUri.Equals(targetDirectory, CurrentDirectory);
             ClearSearch();
+            if (changedDirectory) FilterBox.Text = string.Empty;
             CurrentDirectory = targetDirectory;
             await RefreshAsync();
             return;
         }
+        var isSearchResult = _searchEntries is not null || _searchCancellation is not null;
+        IReadOnlyList<WebDavEntry>? siblings = isSearchResult
+            ? null
+            : (EntryList.ItemsSource as IEnumerable<WebDavEntry>)?.ToArray() ?? [];
+        if (isSearchResult) ClearSearch();
         var server = _servers.FirstOrDefault(candidate => candidate.Id == serverId);
         if (server is not null)
-            EntryRequested?.Invoke(this, new WebDavEntryEventArgs(server, entry, (EntryList.ItemsSource as IEnumerable<WebDavEntry>)?.ToArray() ?? []));
+            EntryRequested?.Invoke(this, new WebDavEntryEventArgs(server, entry, siblings));
     }
 
     private void OnEntryRightTapped(object sender, RightTappedRoutedEventArgs e)
@@ -309,7 +341,18 @@ public sealed partial class WebDavBrowserView : UserControl
 
     private void OnFilterTextChanged(object sender, TextChangedEventArgs e) => ApplyEntryView();
 
-    private async void OnSearchClick(object sender, RoutedEventArgs e) => await SearchAsync();
+    private async void OnSearchClick(object sender, RoutedEventArgs e)
+    {
+        if (_searchCancellation is not null)
+        {
+            CancelSearch();
+            SetSearchBusy(false);
+            if (_searchEntries is not null)
+                ConnectionStatusText.Text = Format("SearchResultsFormat", _searchEntries.Count);
+            return;
+        }
+        await SearchAsync();
+    }
 
     private async void OnSearchKeyDown(object sender, KeyRoutedEventArgs e)
     {
@@ -341,50 +384,73 @@ public sealed partial class WebDavBrowserView : UserControl
         var server = _servers.FirstOrDefault(candidate => candidate.Id == serverId);
         if (server is null) return;
 
-        _listingCancellation?.Cancel();
-        _listingCancellation?.Dispose();
-        _listingCancellation = new CancellationTokenSource();
-        var operation = _listingCancellation;
-        SetBusy(true);
+        ClearSearch(clearQuery: false);
+        var operation = new CancellationTokenSource();
+        _searchCancellation = operation;
+        var searchEntries = new ObservableCollection<WebDavEntry>();
+        _searchEntries = searchEntries;
+        ApplyEntryView();
+        SetSearchBusy(true);
         ConnectionStatusText.Text = LocalizationService.Get("SearchInProgress");
         try
         {
-            var results = await _client!.SearchAsync(server, CurrentDirectory, query, RegexSearchToggle.IsChecked == true, operation.Token);
-            if (operation.IsCancellationRequested) return;
-            _searchEntries = results.ToArray();
-            ApplyEntryView();
-            ConnectionStatusText.Text = Format("SearchResultsFormat", _searchEntries.Length);
+            await foreach (var entry in _client!.SearchEntriesAsync(server, CurrentDirectory, query, RegexSearchToggle.IsChecked == true, operation.Token))
+            {
+                if (!ReferenceEquals(_searchCancellation, operation) || !ReferenceEquals(_searchEntries, searchEntries) || operation.IsCancellationRequested) return;
+                searchEntries.Add(entry);
+                if (!ReferenceEquals(EntryList.ItemsSource, searchEntries)) ApplyEntryView();
+                ConnectionStatusText.Text = Format("SearchResultsFormat", searchEntries.Count);
+                await Task.Yield();
+            }
+            if (ReferenceEquals(_searchCancellation, operation))
+                ConnectionStatusText.Text = Format("SearchResultsFormat", searchEntries.Count);
         }
         catch (OperationCanceledException) { }
         catch (Exception exception) when (exception is ArgumentException or RegexMatchTimeoutException)
         {
-            _searchEntries = [];
+            if (!ReferenceEquals(_searchCancellation, operation)) return;
+            _searchEntries = new ObservableCollection<WebDavEntry>();
             ApplyEntryView();
             ConnectionStatusText.Text = Format("SearchInvalidPatternFormat", exception.Message);
         }
         catch (Exception exception)
         {
-            _searchEntries = [];
+            if (!ReferenceEquals(_searchCancellation, operation)) return;
+            _searchEntries = new ObservableCollection<WebDavEntry>();
             ApplyEntryView();
             await AppLog.WriteAsync("error", "webdav", exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_SEARCH_ERROR", exception.Message, exception);
             ConnectionStatusText.Text = exception.Message;
         }
         finally
         {
-            if (ReferenceEquals(_listingCancellation, operation)) SetBusy(false);
+            if (ReferenceEquals(_searchCancellation, operation))
+            {
+                _searchCancellation = null;
+                ApplyEntryView();
+                SetSearchBusy(false);
+            }
+            operation.Dispose();
         }
     }
 
     private void ClearSearch(bool clearQuery = true)
     {
-        var operation = _listingCancellation;
-        _listingCancellation = null;
-        operation?.Cancel();
-        operation?.Dispose();
+        CancelSearch();
         _searchEntries = null;
         if (clearQuery && SearchBox.Text.Length > 0) SearchBox.Text = string.Empty;
+        SetSearchBusy(false);
         ApplyEntryView();
     }
+
+    private void CancelSearch()
+    {
+        var operation = _searchCancellation;
+        _searchCancellation = null;
+        operation?.Cancel();
+    }
+
+    private void UpdateSearchButton(bool searching) =>
+        SearchButton.Content = LocalizationService.Get(searching ? "CancelButtonText" : "WebDavSearchButton.Content");
 
     private void OnSortClick(object sender, RoutedEventArgs e)
     {
@@ -401,7 +467,7 @@ public sealed partial class WebDavBrowserView : UserControl
     {
         var selectedUri = (EntryList.SelectedItem as WebDavEntry)?.Uri;
         var filter = FilterBox.Text.Trim();
-        var source = _searchEntries ?? _entries;
+        IEnumerable<WebDavEntry> source = _searchEntries is not null ? _searchEntries : _entries;
         IEnumerable<WebDavEntry> filtered = string.IsNullOrEmpty(filter)
             ? source
             : source.Where(entry => entry.Name.Contains(filter, StringComparison.CurrentCultureIgnoreCase));
@@ -411,6 +477,12 @@ public sealed partial class WebDavBrowserView : UserControl
             EntrySortMode.Oldest => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.LastModified is null).ThenBy(entry => entry.LastModified).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance),
             _ => filtered.OrderByDescending(entry => entry.IsCollection).ThenBy(entry => entry.Name, WindowsFileNameComparer.Instance)
         };
+        if (_searchCancellation is not null && _searchEntries is not null && string.IsNullOrEmpty(filter) && _sortMode == EntrySortMode.Name)
+        {
+            if (!ReferenceEquals(EntryList.ItemsSource, _searchEntries)) EntryList.ItemsSource = _searchEntries;
+            UpdateSortButton();
+            return;
+        }
         var view = filtered.ToArray();
         EntryList.ItemsSource = view;
         if (selectedUri is not null) EntryList.SelectedItem = view.FirstOrDefault(entry => WebDavUri.Equals(entry.Uri, selectedUri));
@@ -450,9 +522,9 @@ public sealed class WebDavServerEventArgs(WebDavServerSettings server) : EventAr
     public WebDavServerSettings Server { get; } = server;
 }
 
-public sealed class WebDavEntryEventArgs(WebDavServerSettings server, WebDavEntry entry, IReadOnlyList<WebDavEntry> siblings) : EventArgs
+public sealed class WebDavEntryEventArgs(WebDavServerSettings server, WebDavEntry entry, IReadOnlyList<WebDavEntry>? siblings) : EventArgs
 {
     public WebDavServerSettings Server { get; } = server;
     public WebDavEntry Entry { get; } = entry;
-    public IReadOnlyList<WebDavEntry> Siblings { get; } = siblings;
+    public IReadOnlyList<WebDavEntry>? Siblings { get; } = siblings;
 }

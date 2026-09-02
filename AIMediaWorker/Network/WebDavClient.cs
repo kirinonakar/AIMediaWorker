@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Xml.Linq;
 using AIMediaWorker.Media;
@@ -70,15 +71,28 @@ public sealed class WebDavClient : IDisposable
         bool useRegex,
         CancellationToken cancellationToken = default)
     {
+        var results = new List<WebDavEntry>();
+        await foreach (var entry in SearchEntriesAsync(server, directory, query, useRegex, cancellationToken))
+            results.Add(entry);
+        return results;
+    }
+
+    public async IAsyncEnumerable<WebDavEntry> SearchEntriesAsync(
+        WebDavServerSettings server,
+        Uri directory,
+        string query,
+        bool useRegex,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
         var matcher = SearchPatternMatcher.Create(query, useRegex);
         var root = WebDavUri.AsDirectory(directory);
         var pending = new Queue<Uri>();
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var results = new List<WebDavEntry>();
+        var yieldedResults = 0;
         var scannedEntries = 0;
         pending.Enqueue(root);
 
-        while (pending.Count > 0 && results.Count < MaximumSearchResults && scannedEntries < MaximumSearchEntries)
+        while (pending.Count > 0 && yieldedResults < MaximumSearchResults && scannedEntries < MaximumSearchEntries)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var directories = new List<Uri>(MaximumConcurrentSearchRequests);
@@ -89,26 +103,38 @@ public sealed class WebDavClient : IDisposable
             }
             if (directories.Count == 0) continue;
 
-            var listings = await Task.WhenAll(directories.Select(current =>
-                ListAsync(server, current, cancellationToken))).ConfigureAwait(false);
-
-            foreach (var entries in listings)
+            var listings = directories
+                .Select(current => ListAsync(server, current, cancellationToken))
+                .ToList();
+            try
             {
-                foreach (var entry in entries)
+                while (listings.Count > 0 && yieldedResults < MaximumSearchResults && scannedEntries < MaximumSearchEntries)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    scannedEntries++;
-                    var relativePath = Uri.UnescapeDataString(root.MakeRelativeUri(entry.Uri).OriginalString.TrimEnd('/'));
-                    if (matcher.IsMatch(relativePath))
-                        results.Add(entry with { SearchRelativePath = relativePath });
-                    if (entry.IsCollection) pending.Enqueue(WebDavUri.AsDirectory(entry.Uri));
-                    if (results.Count >= MaximumSearchResults || scannedEntries >= MaximumSearchEntries) break;
+                    var completed = await Task.WhenAny(listings).ConfigureAwait(false);
+                    listings.Remove(completed);
+                    var entries = await completed.ConfigureAwait(false);
+                    foreach (var entry in entries)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        scannedEntries++;
+                        var relativePath = Uri.UnescapeDataString(root.MakeRelativeUri(entry.Uri).OriginalString.TrimEnd('/'));
+                        if (matcher.IsMatch(relativePath))
+                        {
+                            yieldedResults++;
+                            yield return entry with { SearchRelativePath = relativePath };
+                        }
+                        if (entry.IsCollection) pending.Enqueue(WebDavUri.AsDirectory(entry.Uri));
+                        if (yieldedResults >= MaximumSearchResults || scannedEntries >= MaximumSearchEntries) break;
+                    }
+                    if (yieldedResults >= MaximumSearchResults || scannedEntries >= MaximumSearchEntries) break;
                 }
-                if (results.Count >= MaximumSearchResults || scannedEntries >= MaximumSearchEntries) break;
+            }
+            finally
+            {
+                try { await Task.WhenAll(listings).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
             }
         }
-
-        return results;
     }
 
     public HttpRequestMessage CreateMediaRequest(WebDavServerSettings server, Uri mediaUri, HttpMethod? method = null)
