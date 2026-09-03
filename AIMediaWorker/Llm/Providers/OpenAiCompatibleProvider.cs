@@ -151,8 +151,11 @@ public class OpenAiCompatibleProvider : ILlmProvider, IDisposable
     {
         var request = new HttpRequestMessage(method, new Uri(_baseUri, relativePath));
         if (!string.IsNullOrWhiteSpace(_apiKey)) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        ConfigureRequestHeaders(request);
         return request;
     }
+
+    protected virtual void ConfigureRequestHeaders(HttpRequestMessage request) { }
 
     protected async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -203,7 +206,13 @@ public sealed class OpenCodeZenProvider(string? apiKey = null, HttpClient? httpC
 
 public sealed class OpenCodeGoProvider(string apiKey, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
     "OpenCodeGo", "OpenCode Go", new Uri("https://opencode.ai/zen/go/v1/"), apiKey,
-    new(true, true, true, true, true, true), httpClient);
+    new(true, true, true, true, true, true), httpClient)
+{
+    private readonly string _sessionId = Guid.NewGuid().ToString("D");
+
+    protected override void ConfigureRequestHeaders(HttpRequestMessage request) =>
+        request.Headers.TryAddWithoutValidation("x-opencode-session", _sessionId);
+}
 
 public sealed class OllamaProvider(string? apiKey = null, Uri? baseUri = null, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
     "Ollama", "Ollama", baseUri ?? new Uri("http://localhost:11434/v1/"), apiKey,

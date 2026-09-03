@@ -65,6 +65,28 @@ public sealed class LlmTests
     }
 
     [Fact]
+    public async Task OpenCodeGoSendsOneStableSessionHeaderAcrossRequests()
+    {
+        var sessionIds = new List<string>();
+        using var http = new HttpClient(new CaptureHandler(request =>
+        {
+            sessionIds.Add(request.Headers.GetValues("x-opencode-session").Single());
+            var content = request.RequestUri!.AbsolutePath.EndsWith("/models", StringComparison.Ordinal)
+                ? "{\"data\":[]}"
+                : "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(content) });
+        }));
+        using var provider = new OpenCodeGoProvider("test-key", http);
+
+        await provider.GetModelsAsync();
+        await provider.GenerateAsync("model", "system", "user", new LlmGenerationOptions());
+
+        Assert.Equal(2, sessionIds.Count);
+        Assert.All(sessionIds, sessionId => Assert.True(Guid.TryParse(sessionId, out _)));
+        Assert.Equal(sessionIds[0], sessionIds[1]);
+    }
+
+    [Fact]
     public async Task GoogleVisionRequestUsesInlineImageData()
     {
         string? body = null;
