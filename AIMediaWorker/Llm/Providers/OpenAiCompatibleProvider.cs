@@ -202,7 +202,13 @@ public sealed class OllamaCloudProvider(string apiKey, HttpClient? httpClient = 
 
 public sealed class OpenCodeZenProvider(string? apiKey = null, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
     "OpenCodeZen", "OpenCode Zen", new Uri("https://opencode.ai/zen/v1/"), apiKey,
-    new(true, true, true, true, true, true), httpClient);
+    new(true, true, true, true, true, true), httpClient)
+{
+    private readonly string _sessionId = Guid.NewGuid().ToString("D");
+
+    protected override void ConfigureRequestHeaders(HttpRequestMessage request) =>
+        request.Headers.TryAddWithoutValidation("x-opencode-session", _sessionId);
+}
 
 public sealed class OpenCodeGoProvider(string apiKey, HttpClient? httpClient = null) : OpenAiCompatibleProvider(
     "OpenCodeGo", "OpenCode Go", new Uri("https://opencode.ai/zen/go/v1/"), apiKey,
