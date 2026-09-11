@@ -606,6 +606,9 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void OnDeleteCueClick(object sender, RoutedEventArgs e)
         => _subtitleEditor.DeleteSelectedCues();
 
+    private void OnDeleteAllCuesClick(object sender, RoutedEventArgs e)
+        => _subtitleEditor.DeleteAllCues();
+
     private void OnSplitCueClick(object sender, RoutedEventArgs e)
         => _subtitleEditor.SplitSelectedCue();
 

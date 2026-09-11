@@ -174,6 +174,9 @@ internal sealed class MediaNavigationController : IDisposable
         {
             if (showInExplorer) _host.ShowPanel(RightPanelSection.Explorer);
             _view.MediaBrowser.PrepareForOpenedFile(localPath);
+            // Load a same-named .smi sidecar as soon as the media opens instead of waiting for
+            // the first frame, so the subtitle is ready even when playback starts slowly.
+            _ = TryLoadMatchingLocalSmiAsync(localPath, source, _postOpenCancellation.Token);
         }
         _pendingPostOpenWork = new PendingPostOpenWork(source, localPath, populateSiblingPlaylist, _postOpenCancellation.Token);
     }
@@ -185,7 +188,6 @@ internal sealed class MediaNavigationController : IDisposable
             await Task.Delay(250, work.CancellationToken);
             if (!string.Equals(_host.GetPlaybackSource(), work.Source, StringComparison.OrdinalIgnoreCase)) return;
             if (work.LocalPath is not { } fullPath) return;
-            await TryLoadMatchingLocalSmiAsync(fullPath, work.Source, work.CancellationToken);
             await SynchronizeBrowserAsync(fullPath);
             if (work.PopulateSiblingPlaylist) await PopulateSiblingPlaylistAsync(fullPath);
         }
@@ -379,6 +381,9 @@ internal sealed class MediaNavigationController : IDisposable
     {
         try
         {
+            // MediaOpened runs before the subtitle session reset for the new media; yield once
+            // so the reset has completed by the time the sidecar is bound.
+            await Task.Yield();
             var sidecar = await Task.Run(() => SmiParser.FindSidecarPath(mediaPath), cancellationToken);
             if (sidecar is null || cancellationToken.IsCancellationRequested) return;
             if (!string.Equals(_host.GetPlaybackSource(), expectedSource, StringComparison.OrdinalIgnoreCase)) return;

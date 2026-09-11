@@ -256,6 +256,9 @@ internal sealed class MediaSessionController
     {
         if (!_mediaOpenReady || !_firstFrameReadyForMedia ||
             !string.Equals(CurrentSource?.Location, _playback.CurrentSource, StringComparison.OrdinalIgnoreCase)) return;
+        // A same-named .smi sidecar may already be loaded for this media; keep it instead
+        // of letting automatic generation replace it.
+        if (_subtitleSession.Document.ActiveTrack is { Cues.Count: > 0 }) return;
         if (_playback.State == PlaybackState.Playing && !_host.IsAiSeekRestartPending())
             _host.StartAiPipeline();
     }

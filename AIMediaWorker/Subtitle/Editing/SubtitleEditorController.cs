@@ -114,6 +114,15 @@ internal sealed class SubtitleEditorController
         NotifyContentChanged();
     }
 
+    public void DeleteAllCues()
+    {
+        var document = _document();
+        var track = document.ActiveTrack;
+        if (track is null || track.Cues.Count == 0) return;
+        _history.Execute(new DeleteSubtitleCommand(document, track.Cues, track.Cues.ToArray()));
+        NotifyContentChanged();
+    }
+
     public void SplitSelectedCue()
     {
         var document = _document();
