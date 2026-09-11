@@ -185,6 +185,7 @@ internal sealed class MediaNavigationController : IDisposable
             await Task.Delay(250, work.CancellationToken);
             if (!string.Equals(_host.GetPlaybackSource(), work.Source, StringComparison.OrdinalIgnoreCase)) return;
             if (work.LocalPath is not { } fullPath) return;
+            await TryLoadMatchingLocalSmiAsync(fullPath, work.Source, work.CancellationToken);
             await SynchronizeBrowserAsync(fullPath);
             if (work.PopulateSiblingPlaylist) await PopulateSiblingPlaylistAsync(fullPath);
         }
@@ -371,6 +372,23 @@ internal sealed class MediaNavigationController : IDisposable
                 "warning", "webdav",
                 exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_SIDECAR_SUBTITLE_ERROR",
                 exception.Message, exception);
+        }
+    }
+
+    private async Task TryLoadMatchingLocalSmiAsync(string mediaPath, string expectedSource, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var sidecar = await Task.Run(() => SmiParser.FindSidecarPath(mediaPath), cancellationToken);
+            if (sidecar is null || cancellationToken.IsCancellationRequested) return;
+            if (!string.Equals(_host.GetPlaybackSource(), expectedSource, StringComparison.OrdinalIgnoreCase)) return;
+            await _host.LoadLocalSubtitleAsync(sidecar);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            await AppLog.WriteAsync(
+                "warning", "subtitle", "LOCAL_SIDECAR_SUBTITLE_ERROR", exception.Message, exception);
         }
     }
 

@@ -23,6 +23,17 @@ public static partial class SmiParser
         Path.GetExtension(subtitleFileName).Equals(".smi", StringComparison.OrdinalIgnoreCase) &&
         Path.GetFileNameWithoutExtension(subtitleFileName).Equals(Path.GetFileNameWithoutExtension(mediaFileName), StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Returns the path of the same-named .smi subtitle file stored next to <paramref name="mediaPath"/>, if one exists.</summary>
+    public static string? FindSidecarPath(string mediaPath)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(mediaPath);
+        var fullPath = Path.GetFullPath(mediaPath);
+        var directory = Path.GetDirectoryName(fullPath);
+        if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return null;
+        return Directory.EnumerateFiles(directory)
+            .FirstOrDefault(candidate => IsSidecarFor(fullPath, candidate));
+    }
+
     public static SubtitleDocument Parse(string text)
     {
         ArgumentNullException.ThrowIfNull(text);

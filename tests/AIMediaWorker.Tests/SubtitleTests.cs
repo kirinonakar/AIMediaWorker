@@ -96,6 +96,44 @@ public sealed class SubtitleTests
     }
 
     [Fact]
+    public void SmiSidecarSearchFindsTheSameNamedFile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"aimw-smi-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "movie.en.smi"), "<SAMI/>");
+            File.WriteAllText(Path.Combine(directory, "movie.SMI"), "<SAMI/>");
+
+            var sidecar = SmiParser.FindSidecarPath(Path.Combine(directory, "Movie.mkv"));
+
+            Assert.NotNull(sidecar);
+            Assert.Equal("movie.SMI", Path.GetFileName(sidecar));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SmiSidecarSearchReturnsNullWhenNoMatchExists()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"aimw-smi-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "other.smi"), "<SAMI/>");
+
+            Assert.Null(SmiParser.FindSidecarPath(Path.Combine(directory, "Movie.mkv")));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void AssRoundTripKeepsBasicStyle()
     {
         var track = new SubtitleTrack { Format = "ass" };
