@@ -319,6 +319,7 @@ internal sealed class PlaybackController : IDisposable
         {
             _abStart = null;
             _abEnd = null;
+            ResetPositionUi();
             RefreshAbMarkers();
         }
         UpdatePowerRequirement(state);
@@ -351,12 +352,20 @@ internal sealed class PlaybackController : IDisposable
         {
             var position = _playback.Position;
             var duration = _playback.Duration;
+            // A freshly opened file reports time-pos before mpv publishes the new
+            // duration. Plotting that position on the placeholder one-second range
+            // would race the thumb to the right edge and snap it back once the real
+            // duration arrives, so keep the slider neutral until the duration is known.
+            var hasDuration = duration > TimeSpan.Zero;
             _updatingPosition = true;
-            _view.PositionSlider.Maximum = Math.Max(1, duration.TotalSeconds);
-            RefreshAbMarkers();
-            if (!_positionSliderDragging)
-                _view.PositionSlider.Value = Math.Clamp(position.TotalSeconds, 0, _view.PositionSlider.Maximum);
+            if (hasDuration)
+            {
+                _view.PositionSlider.Maximum = Math.Max(1, duration.TotalSeconds);
+                if (!_positionSliderDragging)
+                    _view.PositionSlider.Value = Math.Clamp(position.TotalSeconds, 0, _view.PositionSlider.Maximum);
+            }
             _updatingPosition = false;
+            RefreshAbMarkers();
             _view.PositionText.Text = $"{FormatTime(position)} / {FormatTime(duration)}";
             _view.DecoderText.Text = FormatDecoderStatus(_playback.DecoderDescription, _playback.VideoBitrate);
             RefreshAudioCodecText();
@@ -370,6 +379,18 @@ internal sealed class PlaybackController : IDisposable
             _updatingPosition = false;
             Interlocked.Exchange(ref _positionRefreshQueued, 0);
         }
+    }
+
+    // Clearing the previous file's progress when the next load begins keeps the old
+    // position/duration from lingering (and jumping) while the new file is still
+    // negotiating its demuxer. The slider stays neutral until a real duration arrives.
+    private void ResetPositionUi()
+    {
+        _updatingPosition = true;
+        _view.PositionSlider.Maximum = 1;
+        _view.PositionSlider.Value = 0;
+        _updatingPosition = false;
+        _view.PositionText.Text = $"{FormatTime(TimeSpan.Zero)} / {FormatTime(TimeSpan.Zero)}";
     }
 
     private void OnPlaybackSeeked(object? sender, EventArgs e) =>
