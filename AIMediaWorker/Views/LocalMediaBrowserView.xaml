@@ -37,7 +37,7 @@
             </Grid>
             <Grid ColumnSpacing="8">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                <SymbolIcon Symbol="Filter" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource RightPanelMutedTextBrush}" IsHitTestVisible="False" />
+                <SymbolIcon Symbol="Filter" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource RightPanelMutedTextBrush}" IsHitTestVisible="False" />
                 <TextBox x:Uid="BrowserFilter" x:Name="FilterBox" Grid.Column="1" Style="{StaticResource RightPanelTextBoxStyle}" PlaceholderText="Filter by name" TextChanged="OnFilterTextChanged" />
             </Grid>
         </StackPanel>
