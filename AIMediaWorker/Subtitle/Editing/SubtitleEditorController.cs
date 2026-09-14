@@ -612,12 +612,38 @@ internal sealed class SubtitleEditorController
             if (cue is not null)
             {
                 if (!_subtitleList.SelectedItems.Contains(cue)) _subtitleList.SelectedItem = cue;
-                if (cueChanged) _subtitleList.ScrollIntoView(cue, ScrollIntoViewAlignment.Leading);
+                if (cueChanged) CenterPlaybackCue(cue);
             }
         }
         if (viewportChanged) DrawTimeline(positionMicroseconds);
         else UpdateTimelinePlayhead(positionMicroseconds);
     }
+
+    private void CenterPlaybackCue(SubtitleCue cue)
+    {
+        if (_subtitleList.ContainerFromItem(cue) is FrameworkElement container)
+        {
+            CenterContainer(container);
+            return;
+        }
+
+        // Realize virtualized items before requesting an aligned scroll.
+        _subtitleList.ScrollIntoView(cue);
+        _subtitleList.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (HasFocus || _playbackLinkedCueId != cue.Id) return;
+            _subtitleList.UpdateLayout();
+            if (_subtitleList.ContainerFromItem(cue) is FrameworkElement realizedContainer)
+                CenterContainer(realizedContainer);
+        });
+    }
+
+    private static void CenterContainer(FrameworkElement container) =>
+        container.StartBringIntoView(new BringIntoViewOptions
+        {
+            VerticalAlignmentRatio = 0.5,
+            AnimationDesired = false
+        });
 
     private void UpdateTimelinePlayhead(long positionMicroseconds)
     {
