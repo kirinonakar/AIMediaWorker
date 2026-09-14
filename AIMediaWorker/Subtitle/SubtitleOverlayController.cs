@@ -153,11 +153,10 @@ internal sealed class SubtitleOverlayController : IDisposable
         }
         if (_generatedOsdCueId == cue.Id && string.Equals(_generatedOsdText, text, StringComparison.Ordinal)) return;
 
-        var remainingSeconds = Math.Clamp((cue.EndMicroseconds - positionMicroseconds) / 1_000_000d + 0.5, 0.2, 60);
         _generatedOsdCueId = cue.Id;
         _generatedOsdText = text;
         _generatedOsdConfigured = true;
-        TryPlayback(() => _playback.ShowSubtitleOsdText(text, remainingSeconds));
+        TryPlayback(() => _playback.ShowSubtitleOsdText(text));
     }
 
     public void ClearGeneratedOsd(bool force = false)

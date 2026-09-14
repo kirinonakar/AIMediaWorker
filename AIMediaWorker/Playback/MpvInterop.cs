@@ -58,6 +58,66 @@ internal static class MpvInterop
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] internal static extern nint mpv_error_string(int error);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] private static extern int mpv_command(nint context, nint args);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] private static extern int mpv_command_async(nint context, ulong replyUserdata, nint args);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] private static extern int mpv_command_node(nint context, ref MpvNode args, nint result);
+
+    [StructLayout(LayoutKind.Explicit, Size = 16)]
+    private struct MpvNode
+    {
+        [FieldOffset(0)] public nint Pointer;
+        [FieldOffset(0)] public long Integer;
+        [FieldOffset(8)] public int Format;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MpvNodeList
+    {
+        public int Count;
+        public nint Values;
+        public nint Keys;
+    }
+
+    internal static void CommandNamed(nint context, string name, params (string Key, object Value)[] arguments)
+    {
+        var allocations = new List<nint>();
+        nint Allocate(int size)
+        {
+            var pointer = Marshal.AllocHGlobal(size);
+            allocations.Add(pointer);
+            return pointer;
+        }
+        nint Utf8(string value)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(value + '\0');
+            var pointer = Allocate(bytes.Length);
+            Marshal.Copy(bytes, 0, pointer, bytes.Length);
+            return pointer;
+        }
+        try
+        {
+            var entries = new[] { (Key: "name", Value: (object)name) }.Concat(arguments).ToArray();
+            var values = Allocate(entries.Length * Marshal.SizeOf<MpvNode>());
+            var keys = Allocate(entries.Length * IntPtr.Size);
+            for (var index = 0; index < entries.Length; index++)
+            {
+                Marshal.WriteIntPtr(keys, index * IntPtr.Size, Utf8(entries[index].Key));
+                var node = entries[index].Value switch
+                {
+                    string text => new MpvNode { Pointer = Utf8(text), Format = 1 },
+                    int number => new MpvNode { Integer = number, Format = 4 },
+                    _ => throw new ArgumentException("Unsupported mpv argument type.")
+                };
+                Marshal.StructureToPtr(node, values + index * Marshal.SizeOf<MpvNode>(), false);
+            }
+            var list = Allocate(Marshal.SizeOf<MpvNodeList>());
+            Marshal.StructureToPtr(new MpvNodeList { Count = entries.Length, Values = values, Keys = keys }, list, false);
+            var command = new MpvNode { Pointer = list, Format = 8 };
+            EnsureSuccess(mpv_command_node(context, ref command, 0), name);
+        }
+        finally
+        {
+            foreach (var pointer in allocations) Marshal.FreeHGlobal(pointer);
+        }
+    }
 
     internal static string ErrorString(int error)
     {

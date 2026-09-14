@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using AIMediaWorker.Diagnostics;
+using AIMediaWorker.Subtitle.Writing;
 
 namespace AIMediaWorker.Playback;
 
@@ -359,37 +360,36 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         MpvInterop.CommandAsync(_context, NextCommandId(), "show-text", text, durationMilliseconds.ToString(CultureInfo.InvariantCulture));
     }
 
-    /// <summary>
-    /// Displays one generated cue through mpv's lightweight OSD. Updating an ASS
-    /// subtitle track can make libass rebuild the track on mpv's playback core;
-    /// OSD messages avoid that track-level reconfiguration while still rendering
-    /// the cue over the video.
-    /// </summary>
-    public void ShowSubtitleOsdText(string text, double durationSeconds = 1.2)
+    // A dedicated overlay ID keeps generated cues separate from volume/status messages.
+    private const int GeneratedSubtitleOverlayId = 1;
+
+    public void ShowSubtitleOsdText(string text)
     {
-        var normalizedDuration = double.IsFinite(durationSeconds)
-            ? Math.Clamp(durationSeconds, 0.1, int.MaxValue / 1000d)
-            : 1.2;
-        var durationMilliseconds = (int)Math.Round(normalizedDuration * 1000, MidpointRounding.AwayFromZero);
-        EnsureAvailable();
-        ConfigureSubtitleOsdPlacement();
-        MpvInterop.CommandAsync(_context, NextCommandId(), "show-text", text, durationMilliseconds.ToString(CultureInfo.InvariantCulture));
+        lock (_subtitleCommandSync)
+        {
+            EnsureAvailable();
+            var data = GeneratedSubtitleAss.Write(text, _subtitleFontFamily, _subtitleFontSize,
+                _subtitleColor, _subtitleBackground, _subtitleOutline, _subtitleBottomMargin);
+            MpvInterop.CommandNamed(_context, "osd-overlay",
+                ("id", GeneratedSubtitleOverlayId), ("format", "ass-events"), ("data", data),
+                ("res_x", GeneratedSubtitleAss.Width), ("res_y", GeneratedSubtitleAss.Height));
+        }
     }
 
     public void ConfigureGeneratedSubtitleOsd(bool enabled)
     {
         EnsureAvailable();
-        if (enabled) ConfigureSubtitleOsdPlacement();
-        else ClearSubtitleOsdText();
+        if (!enabled) ClearSubtitleOsdText();
     }
 
     public void ClearSubtitleOsdText()
     {
-        if (!IsAvailable) return;
-        // Finish clearing the message before changing its placement. An asynchronous
-        // clear can leave the previous cue visible at the default top-left position.
-        MpvInterop.Command(_context, "show-text", string.Empty, "100");
-        RestoreDefaultOsdPlacement();
+        lock (_subtitleCommandSync)
+        {
+            if (!IsAvailable) return;
+            MpvInterop.CommandNamed(_context, "osd-overlay",
+                ("id", GeneratedSubtitleOverlayId), ("format", "none"), ("data", string.Empty));
+        }
     }
     public void SetMute(bool muted) { IsMuted = muted; SetProperty("mute", muted ? "yes" : "no"); }
     public void SetSubtitleVisibility(bool visible)
@@ -439,7 +439,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         }
         // Loading/parsing an external subtitle can take long enough to stall the
         // playback thread. Queue it through libmpv instead of waiting synchronously.
-        MpvInterop.CommandAsync(_context, NextCommandId(), "sub-add", path, select ? "select" : "auto");
+        MpvInterop.CommandAsync(_context, NextCommandId(), "no-osd", "sub-add", path, select ? "select" : "auto");
         RestoreSubtitleVisibility();
     }
 
@@ -465,7 +465,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                     // selector below will select this track again once it is visible in
                     // track-list, which is important when an embedded subtitle was
                     // selected before the editor overlay was added.
-                    MpvInterop.CommandAsync(_context, NextCommandId(), "sub-add", fullPath, "select");
+                    MpvInterop.CommandAsync(_context, NextCommandId(), "no-osd", "sub-add", fullPath, "select");
                 }
                 else
                 {
@@ -473,14 +473,14 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
                     // temporary track behind. Keep one track, select it explicitly, and
                     // reload that track so mpv cannot continue rendering an older selection.
                     foreach (var duplicateId in trackIds.Skip(1).OrderByDescending(id => id))
-                        MpvInterop.CommandAsync(_context, NextCommandId(), "sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
+                        MpvInterop.CommandAsync(_context, NextCommandId(), "no-osd", "sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
 
                     var editorTrackId = trackIds[0];
                     SetProperty("sid", editorTrackId.ToString(CultureInfo.InvariantCulture));
                     // Queue the reload instead of synchronously waiting for libass to
                     // rebuild the track. This method is called while ASR/translation
                     // results are being applied and must not block playback.
-                    MpvInterop.CommandAsync(_context, NextCommandId(), "sub-reload", editorTrackId.ToString(CultureInfo.InvariantCulture));
+                    MpvInterop.CommandAsync(_context, NextCommandId(), "no-osd", "sub-reload", editorTrackId.ToString(CultureInfo.InvariantCulture));
                 }
 
                 // Subtitle track changes can briefly inherit mpv's paused state while
@@ -888,7 +888,7 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
 
                     SetProperty("secondary-sid", "no");
                     foreach (var duplicateId in trackIds.Skip(1).OrderByDescending(id => id))
-                        MpvInterop.CommandAsync(_context, NextCommandId(), "sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
+                        MpvInterop.CommandAsync(_context, NextCommandId(), "no-osd", "sub-remove", duplicateId.ToString(CultureInfo.InvariantCulture));
                     SetProperty("sid", trackIds[0].ToString(CultureInfo.InvariantCulture));
                     RestoreSubtitleVisibility();
                     return;
@@ -1056,27 +1056,6 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     {
         try { return string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase); }
         catch (Exception) { return string.Equals(first, second, StringComparison.OrdinalIgnoreCase); }
-    }
-
-    private void ConfigureSubtitleOsdPlacement()
-    {
-        TrySetProperty("osd-align-x", "center");
-        TrySetProperty("osd-align-y", "bottom");
-        TrySetProperty("osd-margin-x", "20");
-        TrySetProperty("osd-margin-y", _subtitleBottomMargin.ToString(CultureInfo.InvariantCulture));
-        TrySetProperty("osd-font", _subtitleFontFamily);
-        TrySetProperty("osd-font-size", _subtitleFontSize.ToString("0.##", CultureInfo.InvariantCulture));
-        TrySetProperty("osd-color", _subtitleColor);
-        TrySetProperty("osd-back-color", _subtitleBackground);
-        TrySetProperty("osd-border-size", _subtitleOutline.ToString("0.##", CultureInfo.InvariantCulture));
-    }
-
-    private void RestoreDefaultOsdPlacement()
-    {
-        TrySetProperty("osd-align-x", "left");
-        TrySetProperty("osd-align-y", "top");
-        TrySetProperty("osd-margin-x", "20");
-        TrySetProperty("osd-margin-y", "16");
     }
 
     private void SetOption(string name, string value) => MpvInterop.EnsureSuccess(MpvInterop.mpv_set_option_string(_context, name, value), $"set option {name}");

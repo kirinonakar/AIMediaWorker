@@ -681,8 +681,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     {
         if (state == PlaybackState.Playing)
         {
-            // show-text has a finite lifetime. Re-arm the current cue after a
-            // pause/resume so a long pause cannot make it disappear permanently.
+            // Refresh the current generated cue when playback resumes.
             _subtitleOverlay.InvalidateGeneratedCue();
         }
         RefreshGeneratedSubtitleOsd(CurrentPlaybackPositionMicroseconds);
