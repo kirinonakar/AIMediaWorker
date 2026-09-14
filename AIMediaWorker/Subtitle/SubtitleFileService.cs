@@ -19,7 +19,9 @@ public sealed class SubtitleFileService
     {
         var detectKorean = Path.GetExtension(pathOrUri).Equals(".smi", StringComparison.OrdinalIgnoreCase);
         var text = SubtitleTextDecoder.Decode(bytes, ResolveEncoding(encodingName), detectKorean);
-        return Parse(pathOrUri, text);
+        var document = Parse(pathOrUri, text);
+        document.IsLoadedFromFile = true;
+        return document;
     }
 
     public static SubtitleDocument Parse(string pathOrUri, string text) =>
@@ -58,6 +60,44 @@ public sealed class SubtitleFileService
         return new SubtitleSaveResult(targetFormat, styleLoss);
     }
 
+    public static string GetMediaBaseName(string? mediaSource, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(mediaSource)) return fallback;
+        var path = Uri.TryCreate(mediaSource, UriKind.Absolute, out var uri)
+            ? uri.IsFile ? uri.LocalPath : Uri.UnescapeDataString(uri.AbsolutePath)
+            : mediaSource;
+        var name = Path.GetFileNameWithoutExtension(path);
+        if (string.IsNullOrWhiteSpace(name)) return fallback;
+        foreach (var character in Path.GetInvalidFileNameChars()) name = name.Replace(character, '_');
+        return name;
+    }
+
+    public async Task<SubtitleDocumentSaveResult> SaveDocumentAsync(
+        SubtitleTrack track, string selectedPath, string? mediaSource, SubtitleDisplayMode displayMode,
+        string fontFamily, string? encodingName, CancellationToken cancellationToken = default)
+    {
+        var hasBoth = track.Cues.Any(cue => !string.IsNullOrWhiteSpace(cue.Text)) &&
+            track.Cues.Any(cue => !string.IsNullOrWhiteSpace(cue.TranslatedText));
+        if (!hasBoth)
+        {
+            var single = await SaveAsync(track, selectedPath, displayMode, fontFamily, encodingName, cancellationToken);
+            return new(selectedPath, null, single.TargetFormat, single.HasStyleLoss);
+        }
+
+        var directory = Path.GetDirectoryName(Path.GetFullPath(selectedPath))!;
+        var name = GetMediaBaseName(mediaSource, Path.GetFileNameWithoutExtension(selectedPath));
+        var extension = Path.GetExtension(selectedPath);
+        var translationPath = Path.Combine(directory, name + extension);
+        var originalPath = Path.Combine(directory, name + ".original" + extension);
+        // Preserve the original before writing the translation to the video's matching filename.
+        var original = await SaveAsync(track, originalPath, SubtitleDisplayMode.Original,
+            fontFamily, encodingName, cancellationToken);
+        var translation = await SaveAsync(track, translationPath, SubtitleDisplayMode.Translation,
+            fontFamily, encodingName, cancellationToken);
+        return new(translationPath, originalPath, translation.TargetFormat,
+            original.HasStyleLoss || translation.HasStyleLoss);
+    }
+
     public static System.Text.Encoding ResolveEncoding(string? encodingName)
     {
         var name = string.IsNullOrWhiteSpace(encodingName) ? "utf-8" : encodingName.Trim();
@@ -68,3 +108,5 @@ public sealed class SubtitleFileService
 }
 
 public sealed record SubtitleSaveResult(string TargetFormat, bool HasStyleLoss);
+public sealed record SubtitleDocumentSaveResult(
+    string PrimaryPath, string? OriginalPath, string TargetFormat, bool HasStyleLoss);

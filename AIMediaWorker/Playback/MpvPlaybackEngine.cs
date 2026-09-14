@@ -380,13 +380,15 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
     {
         EnsureAvailable();
         if (enabled) ConfigureSubtitleOsdPlacement();
-        else RestoreDefaultOsdPlacement();
+        else ClearSubtitleOsdText();
     }
 
     public void ClearSubtitleOsdText()
     {
         if (!IsAvailable) return;
-        MpvInterop.CommandAsync(_context, NextCommandId(), "show-text", string.Empty, "100");
+        // Finish clearing the message before changing its placement. An asynchronous
+        // clear can leave the previous cue visible at the default top-left position.
+        MpvInterop.Command(_context, "show-text", string.Empty, "100");
         RestoreDefaultOsdPlacement();
     }
     public void SetMute(bool muted) { IsMuted = muted; SetProperty("mute", muted ? "yes" : "no"); }

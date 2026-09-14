@@ -158,8 +158,8 @@
                 <ToggleMenuFlyoutItem x:Uid="GenerateSubtitles" x:Name="GenerateSubtitlesMenuItem" Text="Generate subtitles" Click="OnGenerateSubtitleClick" />
                 <ToggleMenuFlyoutItem x:Uid="Translate" x:Name="TranslateMenuItem" Text="Translate" Click="OnTranslateClick" />
                 <MenuFlyoutItem x:Uid="Summarize" Text="Summarize…" Click="OnSummarizeClick" /><MenuFlyoutSeparator />
-                <MenuFlyoutItem x:Uid="RetryAi" x:Name="RetryAiMenuItem" Text="Retry AI operation" IsEnabled="False" Click="OnRetryAiClick" />
-                <MenuFlyoutItem x:Uid="CancelAi" Text="Cancel current AI operation" Click="OnCancelAiClick" />
+                <MenuFlyoutItem x:Uid="RetryAi" x:Name="RetryAiMenuItem" Text="Retry AI operation" Click="OnRetryAiClick" />
+                <MenuFlyoutItem x:Uid="CancelAi" x:Name="CancelAiMenuItem" Text="Cancel current AI operation" IsEnabled="False" Click="OnCancelAiClick" />
             </MenuBarItem>
             <MenuBarItem x:Uid="ViewMenu" Title="View">
                 <MenuFlyoutItem x:Uid="Fullscreen" x:Name="FullscreenMenuItem" Text="Fullscreen" Click="OnFullscreenClick" />

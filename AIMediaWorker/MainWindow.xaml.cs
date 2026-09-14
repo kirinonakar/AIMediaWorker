@@ -185,6 +185,11 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
                     dialog.RequestedTheme = RootGrid.ActualTheme;
                     return ShowDialogAsync(dialog);
                 }));
+        _mediaNavigation.SubtitleDiscoveryCompleted += (_, _) =>
+        {
+            if (_playback.State == PlaybackState.Playing)
+                StartCheckedAiPipeline(waitForMediaReady: true);
+        };
         _rightPanel.SectionChanged += (_, section) =>
         {
             if (_initialized && section == RightPanelSection.Favorites) _ = _mediaNavigation.LoadFavoritesAsync();
@@ -666,7 +671,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
 
     private void CompleteSubtitleLoad(SubtitleDocument document)
     {
-        _aiWorkflow.ResetTranslation();
+        _rightPanel.Show(RightPanelSection.Subtitles);
         // Keep the native player and editable document on the same rendered track.
         ScheduleSubtitleOverlaySync();
         StatusText.Text = F("StatusSubtitlesLoaded", document.ActiveTrack?.Cues.Count ?? 0);
@@ -895,11 +900,11 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private async Task<bool> PrepareForRemoteSubtitleLoadAsync()
         => await PrepareForSubtitleLoadAsync();
 
-    private Task ApplyDownloadedWebDavSubtitleAsync(DownloadedWebDavSubtitle subtitle)
+    private async Task ApplyDownloadedWebDavSubtitleAsync(DownloadedWebDavSubtitle subtitle)
     {
+        await CancelAiPipelineAsync();
         _subtitleSession.DecodeAndBind(subtitle.Path, subtitle.Bytes);
         if (subtitle.ShowSubtitlePanel) _rightPanel.Show(RightPanelSection.Subtitles);
-        return Task.CompletedTask;
     }
 
     private void ScheduleSubtitleOverlaySync(bool force = false)
@@ -1043,6 +1048,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         Application.Current.Exit();
     }
 
+    bool IAiWorkflowHost.IsSubtitleDiscoveryPending => _mediaNavigation.IsSubtitleDiscoveryPending;
     AppSettings IAiWorkflowHost.Settings => _settings;
     SubtitleDocument IAiWorkflowHost.Document => _subtitleSession.Document;
     SubtitleDisplayMode? IAiWorkflowHost.CurrentSubtitleDisplayMode => _subtitleTracks.DisplayMode;
@@ -1070,7 +1076,11 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         AsrDownloadProgressBar.IsIndeterminate = indeterminate;
         if (!indeterminate) AsrDownloadProgressBar.Value = value;
     }
-    void IAiWorkflowHost.SetRetryAvailable(bool available) => RetryAiMenuItem.IsEnabled = available;
+    void IAiWorkflowHost.SetAiOperationRunning(bool running)
+    {
+        RetryAiMenuItem.IsEnabled = !running;
+        CancelAiMenuItem.IsEnabled = running;
+    }
     Task<ContentDialogResult> IAiWorkflowHost.ShowDialogAsync(string title, object content, string primaryText) =>
         ShowDialogAsync(CreateDialog(title, content, primaryText));
     Task<ContentDialogResult> IAiWorkflowHost.ShowDialogAsync(ContentDialog dialog)

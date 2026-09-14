@@ -41,10 +41,22 @@ internal sealed class SubtitleSessionController
     {
         try
         {
-            var picker = new FileOpenPicker();
+            var picker = new Microsoft.Windows.Storage.Pickers.FileOpenPicker(
+                Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_host.WindowHandle));
+            var source = _host.GetPlaybackSource();
+            if (!string.IsNullOrWhiteSpace(source))
+            {
+                var localPath = Uri.TryCreate(source, UriKind.Absolute, out var uri)
+                    ? uri.IsFile ? uri.LocalPath : null
+                    : source;
+                if (localPath is not null && Path.IsPathFullyQualified(localPath))
+                {
+                    var folder = Path.GetDirectoryName(localPath);
+                    if (Directory.Exists(folder)) picker.SuggestedFolder = folder;
+                }
+            }
             foreach (var extension in new[] { ".srt", ".vtt", ".ass", ".ssa", ".smi" })
                 picker.FileTypeFilter.Add(extension);
-            InitializeWithWindow.Initialize(picker, _host.WindowHandle);
             var file = await picker.PickSingleFileAsync();
             if (file is not null) await LoadAsync(file.Path);
         }
@@ -90,7 +102,7 @@ internal sealed class SubtitleSessionController
         {
             var picker = new FileSavePicker
             {
-                SuggestedFileName = Path.GetFileNameWithoutExtension(_host.GetPlaybackSource() ?? "subtitles")
+                SuggestedFileName = SubtitleFileService.GetMediaBaseName(_host.GetPlaybackSource(), "subtitles")
             };
             picker.FileTypeChoices.Add(L("SubRipFileType"), [".srt"]);
             picker.FileTypeChoices.Add(L("WebVttFileType"), [".vtt"]);
@@ -113,15 +125,18 @@ internal sealed class SubtitleSessionController
         try
         {
             var settings = _host.GetSettings();
-            var result = await _files.SaveAsync(
+            var result = await _files.SaveDocumentAsync(
                 track,
                 path,
+                _host.GetPlaybackSource(),
                 _host.GetDisplayMode() ?? SubtitleDisplayMode.Original,
                 settings.Subtitle.FontFamily,
                 settings.Subtitle.Encoding);
             track.Format = result.TargetFormat;
-            Document.MarkSaved(path);
-            _host.SetStatus(result.HasStyleLoss ? F("StatusSavedStyleLoss", path) : F("StatusSaved", path));
+            Document.MarkSaved(result.PrimaryPath);
+            var savedPaths = result.OriginalPath is null
+                ? result.PrimaryPath : $"{result.PrimaryPath}, {result.OriginalPath}";
+            _host.SetStatus(result.HasStyleLoss ? F("StatusSavedStyleLoss", savedPaths) : F("StatusSaved", savedPaths));
         }
         catch (Exception exception)
         {

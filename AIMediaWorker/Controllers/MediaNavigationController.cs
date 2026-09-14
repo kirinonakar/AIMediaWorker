@@ -4,7 +4,7 @@ using AIMediaWorker.Localization;
 using AIMediaWorker.Media;
 using AIMediaWorker.Network;
 using AIMediaWorker.Settings;
-using AIMediaWorker.Subtitle.Parsing;
+using AIMediaWorker.Subtitle;
 using AIMediaWorker.Views;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -69,6 +69,9 @@ internal sealed class MediaNavigationController : IDisposable
         _view.WebDavBrowser.FavoriteRequested += OnWebDavFavoriteRequested;
         RefreshWebDavServers();
     }
+
+    public bool IsSubtitleDiscoveryPending { get; private set; }
+    public event EventHandler? SubtitleDiscoveryCompleted;
 
     public Task InitializeBrowserAsync() => _view.MediaBrowser.InitializeAsync();
     public Task LoadRecentAsync() => _history.LoadRecentAsync();
@@ -160,8 +163,6 @@ internal sealed class MediaNavigationController : IDisposable
     private async Task OpenPlaylistEntryAsync(PlaylistEntry entry)
     {
         await _host.OpenMediaAsync(new MediaOpenRequest(entry.Path, entry.HttpHeaders, entry.MediaSource, PreservePlaylist: true));
-        if (entry.MediaSource is WebDavMediaSource webDavSource && IsCurrentMedia(webDavSource))
-            await TryLoadMatchingWebDavSmiAsync(webDavSource);
     }
 
     private void QueuePostOpenWork(string source, LocalMediaSource? localSource, bool populateSiblingPlaylist, bool showInExplorer)
@@ -174,11 +175,32 @@ internal sealed class MediaNavigationController : IDisposable
         {
             if (showInExplorer) _host.ShowPanel(RightPanelSection.Explorer);
             _view.MediaBrowser.PrepareForOpenedFile(localPath);
-            // Load a same-named .smi sidecar as soon as the media opens instead of waiting for
-            // the first frame, so the subtitle is ready even when playback starts slowly.
-            _ = TryLoadMatchingLocalSmiAsync(localPath, source, _postOpenCancellation.Token);
         }
+        IsSubtitleDiscoveryPending = true;
+        _ = DiscoverSubtitlesAsync(localPath, source, _postOpenCancellation.Token);
         _pendingPostOpenWork = new PendingPostOpenWork(source, localPath, populateSiblingPlaylist, _postOpenCancellation.Token);
+    }
+
+    private async Task DiscoverSubtitlesAsync(string? localPath, string source, CancellationToken token)
+    {
+        try
+        {
+            // Let the media session finish resetting the previous document first.
+            await Task.Yield();
+            if (token.IsCancellationRequested) return;
+            if (localPath is not null)
+                await TryLoadMatchingLocalSubtitleAsync(localPath, source, token);
+            else if (_host.GetCurrentMediaSource() is WebDavMediaSource webDavSource)
+                await TryLoadMatchingWebDavSubtitleAsync(webDavSource, token);
+        }
+        finally
+        {
+            if (!token.IsCancellationRequested)
+            {
+                IsSubtitleDiscoveryPending = false;
+                SubtitleDiscoveryCompleted?.Invoke(this, EventArgs.Empty);
+            }
+        }
     }
 
     private async Task RunPostOpenWorkAsync(PendingPostOpenWork work)
@@ -332,16 +354,19 @@ internal sealed class MediaNavigationController : IDisposable
         WebDavEntry entry,
         bool confirmChanges,
         bool showSubtitlePanel,
-        Uri? expectedMediaUri = null)
+        Uri? expectedMediaUri = null,
+        CancellationToken cancellationToken = default)
     {
         if (confirmChanges && !await _host.PrepareSubtitleLoadAsync()) return;
         try
         {
-            var bytes = await _webDavClient.DownloadAsync(server, entry.Uri);
+            var bytes = await _webDavClient.DownloadAsync(server, entry.Uri, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (expectedMediaUri is not null && !IsCurrentMedia(server.Id, expectedMediaUri)) return;
             var path = Uri.UnescapeDataString(entry.Uri.AbsolutePath);
             await _host.ApplyDownloadedSubtitleAsync(new DownloadedWebDavSubtitle(path, bytes, showSubtitlePanel));
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception exception)
         {
             await AppLog.WriteAsync(
@@ -352,7 +377,7 @@ internal sealed class MediaNavigationController : IDisposable
         }
     }
 
-    private async Task TryLoadMatchingWebDavSmiAsync(WebDavMediaSource mediaSource)
+    private async Task TryLoadMatchingWebDavSubtitleAsync(WebDavMediaSource mediaSource, CancellationToken cancellationToken)
     {
         try
         {
@@ -361,13 +386,17 @@ internal sealed class MediaNavigationController : IDisposable
             var directory = WebDavUri.AsDirectory(new Uri(mediaSource.Uri, "."));
             IReadOnlyList<WebDavEntry> entries = _view.WebDavBrowser.TryGetEntries(mediaSource.ServerId, directory, out var displayedEntries)
                 ? displayedEntries
-                : await _webDavClient.ListAsync(server, directory);
+                : await _webDavClient.ListAsync(server, directory, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!IsCurrentMedia(mediaSource)) return;
-            var sidecar = entries.FirstOrDefault(candidate =>
-                !candidate.IsCollection && SmiParser.IsSidecarFor(mediaSource.DisplayName, candidate.Name));
+            var match = SubtitleSidecar.FindMatch(mediaSource.DisplayName,
+                entries.Where(candidate => !candidate.IsCollection).Select(candidate => candidate.Name));
+            var sidecar = entries.FirstOrDefault(candidate => !candidate.IsCollection && candidate.Name == match);
             if (sidecar is not null)
-                await LoadWebDavSubtitleAsync(server, sidecar, confirmChanges: false, showSubtitlePanel: false, expectedMediaUri: mediaSource.Uri);
+                await LoadWebDavSubtitleAsync(server, sidecar, confirmChanges: false, showSubtitlePanel: true,
+                    expectedMediaUri: mediaSource.Uri, cancellationToken: cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception exception)
         {
             await AppLog.WriteAsync(
@@ -377,14 +406,11 @@ internal sealed class MediaNavigationController : IDisposable
         }
     }
 
-    private async Task TryLoadMatchingLocalSmiAsync(string mediaPath, string expectedSource, CancellationToken cancellationToken)
+    private async Task TryLoadMatchingLocalSubtitleAsync(string mediaPath, string expectedSource, CancellationToken cancellationToken)
     {
         try
         {
-            // MediaOpened runs before the subtitle session reset for the new media; yield once
-            // so the reset has completed by the time the sidecar is bound.
-            await Task.Yield();
-            var sidecar = await Task.Run(() => SmiParser.FindSidecarPath(mediaPath), cancellationToken);
+            var sidecar = await Task.Run(() => SubtitleSidecar.FindPath(mediaPath), cancellationToken);
             if (sidecar is null || cancellationToken.IsCancellationRequested) return;
             if (!string.Equals(_host.GetPlaybackSource(), expectedSource, StringComparison.OrdinalIgnoreCase)) return;
             await _host.LoadLocalSubtitleAsync(sidecar);

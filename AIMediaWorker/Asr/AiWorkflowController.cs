@@ -20,6 +20,7 @@ internal interface IAiWorkflowHost
 {
     AppSettings Settings { get; }
     SubtitleDocument Document { get; }
+    bool IsSubtitleDiscoveryPending { get; }
     SubtitleDisplayMode? CurrentSubtitleDisplayMode { get; }
     IReadOnlyDictionary<string, string>? CurrentHttpHeaders { get; }
     long CurrentPlaybackPositionMicroseconds { get; }
@@ -36,7 +37,7 @@ internal interface IAiWorkflowHost
     void ExecuteSubtitleCommand(IUndoableSubtitleCommand command);
     void SetStatus(string message);
     void SetDownloadProgress(bool visible, bool indeterminate, double value = 0);
-    void SetRetryAvailable(bool available);
+    void SetAiOperationRunning(bool running);
     Task<ContentDialogResult> ShowDialogAsync(string title, object content, string primaryText);
     Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog);
     Task ShowMessageAsync(string title, string message);
@@ -76,6 +77,9 @@ internal sealed class AiWorkflowController : IAsyncDisposable
     public bool GenerateEnabled { get; private set; }
     public bool TranslateEnabled { get; private set; }
     public bool IsSeekRestartPending => _seekRestartCancellation is not null;
+    private bool HasPendingSubtitleWork =>
+        !_host.IsSubtitleDiscoveryPending && !_host.Document.HasCompletedFileSubtitles &&
+        (GenerateEnabled && !_subtitleGenerationCompleted || TranslateEnabled && !_translationCompleted);
 
     public void UpdateModes(bool generateEnabled, bool translateEnabled)
     {
@@ -95,7 +99,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
     {
         GenerateEnabled = enabled;
         _host.Settings.Asr.GenerateSubtitles = enabled;
-        if (!enabled) return;
+        if (!enabled || _host.Document.HasCompletedFileSubtitles) return;
         ResetForMedia();
         StartPipeline();
     }
@@ -104,7 +108,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
     {
         TranslateEnabled = enabled;
         _host.Settings.Llm.TranslateSubtitles = enabled;
-        if (!enabled) return;
+        if (!enabled || _host.Document.HasCompletedFileSubtitles) return;
         _host.SetSubtitleDisplayMode(SubtitleDisplayMode.Translation, refreshOverlay: false);
         _translationCompleted = false;
         StartPipeline();
@@ -112,6 +116,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
 
     public void StartPipeline(long? requestedStartMicroseconds = null, bool waitForMediaReady = false, bool continueExistingResults = false)
     {
+        if (!HasPendingSubtitleWork) return;
         if (_pipelineTask is { IsCompleted: false } || _operationCancellation is not null) return;
         SetRetryableOperation(null);
         _pipelineTask = RunPipelineAsync(requestedStartMicroseconds, waitForMediaReady, continueExistingResults);
@@ -136,10 +141,11 @@ internal sealed class AiWorkflowController : IAsyncDisposable
 
     public void ScheduleRestartAfterSeek(TimeSpan requestedPosition)
     {
-        if (!GenerateEnabled && !TranslateEnabled) return;
         CancelPendingSeekRestart();
+        if (!HasPendingSubtitleWork) return;
         var cancellation = new CancellationTokenSource();
         _seekRestartCancellation = cancellation;
+        RefreshOperationMenus();
         var maximum = _playback.Duration > TimeSpan.Zero ? _playback.Duration : TimeSpan.MaxValue;
         var position = requestedPosition < TimeSpan.Zero ? TimeSpan.Zero : requestedPosition > maximum ? maximum : requestedPosition;
         _ = RestartAfterSeekAsync(cancellation, Math.Max(0, position.Ticks / 10));
@@ -149,6 +155,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
     {
         var cancellation = _seekRestartCancellation;
         _seekRestartCancellation = null;
+        RefreshOperationMenus();
         if (cancellation is null) return;
         cancellation.Cancel();
         cancellation.Dispose();
@@ -165,8 +172,13 @@ internal sealed class AiWorkflowController : IAsyncDisposable
 
     public async Task RetryAsync()
     {
+        if (_operationCancellation is not null || IsSeekRestartPending) return;
         var retry = _retryableOperation;
-        if (retry is null) return;
+        if (retry is null || !IsRetryStillValid(retry))
+        {
+            StartPipeline(continueExistingResults: true);
+            return;
+        }
         SetRetryableOperation(null);
         if (!IsRetryStillValid(retry)) return;
         try
@@ -216,17 +228,19 @@ internal sealed class AiWorkflowController : IAsyncDisposable
         try
         {
             await Task.Delay(AutomaticStartDelay, token);
+            // Work may have finished while the seek debounce was pending.
+            if (!HasPendingSubtitleWork) return;
             await CancelPipelineForSeekAsync(token);
             token.ThrowIfCancellationRequested();
             if (!ReferenceEquals(_seekRestartCancellation, cancellation)) return;
-            if (GenerateEnabled) _subtitleGenerationCompleted = false;
-            if (TranslateEnabled) _translationCompleted = false;
+            if (!HasPendingSubtitleWork) return;
             StartPipeline(requestedStartMicroseconds);
         }
         catch (OperationCanceledException) { }
         finally
         {
             if (ReferenceEquals(_seekRestartCancellation, cancellation)) _seekRestartCancellation = null;
+            RefreshOperationMenus();
             cancellation.Dispose();
         }
     }
@@ -242,6 +256,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
 
     private async Task RunPipelineAsync(long? requestedStartMicroseconds, bool waitForMediaReady, bool continueExistingResults)
     {
+        if (!HasPendingSubtitleWork) return;
         if (_operationCancellation is not null) return;
         var generate = GenerateEnabled && !_subtitleGenerationCompleted;
         var translate = TranslateEnabled && !_translationCompleted;
@@ -259,6 +274,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
         }
 
         _operationCancellation = new CancellationTokenSource();
+        RefreshOperationMenus();
         var combineProgress = generate && translate;
         if (combineProgress) _combinedProgress.Begin();
         string? temporaryInput = null;
@@ -273,6 +289,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
                 if (!string.Equals(_playback.CurrentSource, source, StringComparison.OrdinalIgnoreCase) ||
                     _playback.State is not (PlaybackState.Playing or PlaybackState.Paused)) return;
             }
+            if (!HasPendingSubtitleWork) return;
             var startMicroseconds = waitForMediaReady ? 0 : requestedStartMicroseconds ?? _host.CurrentPlaybackPositionMicroseconds;
             var preserveExisting = continueExistingResults || requestedStartMicroseconds.HasValue && !waitForMediaReady;
             if (generate)
@@ -317,6 +334,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
             if (combineProgress) _combinedProgress.End();
             _operationCancellation?.Dispose();
             _operationCancellation = null;
+            RefreshOperationMenus();
         }
     }
 
@@ -405,6 +423,8 @@ internal sealed class AiWorkflowController : IAsyncDisposable
                 }, document, token);
             }
             generationCompleted = true;
+            // Preserve ASR completion even if seeking cancels the remaining translation.
+            await DispatchSubtitleUiAsync(() => _subtitleGenerationCompleted = true, document, CancellationToken.None);
         }
         finally
         {
@@ -617,7 +637,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
     private async Task RunSummaryWithTrackingAsync(SubtitleTrack track, SummaryKind summaryKind)
     {
         if (_operationCancellation is not null) return;
-        SetRetryableOperation(null);
+        SetRetryableOperation(new AiRetryRequest(AiRetryOperationKind.Summary, summaryKind, _host.Document, _playback.CurrentSource));
         _activeSummaryKind = summaryKind;
         var operation = RunSummaryAsync(track, summaryKind);
         _summaryTask = operation;
@@ -629,6 +649,7 @@ internal sealed class AiWorkflowController : IAsyncDisposable
     {
         using var cancellation = new CancellationTokenSource();
         _operationCancellation = cancellation;
+        RefreshOperationMenus();
         try
         {
             var provider = CreateLlmProvider();
@@ -677,7 +698,11 @@ internal sealed class AiWorkflowController : IAsyncDisposable
         }
         catch (OperationCanceledException) { _host.SetStatus(L("StatusSummaryCancelled")); }
         catch (Exception exception) { await _host.ShowMessageAsync("LLM_ERROR", exception.Message); }
-        finally { if (ReferenceEquals(_operationCancellation, cancellation)) _operationCancellation = null; }
+        finally
+        {
+            if (ReferenceEquals(_operationCancellation, cancellation)) _operationCancellation = null;
+            RefreshOperationMenus();
+        }
     }
 
     private void UpdateAsrModelProgress(AsrEvent update)
@@ -731,8 +756,10 @@ internal sealed class AiWorkflowController : IAsyncDisposable
     private void SetRetryableOperation(AiRetryRequest? retry)
     {
         _retryableOperation = retry;
-        _host.SetRetryAvailable(retry is not null);
     }
+
+    private void RefreshOperationMenus() =>
+        _host.SetAiOperationRunning(_operationCancellation is not null || IsSeekRestartPending);
 
     private bool IsRetryStillValid(AiRetryRequest retry) =>
         ReferenceEquals(_host.Document, retry.Document) &&

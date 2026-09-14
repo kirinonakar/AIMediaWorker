@@ -16,6 +16,8 @@ public sealed class SubtitleDocument : INotifyPropertyChanged
 
     public ObservableCollection<SubtitleTrack> Tracks { get; } = [];
     public SubtitleTrack? ActiveTrack => Tracks.FirstOrDefault();
+    public bool IsLoadedFromFile { get; internal set; }
+    public bool HasCompletedFileSubtitles => IsLoadedFromFile && ActiveTrack is { Cues.Count: > 0 };
     public bool IsDirty { get => _isDirty; private set { if (_isDirty == value) return; _isDirty = value; PropertyChanged?.Invoke(this, new(nameof(IsDirty))); } }
     public string? FilePath { get => _filePath; set { if (_filePath == value) return; _filePath = value; PropertyChanged?.Invoke(this, new(nameof(FilePath))); } }
 
