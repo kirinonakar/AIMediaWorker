@@ -36,7 +36,6 @@ internal interface IAiWorkflowHost
     void EnableGeneratedSubtitleOverlay();
     void ExecuteSubtitleCommand(IUndoableSubtitleCommand command);
     void SetStatus(string message);
-    void SetDownloadProgress(bool visible, bool indeterminate, double value = 0);
     void SetAiOperationRunning(bool running);
     Task<ContentDialogResult> ShowDialogAsync(string title, object content, string primaryText);
     Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog);
@@ -327,7 +326,6 @@ internal sealed class AiWorkflowController : IAsyncDisposable
         }
         finally
         {
-            _host.SetDownloadProgress(false, false);
             if (temporaryInput is not null)
                 try { File.Delete(temporaryInput); }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
@@ -709,7 +707,6 @@ internal sealed class AiWorkflowController : IAsyncDisposable
     {
         if (update.Stage == "download" && update.Progress is { } progress)
         {
-            _host.SetDownloadProgress(true, false, Math.Clamp(progress, 0, 1));
             var model = update.Message ?? "Qwen3-ASR";
             var modelProgress = update.ModelProgress ?? progress;
             _host.SetStatus(update.TotalBytes is > 0 && update.DownloadedBytes is { } downloaded
@@ -719,11 +716,9 @@ internal sealed class AiWorkflowController : IAsyncDisposable
         }
         if (update.Stage == "loading")
         {
-            _host.SetDownloadProgress(true, true);
             _host.SetStatus(update.ElapsedSeconds is > 0 ? $"{L("StatusLoadingAsr")} ({update.ElapsedSeconds}s)" : L("StatusLoadingAsr"));
             return;
         }
-        _host.SetDownloadProgress(false, false);
         _host.SetStatus(L("StatusLoadingAsr"));
     }
 

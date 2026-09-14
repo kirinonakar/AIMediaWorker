@@ -1069,12 +1069,10 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     void IAiWorkflowHost.ScheduleGeneratedSubtitleUiRefresh() => ScheduleGeneratedSubtitleUiRefresh();
     void IAiWorkflowHost.EnableGeneratedSubtitleOverlay() => EnableGeneratedSubtitleOverlay();
     void IAiWorkflowHost.ExecuteSubtitleCommand(IUndoableSubtitleCommand command) => _subtitleEditor.Execute(command);
-    void IAiWorkflowHost.SetStatus(string message) => StatusText.Text = message;
-    void IAiWorkflowHost.SetDownloadProgress(bool visible, bool indeterminate, double value)
+    void IAiWorkflowHost.SetStatus(string message)
     {
-        AsrDownloadProgressBar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        AsrDownloadProgressBar.IsIndeterminate = indeterminate;
-        if (!indeterminate) AsrDownloadProgressBar.Value = value;
+        AiStatusText.Text = string.IsNullOrWhiteSpace(message) ? string.Empty : $" - {message}";
+        AiStatusText.Visibility = string.IsNullOrWhiteSpace(message) ? Visibility.Collapsed : Visibility.Visible;
     }
     void IAiWorkflowHost.SetAiOperationRunning(bool running)
     {

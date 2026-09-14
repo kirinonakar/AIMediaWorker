@@ -393,7 +393,7 @@
                 <Canvas x:Name="TimelineCanvas" Background="{ThemeResource TimelineCanvasBrush}" SizeChanged="OnVisualizationSizeChanged" PointerPressed="OnTimelinePointerPressed" PointerMoved="OnTimelinePointerMoved" PointerReleased="OnTimelinePointerReleased" PointerCanceled="OnTimelinePointerReleased" PointerWheelChanged="OnTimelinePointerWheelChanged" />
             </Grid>
         </Border>
-        <Border x:Name="StatusPanel" Grid.Row="3" Height="44" Margin="8,2,8,0"
+        <Border x:Name="StatusPanel" Grid.Row="3" MinHeight="44" Margin="8,2,8,0"
                 Padding="10,3"
                 Background="{ThemeResource BottomPanelSurfaceBrush}"
                 BorderBrush="{ThemeResource RightPanelBorderBrush}"
@@ -401,9 +401,10 @@
                 CornerRadius="8">
             <Grid ColumnSpacing="10">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="180" /><ColumnDefinition Width="500" /></Grid.ColumnDefinitions>
-                <Grid>
-                    <TextBlock x:Name="StatusText" VerticalAlignment="Center" FontSize="13" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
-                    <ProgressBar x:Name="AsrDownloadProgressBar" Minimum="0" Maximum="1" Height="3" VerticalAlignment="Bottom" Visibility="Collapsed" />
+                <Grid VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBlock x:Name="StatusText" VerticalAlignment="Center" FontSize="13" TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="AiStatusText" Grid.Column="1" VerticalAlignment="Center" FontSize="13" TextTrimming="CharacterEllipsis" Visibility="Collapsed" ToolTipService.ToolTip="{Binding Text, ElementName=AiStatusText}" />
                 </Grid>
                 <TextBlock x:Uid="AudioLabel" Grid.Column="1" Text="Audio" FontSize="12" Foreground="{ThemeResource RightPanelMutedTextBrush}" VerticalAlignment="Center" />
                 <ComboBox x:Name="AudioTrackCombo" Grid.Column="2" MinHeight="32" CornerRadius="6" FontSize="13" VerticalAlignment="Center" DisplayMemberPath="DisplayName" SelectionChanged="OnAudioTrackChanged" />
