@@ -4,8 +4,7 @@ using AIMediaWorker.Settings;
 using AIMediaWorker.Subtitle;
 using AIMediaWorker.Views;
 using Microsoft.UI.Xaml.Controls;
-using Windows.Storage.Pickers;
-using WinRT.Interop;
+using Microsoft.Windows.Storage.Pickers;
 
 namespace AIMediaWorker.Controllers;
 
@@ -41,20 +40,9 @@ internal sealed class SubtitleSessionController
     {
         try
         {
-            var picker = new Microsoft.Windows.Storage.Pickers.FileOpenPicker(
+            var picker = new FileOpenPicker(
                 Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_host.WindowHandle));
-            var source = _host.GetPlaybackSource();
-            if (!string.IsNullOrWhiteSpace(source))
-            {
-                var localPath = Uri.TryCreate(source, UriKind.Absolute, out var uri)
-                    ? uri.IsFile ? uri.LocalPath : null
-                    : source;
-                if (localPath is not null && Path.IsPathFullyQualified(localPath))
-                {
-                    var folder = Path.GetDirectoryName(localPath);
-                    if (Directory.Exists(folder)) picker.SuggestedFolder = folder;
-                }
-            }
+            if (GetCurrentMediaFolder() is { } folder) picker.SuggestedFolder = folder;
             foreach (var extension in new[] { ".srt", ".vtt", ".ass", ".ssa", ".smi" })
                 picker.FileTypeFilter.Add(extension);
             var file = await picker.PickSingleFileAsync();
@@ -100,14 +88,14 @@ internal sealed class SubtitleSessionController
     {
         try
         {
-            var picker = new FileSavePicker
+            var picker = new FileSavePicker(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_host.WindowHandle))
             {
                 SuggestedFileName = SubtitleFileService.GetMediaBaseName(_host.GetPlaybackSource(), "subtitles")
             };
+            if (GetCurrentMediaFolder() is { } folder) picker.SuggestedFolder = folder;
             picker.FileTypeChoices.Add(L("SubRipFileType"), [".srt"]);
             picker.FileTypeChoices.Add(L("WebVttFileType"), [".vtt"]);
             picker.FileTypeChoices.Add(L("AssFileType"), [".ass"]);
-            InitializeWithWindow.Initialize(picker, _host.WindowHandle);
             var file = await picker.PickSaveFileAsync();
             if (file is not null) await SaveAsync(file.Path);
         }
@@ -167,6 +155,18 @@ internal sealed class SubtitleSessionController
         if (result != ContentDialogResult.Primary) return true;
         await SaveCurrentAsync();
         return !Document.IsDirty;
+    }
+
+    private string? GetCurrentMediaFolder()
+    {
+        var source = _host.GetPlaybackSource();
+        if (string.IsNullOrWhiteSpace(source)) return null;
+        var localPath = Uri.TryCreate(source, UriKind.Absolute, out var uri)
+            ? uri.IsFile ? uri.LocalPath : null
+            : source;
+        if (localPath is null || !Path.IsPathFullyQualified(localPath)) return null;
+        var folder = Path.GetDirectoryName(localPath);
+        return Directory.Exists(folder) ? folder : null;
     }
 
     private static SubtitleDocument CreateBlankDocument()

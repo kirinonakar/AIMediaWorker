@@ -104,18 +104,16 @@ public static class AsrSubtitleSegmenter
         NormalizedOptions options)
     {
         var sourceTexts = TryAttachSourceText(source.Text, words);
-        // Some aligner/tokenizer versions omit punctuation or use token markers
-        // that cannot be mapped back to the transcript. In that case, retain the
-        // transcript text and its sentence boundaries instead of emitting one
-        // punctuation-free mega-cue.
-        if (sourceTexts is null && source.Text.Any(IsSentenceTerminator))
+        // If alignment tokens cannot be mapped, keep the transcript (including
+        // its spacing) rather than reconstructing text from tokenizer fragments.
+        if (sourceTexts is null)
             return SegmentText(source, options);
 
         var tokens = new List<WordToken>(words.Count);
         for (var index = 0; index < words.Count; index++)
         {
             var word = words[index];
-            var text = sourceTexts?[index] ?? word.Text.Trim();
+            var text = sourceTexts[index];
             if (text.Length == 0) continue;
 
             var start = Math.Max(source.StartMicroseconds, word.StartMicroseconds);
@@ -154,8 +152,7 @@ public static class AsrSubtitleSegmenter
         NormalizedOptions options)
     {
         var previous = current[^1];
-        var currentText = ComposeText(current.Select(token => token.Text));
-        var candidateText = AppendText(currentText, next.Text);
+        var candidateText = ComposeText(current.Select(token => token.Text).Append(next.Text));
         var duration = next.EndMicroseconds - current[0].StartMicroseconds;
         var currentDuration = previous.EndMicroseconds - current[0].StartMicroseconds;
 
@@ -303,9 +300,8 @@ public static class AsrSubtitleSegmenter
 
     private static string ComposeText(IEnumerable<string> values)
     {
-        var result = string.Empty;
-        foreach (var value in values) result = AppendText(result, value);
-        return result.Trim();
+        // Source slices already contain the exact separators between tokens.
+        return string.Concat(values).Trim();
     }
 
     private static string AppendText(string current, string next)
@@ -346,7 +342,7 @@ public static class AsrSubtitleSegmenter
         {
             var end = index + 1 < starts.Length ? starts[index + 1] : normalizedSource.Length;
             if (end <= starts[index]) return null;
-            result[index] = normalizedSource[starts[index]..end].Trim();
+            result[index] = normalizedSource[(index == 0 ? 0 : starts[index])..end];
             if (result[index].Length == 0) result[index] = words[index].Text.Trim();
         }
         return result;

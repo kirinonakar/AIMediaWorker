@@ -4,6 +4,47 @@ namespace AIMediaWorker.Tests;
 
 public sealed class AsrSegmentationTests
 {
+    [Theory]
+    [InlineData("안녕하십니까.")]
+    [InlineData("저는 삼성서울병원 영상의학과 교수입니다.")]
+    [InlineData("오늘 발표 주제는 AI 에이전트입니다.")]
+    [InlineData("AI와  LLM을 함께 사용합니다")]
+    [InlineData("Hello, world! 다음 문장입니다.")]
+    public void CharacterTimestampsPreserveTranscriptSpacing(string text)
+    {
+        var words = text.Where(character => !char.IsWhiteSpace(character))
+            .Select((character, index) => new AsrWord
+            {
+                Text = character.ToString(),
+                StartMicroseconds = index * 100_000L,
+                EndMicroseconds = (index + 1) * 100_000L
+            }).ToArray();
+        var source = new AsrSegment
+        {
+            Text = text, Words = words, EndMicroseconds = words[^1].EndMicroseconds
+        };
+
+        var result = AsrSubtitleSegmenter.Segment([source], new AsrSegmentationOptions(1, 20, 2, 100, 0.6, 100));
+
+        Assert.Equal(text, string.Join(" ", result.Select(cue => cue.Text)));
+        Assert.Equal(words[0].StartMicroseconds, result[0].StartMicroseconds);
+        Assert.Equal(words[^1].EndMicroseconds, result[^1].EndMicroseconds);
+    }
+
+    [Fact]
+    public void UnmappableTokensPreserveUnpunctuatedTranscript()
+    {
+        var source = new AsrSegment
+        {
+            Text = "원래 띄어쓰기 유지", EndMicroseconds = 3_000_000,
+            Words = [new AsrWord { Text = "<token>", EndMicroseconds = 3_000_000 }]
+        };
+
+        var result = AsrSubtitleSegmenter.Segment([source], new AsrSegmentationOptions(1, 6, 2, 42, 0.6, 20));
+
+        Assert.Equal(source.Text, Assert.Single(result).Text);
+    }
+
     [Fact]
     public void JapaneseSentencePunctuationSplitsOneLongAsrSegment()
     {
