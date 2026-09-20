@@ -544,8 +544,11 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     private void BringToFront()
     {
         var handle = WindowNative.GetWindowHandle(this);
-        if (_appWindow?.Presenter is OverlappedPresenter presenter && presenter.State == OverlappedPresenterState.Minimized) presenter.Restore();
-        ShowWindow(handle, 9); // SW_RESTORE
+        // Restoring is limited to the minimized state: issuing SW_RESTORE while the window is
+        // maximized would return it to its normal size, so a maximized window is only brought
+        // to the foreground and keeps its maximized state.
+        if (_appWindow?.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized })
+            ShowWindow(handle, 9); // SW_RESTORE
         SetForegroundWindow(handle);
     }
 
