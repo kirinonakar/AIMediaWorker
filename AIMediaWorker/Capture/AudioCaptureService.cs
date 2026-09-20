@@ -13,7 +13,7 @@ public sealed class AudioCaptureService : IAsyncDisposable
         SingleWriter = true,
         AllowSynchronousContinuations = false
     });
-    private WasapiCapture? _capture;
+    private WasapiRecorder? _capture;
     private MMDeviceEnumerator? _deviceEnumerator;
     private MMDevice? _device;
     private CancellationTokenSource? _processingCancellation;
@@ -41,13 +41,15 @@ public sealed class AudioCaptureService : IAsyncDisposable
 
         MMDeviceEnumerator? enumerator = null;
         MMDevice? device = null;
-        WasapiCapture? capture = null;
+        WasapiRecorder? capture = null;
         CancellationTokenSource? processingCancellation = null;
         try
         {
             enumerator = new MMDeviceEnumerator();
             device = loopback ? ResolveLoopbackDevice(enumerator, deviceId) : ResolveDevice(enumerator, deviceId);
-            capture = loopback ? new WasapiLoopbackCapture(device) : new WasapiCapture(device);
+            var recorderBuilder = new WasapiRecorderBuilder().WithDevice(device).WithSharedMode();
+            if (loopback) recorderBuilder = recorderBuilder.WithLoopbackCapture();
+            capture = recorderBuilder.Build();
             capture.DataAvailable += OnDataAvailable;
             capture.RecordingStopped += OnRecordingStopped;
 
@@ -101,10 +103,11 @@ public sealed class AudioCaptureService : IAsyncDisposable
 
     public async ValueTask DisposeAsync() { await StopAsync().ConfigureAwait(false); GC.SuppressFinalize(this); }
 
-    private void OnDataAvailable(object? sender, WaveInEventArgs e)
+    private void OnDataAvailable(ReadOnlySpan<byte> buffer, AudioClientBufferFlags flags, long devicePosition, long qpcPosition)
     {
-        var copy = GC.AllocateUninitializedArray<byte>(e.BytesRecorded);
-        Buffer.BlockCopy(e.Buffer, 0, copy, 0, e.BytesRecorded);
+        if (buffer.Length == 0) return;
+        var copy = GC.AllocateUninitializedArray<byte>(buffer.Length);
+        buffer.CopyTo(copy);
         _input.Writer.TryWrite(copy);
     }
 
@@ -153,7 +156,7 @@ public sealed class AudioCaptureService : IAsyncDisposable
     {
         try
         {
-            var provider = new BufferedWaveProvider(sourceFormat) { BufferDuration = TimeSpan.FromSeconds(2), DiscardOnBufferOverflow = true, ReadFully = false };
+            var provider = new BufferedWaveProvider(sourceFormat, TimeSpan.FromSeconds(2)) { DiscardOnBufferOverflow = true, ReadFully = false };
             using var resampler = new MediaFoundationResampler(provider, new WaveFormat(16_000, 16, 1)) { ResamplerQuality = 60 };
             var output = new byte[16_000];
             await foreach (var chunk in _input.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
@@ -161,7 +164,7 @@ public sealed class AudioCaptureService : IAsyncDisposable
                 provider.AddSamples(chunk, 0, chunk.Length);
                 while (provider.BufferedBytes > sourceFormat.AverageBytesPerSecond / 20)
                 {
-                    var count = resampler.Read(output, 0, output.Length);
+                    var count = resampler.Read(output);
                     if (count <= 0) break;
                     var result = GC.AllocateUninitializedArray<byte>(count);
                     Buffer.BlockCopy(output, 0, result, 0, count);

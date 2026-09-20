@@ -5,10 +5,12 @@ using NAudio.CoreAudioApi;
 using NAudio.MediaFoundation;
 using NAudio.Wave;
 using static AIMediaWorker.Capture.MediaFoundationInterop;
-using MfMediaBuffer = NAudio.MediaFoundation.IMFMediaBuffer;
-using MfMediaType = NAudio.MediaFoundation.IMFMediaType;
-using MfSample = NAudio.MediaFoundation.IMFSample;
-using MfSinkWriter = NAudio.MediaFoundation.IMFSinkWriter;
+// NAudio 3.x keeps its Media Foundation interop internal, so the recorder uses the interfaces
+// declared in Capture/MediaFoundationInterop.cs.
+using MfMediaBuffer = AIMediaWorker.Capture.IMFMediaBuffer;
+using MfMediaType = AIMediaWorker.Capture.IMFMediaType;
+using MfSample = AIMediaWorker.Capture.IMFSample;
+using MfSinkWriter = AIMediaWorker.Capture.IMFSinkWriter;
 
 namespace AIMediaWorker.Capture;
 
@@ -28,6 +30,16 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
     private static readonly Guid FrameRateAttribute = new("c459a2e8-3d2c-4e44-b132-fee5156c7bb0");
     private static readonly Guid FrameSizeAttribute = new("1652c33d-d6b2-4012-b834-72030849a37d");
     private static readonly Guid InterlaceModeAttribute = new("e2724bb8-e676-4806-b4b2-a8d6efb44ccd");
+    private static readonly Guid MediaTypeAudio = new("73647561-0000-0010-8000-00AA00389B71");   // 'auds'
+    private static readonly Guid AudioFormatPcm = new("00000001-0000-0010-8000-00AA00389B71");  // PCM
+    private static readonly Guid AudioChannelCountAttribute = new("37e48bf5-645e-4c5b-89de-ada9e29b696a");
+    private static readonly Guid AudioSampleRateAttribute = new("5faeeae7-0290-4c31-9e8a-c534f68d9dba");
+    private static readonly Guid AudioBlockAlignmentAttribute = new("322de230-9eeb-43bd-ab7a-ff412251541d");
+    private static readonly Guid AudioAverageBytesPerSecondAttribute = new("1aab75c8-cfef-451c-ab95-ac034b8e1731");
+    private static readonly Guid AudioBitsPerSampleAttribute = new("f2deb57f-40fa-4764-aa33-ed4f2d1ff669");
+    private static readonly Guid AacPayloadTypeAttribute = new("bfbabe79-7434-4d1c-94f0-72a3b9e17188");
+    private static readonly Guid AacProfileLevelAttribute = new("7632f0e6-9538-4d61-acda-ea29c8c14456");
+    private static readonly Guid AllSamplesIndependentAttribute = new("c9173739-5e56-461c-b713-46fb995cb95f");
 
     private const uint MfVideoInterlaceProgressive = 2;
     private const long HundredNanosecondsPerSecond = 10_000_000;
@@ -141,28 +153,25 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
                 _startupCount++;
             }
 
-            NAudio.MediaFoundation.MediaFoundationInterop.MFCreateSinkWriterFromURL(
-                _outputPath, null!, null!, out writer);
+            writer = CreateSinkWriterFromUrl(_outputPath);
 
             using var audio = new LoopbackAudioSource(CreateAudioFormat());
             var videoTargetType = CreateVideoType(VideoFormatH264, ComputeBitrate(_width, _height, _frameRate), target: true);
             try
             {
                 writer!.AddStream(videoTargetType, out var videoStreamIndex);
-                var audioTargetSelection = MediaFoundationEncoder.SelectMediaType(
-                    AudioSubtypes.MFAudioFormat_AAC, audio.OutputFormat, AudioBitrate);
-                var audioTargetType = audioTargetSelection.MediaFoundationObject;
+                var audioTargetType = CreateAudioTargetType(audio.OutputFormat, AudioBitrate);
                 try
                 {
                     writer.AddStream(audioTargetType, out var audioStreamIndex);
                     var videoInputType = CreateVideoType(VideoFormatRgb32, 0, target: false);
                     try
                     {
-                        var audioInputType = MediaFoundationApi.CreateMediaTypeFromWaveFormat(audio.OutputFormat);
+                        var audioInputType = CreateAudioInputType(audio.OutputFormat);
                         try
                         {
-                            writer.SetInputMediaType(videoStreamIndex, videoInputType, null);
-                            writer.SetInputMediaType(audioStreamIndex, audioInputType, null);
+                            writer.SetInputMediaType(videoStreamIndex, videoInputType, IntPtr.Zero);
+                            writer.SetInputMediaType(audioStreamIndex, audioInputType, IntPtr.Zero);
                             writer.BeginWriting();
                             audio.Start();
                             try
@@ -276,7 +285,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
             Buffer.BlockCopy(source, row * stride, destination, (_height - 1 - row) * stride, stride);
         }
 
-        MfMediaBuffer buffer = MediaFoundationApi.CreateMemoryBuffer(destination.Length);
+        MfMediaBuffer buffer = CreateMemoryBuffer(destination.Length);
         try
         {
             buffer.Lock(out var pointer, out _, out _);
@@ -290,7 +299,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
             }
             buffer.SetCurrentLength(destination.Length);
 
-            MfSample sample = MediaFoundationApi.CreateSample();
+            MfSample sample = CreateSample();
             try
             {
                 sample.AddBuffer(buffer);
@@ -317,7 +326,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
         long startFrame,
         int frameCount)
     {
-        MfMediaBuffer buffer = MediaFoundationApi.CreateMemoryBuffer(byteCount);
+        MfMediaBuffer buffer = CreateMemoryBuffer(byteCount);
         try
         {
             buffer.Lock(out var pointer, out _, out _);
@@ -331,7 +340,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
             }
             buffer.SetCurrentLength(byteCount);
 
-            MfSample sample = MediaFoundationApi.CreateSample();
+            MfSample sample = CreateSample();
             try
             {
                 sample.AddBuffer(buffer);
@@ -352,7 +361,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
 
     private MfMediaType CreateVideoType(Guid subtype, uint bitrate, bool target)
     {
-        var type = MediaFoundationApi.CreateMediaType();
+        var type = CreateMediaType();
         type.SetGUID(MajorTypeAttribute, MediaTypeVideo);
         type.SetGUID(SubtypeAttribute, subtype);
         type.SetUINT64(FrameSizeAttribute, PackPair(_width, _height));
@@ -370,6 +379,108 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
 
     private static WaveFormat CreateAudioFormat() => new(AudioSampleRate, AudioBitsPerSample, AudioChannels);
 
+    /// <summary>Builds the PCM input type consumed by the Media Foundation AAC encoder.</summary>
+    private static MfMediaType CreateAudioInputType(WaveFormat format)
+    {
+        var type = CreateMediaType();
+        type.SetGUID(MajorTypeAttribute, MediaTypeAudio);
+        type.SetGUID(SubtypeAttribute, AudioFormatPcm);
+        type.SetUINT32(AudioChannelCountAttribute, format.Channels);
+        type.SetUINT32(AudioSampleRateAttribute, format.SampleRate);
+        type.SetUINT32(AudioBlockAlignmentAttribute, format.BlockAlign);
+        type.SetUINT32(AudioAverageBytesPerSecondAttribute, format.AverageBytesPerSecond);
+        type.SetUINT32(AudioBitsPerSampleAttribute, format.BitsPerSample);
+        type.SetUINT32(AllSamplesIndependentAttribute, 1);
+        return type;
+    }
+
+    /// <summary>
+    /// Chooses the AAC encoder output type that matches the captured audio. Media Foundation only
+    /// accepts the output types it advertises for the codec, so one of those templates is reused and
+    /// only the average bytes per second is overridden.
+    /// </summary>
+    private static MfMediaType CreateAudioTargetType(WaveFormat outputFormat, int bitrate)
+    {
+        var desiredBytesPerSecond = bitrate / 8;
+        var availableTypes = GetAudioOutputAvailableTypes(AudioSubtypes.MFAudioFormat_AAC);
+        try
+        {
+            availableTypes.GetElementCount(out var count);
+            MfMediaType? selected = null;
+            var selectedDistance = long.MaxValue;
+            for (var index = 0; index < count; index++)
+            {
+                var candidate = TakeAudioOutputType(availableTypes, index);
+                var keep = false;
+                try
+                {
+                    if (MatchesAudioFormat(candidate, outputFormat))
+                    {
+                        if (candidate.GetUINT32(AudioAverageBytesPerSecondAttribute, out var averageBytesPerSecond) < 0)
+                        {
+                            averageBytesPerSecond = desiredBytesPerSecond;
+                        }
+
+                        var distance = Math.Abs((long)averageBytesPerSecond - desiredBytesPerSecond);
+                        if (distance < selectedDistance)
+                        {
+                            selectedDistance = distance;
+                            if (selected is not null) Marshal.ReleaseComObject(selected);
+                            selected = candidate;
+                            keep = true;
+                        }
+                    }
+                }
+                finally
+                {
+                    if (!keep) Marshal.ReleaseComObject(candidate);
+                }
+            }
+
+            if (selected is null) return CreateManualAudioTargetType(outputFormat, desiredBytesPerSecond);
+            selected.SetUINT32(AudioAverageBytesPerSecondAttribute, desiredBytesPerSecond);
+            return selected;
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(availableTypes);
+        }
+    }
+
+    private static MfMediaType TakeAudioOutputType(IMFCollection collection, int index)
+    {
+        collection.GetElement(index, out var element);
+        try
+        {
+            return (MfMediaType)Marshal.GetObjectForIUnknown(element);
+        }
+        finally
+        {
+            Marshal.Release(element);
+        }
+    }
+
+    private static bool MatchesAudioFormat(MfMediaType type, WaveFormat format)
+    {
+        if (type.GetUINT32(AudioSampleRateAttribute, out var sampleRate) < 0 || sampleRate != format.SampleRate) return false;
+        if (type.GetUINT32(AudioChannelCountAttribute, out var channels) < 0 || channels != format.Channels) return false;
+        if (type.GetUINT32(AudioBitsPerSampleAttribute, out var bitsPerSample) < 0 || bitsPerSample != format.BitsPerSample) return false;
+
+        // Prefer AAC-LC output so the encoded track plays everywhere.
+        return type.GetUINT32(AacPayloadTypeAttribute, out var payloadType) < 0 || payloadType == 0;
+    }
+
+    /// <summary>Fallback for when Media Foundation exposes no matching AAC output template.</summary>
+    private static MfMediaType CreateManualAudioTargetType(WaveFormat outputFormat, int bytesPerSecond)
+    {
+        var type = CreateAudioInputType(outputFormat);
+        type.SetGUID(SubtypeAttribute, AudioSubtypes.MFAudioFormat_AAC);
+        type.SetUINT32(AudioAverageBytesPerSecondAttribute, bytesPerSecond);
+        type.SetUINT32(AacPayloadTypeAttribute, 0);
+        type.SetUINT32(AacProfileLevelAttribute, 0x29); // AAC-LC
+        return type;
+    }
+
     private static RECT MakeEven(RECT bounds)
     {
         var width = Math.Max(2, bounds.Width - (bounds.Width % 2));
@@ -382,7 +493,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
         private readonly ConcurrentQueue<byte[]> _capturedChunks = new();
         private readonly MMDeviceEnumerator _deviceEnumerator;
         private readonly MMDevice _device;
-        private readonly WasapiLoopbackCapture _capture;
+        private readonly WasapiRecorder _capture;
         private readonly BufferedWaveProvider _sourceBuffer;
         private readonly MediaFoundationResampler _resampler;
         private bool _started;
@@ -397,10 +508,9 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
             OutputFormat = outputFormat;
             _deviceEnumerator = new MMDeviceEnumerator();
             _device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            _capture = new WasapiLoopbackCapture(_device);
-            _sourceBuffer = new BufferedWaveProvider(_capture.WaveFormat)
+            _capture = new WasapiRecorderBuilder().WithDevice(_device).WithSharedMode().WithLoopbackCapture().Build();
+            _sourceBuffer = new BufferedWaveProvider(_capture.WaveFormat, TimeSpan.FromSeconds(2))
             {
-                BufferDuration = TimeSpan.FromSeconds(2),
                 DiscardOnBufferOverflow = true,
                 ReadFully = false
             };
@@ -437,7 +547,7 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
             var written = 0;
             while (written < byteCount)
             {
-                var read = _resampler.Read(destination, written, byteCount - written);
+                var read = _resampler.Read(destination.AsSpan(written, byteCount - written));
                 if (read <= 0) break;
                 written += read;
             }
@@ -457,10 +567,11 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
             }
         }
 
-        private void OnDataAvailable(object? sender, WaveInEventArgs args)
+        private void OnDataAvailable(ReadOnlySpan<byte> buffer, AudioClientBufferFlags flags, long devicePosition, long qpcPosition)
         {
-            var copy = GC.AllocateUninitializedArray<byte>(args.BytesRecorded);
-            Buffer.BlockCopy(args.Buffer, 0, copy, 0, args.BytesRecorded);
+            if (buffer.Length == 0) return;
+            var copy = GC.AllocateUninitializedArray<byte>(buffer.Length);
+            buffer.CopyTo(copy);
             _capturedChunks.Enqueue(copy);
         }
 
@@ -495,13 +606,4 @@ internal sealed class MediaFoundationH264Recorder : IDisposable
             // Double releases are harmless here.
         }
     }
-}
-
-internal static class MediaFoundationInterop
-{
-    [DllImport("ole32.dll")]
-    internal static extern int CoInitializeEx(IntPtr reserved, uint coInit);
-
-    [DllImport("ole32.dll")]
-    internal static extern void CoUninitialize();
 }
