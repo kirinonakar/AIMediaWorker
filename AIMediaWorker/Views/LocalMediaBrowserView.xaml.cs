@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using System.Text.RegularExpressions;
+using Windows.Foundation;
 using Windows.System;
 
 namespace AIMediaWorker.Views;
@@ -16,6 +17,8 @@ public sealed partial class LocalMediaBrowserView : UserControl
     private CancellationTokenSource? _searchCancellation;
     private EntrySortMode _sortMode;
     private int _navigationVersion;
+    private IReadOnlyList<LocalBrowserBreadcrumb> _breadcrumbs = [];
+    private readonly List<Button> _breadcrumbButtons = [];
 
     public LocalMediaBrowserView()
     {
@@ -43,7 +46,7 @@ public sealed partial class LocalMediaBrowserView : UserControl
         var navigationVersion = Interlocked.Increment(ref _navigationVersion);
         try
         {
-            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            if (directory != LocalBrowserPath.Root && (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)))
             {
                 directory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 if (!Directory.Exists(directory)) return;
@@ -52,8 +55,8 @@ public sealed partial class LocalMediaBrowserView : UserControl
             var entries = await Task.Run(() => EnumerateEntries(directory, selectedPath));
             if (navigationVersion != Volatile.Read(ref _navigationVersion)) return;
             if (!AreSameDirectory(directory, CurrentDirectory)) FilterBox.Text = string.Empty;
-            CurrentDirectory = Path.GetFullPath(directory);
-            LoadedDirectory = CurrentDirectory;
+            CurrentDirectory = directory == LocalBrowserPath.Root ? directory : Path.GetFullPath(directory);
+            LoadedDirectory = directory == LocalBrowserPath.Root ? null : CurrentDirectory;
             _entries = entries;
             UpdateBreadcrumbs();
             ApplyEntryView();
@@ -111,14 +114,13 @@ public sealed partial class LocalMediaBrowserView : UserControl
         EntryList.ScrollIntoView(selectedEntry);
     }
 
-    public static bool AreSameDirectory(string first, string second) =>
-        string.Equals(
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(first)),
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(second)),
-            StringComparison.OrdinalIgnoreCase);
+    public static bool AreSameDirectory(string first, string second) => LocalBrowserPath.AreSameDirectory(first, second);
 
     private static BrowserEntry[] EnumerateEntries(string directory, string? selectedPath)
     {
+        if (directory == LocalBrowserPath.Root)
+            return DriveInfo.GetDrives().Select(drive => BrowserEntry.FromDrive(drive.Name)).ToArray();
+
         const int maximumEntries = 5000;
         var result = new List<BrowserEntry>();
         foreach (var path in Directory.EnumerateDirectories(directory).Take(maximumEntries).OrderBy(Path.GetFileName, WindowsFileNameComparer.Instance))
@@ -150,8 +152,8 @@ public sealed partial class LocalMediaBrowserView : UserControl
 
     private async void OnParentClick(object sender, RoutedEventArgs e)
     {
-        var parent = Directory.GetParent(CurrentDirectory);
-        if (parent is not null) await NavigateAsync(parent.FullName);
+        var parent = LocalBrowserPath.GetParent(CurrentDirectory);
+        if (parent is not null) await NavigateAsync(parent);
     }
 
     private async void OnRefreshClick(object sender, RoutedEventArgs e) => await NavigateAsync(CurrentDirectory);
@@ -164,34 +166,75 @@ public sealed partial class LocalMediaBrowserView : UserControl
         else MediaRequested?.Invoke(this, new LocalMediaBrowserEntryEventArgs(entry.Path, false));
     }
 
-    private async void OnBreadcrumbItemClick(BreadcrumbBar sender, BreadcrumbBarItemClickedEventArgs e)
-    {
-        if (e.Item is BrowserBreadcrumbEntry entry && !AreSameDirectory(entry.Path, CurrentDirectory)) await NavigateAsync(entry.Path);
-    }
-
     private void UpdateBreadcrumbs()
     {
-        var fullPath = Path.GetFullPath(CurrentDirectory);
-        var root = Path.GetPathRoot(fullPath);
-        if (string.IsNullOrEmpty(root))
+        BreadcrumbOverflowButton.Flyout?.Hide();
+        _breadcrumbs = LocalBrowserPath.GetBreadcrumbs(CurrentDirectory);
+        _breadcrumbButtons.Clear();
+        BreadcrumbItems.Children.Clear();
+        for (var index = 0; index < _breadcrumbs.Count; index++)
         {
-            BreadcrumbBar.ItemsSource = new[] { new BrowserBreadcrumbEntry(fullPath, fullPath) };
-            return;
-        }
-
-        var entries = new List<BrowserBreadcrumbEntry> { new(root, root) };
-        var relativePath = Path.GetRelativePath(root, fullPath);
-        if (relativePath != ".")
-        {
-            var accumulatedPath = root;
-            foreach (var segment in relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            var entry = _breadcrumbs[index];
+            var content = new Grid { ColumnSpacing = 4 };
+            content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            content.Children.Add(new TextBlock { Text = entry.Label, TextTrimming = TextTrimming.CharacterEllipsis });
+            if (index < _breadcrumbs.Count - 1)
             {
-                if (string.IsNullOrEmpty(segment)) continue;
-                accumulatedPath = Path.Combine(accumulatedPath, segment);
-                entries.Add(new BrowserBreadcrumbEntry(segment, accumulatedPath));
+                var chevron = new FontIcon { Glyph = "\uE76C", FontSize = 10, VerticalAlignment = VerticalAlignment.Center };
+                Grid.SetColumn(chevron, 1);
+                content.Children.Add(chevron);
             }
+            var button = new Button { Content = content, Style = (Style)Resources["BreadcrumbNavigationButtonStyle"] };
+            ToolTipService.SetToolTip(button, entry.Path);
+            AutomationProperties.SetName(button, entry.Label);
+            button.Click += async (_, _) =>
+            {
+                if (!AreSameDirectory(entry.Path, CurrentDirectory)) await NavigateAsync(entry.Path);
+            };
+            _breadcrumbButtons.Add(button);
+            BreadcrumbItems.Children.Add(button);
         }
-        BreadcrumbBar.ItemsSource = entries;
+        UpdateBreadcrumbLayout();
+
+        var canSearch = CurrentDirectory != LocalBrowserPath.Root;
+        SearchBox.IsEnabled = canSearch;
+        SearchButton.IsEnabled = canSearch;
+        RegexSearchToggle.IsEnabled = canSearch;
+    }
+
+    private void OnBreadcrumbSizeChanged(object sender, SizeChangedEventArgs e) => UpdateBreadcrumbLayout();
+
+    private void UpdateBreadcrumbLayout()
+    {
+        if (_breadcrumbButtons.Count == 0 || BreadcrumbHost.ActualWidth <= 0) return;
+        var widths = new double[_breadcrumbButtons.Count];
+        for (var index = 0; index < _breadcrumbButtons.Count; index++)
+        {
+            var button = _breadcrumbButtons[index];
+            button.Visibility = Visibility.Visible;
+            button.MaxWidth = double.PositiveInfinity;
+            button.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            widths[index] = button.DesiredSize.Width + BreadcrumbItems.Spacing;
+        }
+        BreadcrumbOverflowButton.Visibility = Visibility.Visible;
+        BreadcrumbOverflowButton.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var overflowWidth = BreadcrumbOverflowButton.DesiredSize.Width + BreadcrumbHost.ColumnSpacing;
+        var hiddenCount = LocalBrowserPath.GetHiddenBreadcrumbCount(widths, BreadcrumbHost.ActualWidth + BreadcrumbItems.Spacing, overflowWidth);
+        var flyout = new MenuFlyout();
+        for (var index = 0; index < hiddenCount; index++)
+        {
+            _breadcrumbButtons[index].Visibility = Visibility.Collapsed;
+            var entry = _breadcrumbs[index];
+            var item = new MenuFlyoutItem { Text = entry.Label };
+            ToolTipService.SetToolTip(item, entry.Path);
+            item.Click += async (_, _) => await NavigateAsync(entry.Path);
+            flyout.Items.Add(item);
+        }
+        BreadcrumbOverflowButton.Flyout = flyout;
+        BreadcrumbOverflowButton.Visibility = hiddenCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var precedingWidth = widths.Skip(hiddenCount).Take(widths.Length - hiddenCount - 1).Sum();
+        _breadcrumbButtons[^1].MaxWidth = Math.Max(0, BreadcrumbHost.ActualWidth - precedingWidth - (hiddenCount > 0 ? overflowWidth : 0));
     }
 
     private void OnFilterTextChanged(object sender, TextChangedEventArgs e) => ApplyEntryView();
@@ -217,6 +260,7 @@ public sealed partial class LocalMediaBrowserView : UserControl
 
     private async Task SearchAsync()
     {
+        if (CurrentDirectory == LocalBrowserPath.Root) return;
         var query = SearchBox.Text.Trim();
         if (query.Length == 0)
         {
@@ -260,7 +304,7 @@ public sealed partial class LocalMediaBrowserView : UserControl
         {
             if (ReferenceEquals(_searchCancellation, operation))
             {
-                SearchButton.IsEnabled = true;
+                SearchButton.IsEnabled = CurrentDirectory != LocalBrowserPath.Root;
                 SearchProgressRing.IsActive = false;
             }
         }
@@ -275,7 +319,7 @@ public sealed partial class LocalMediaBrowserView : UserControl
         _searchEntries = null;
         if (clearQuery && SearchBox.Text.Length > 0) SearchBox.Text = string.Empty;
         SearchStatusText.Text = string.Empty;
-        SearchButton.IsEnabled = true;
+        SearchButton.IsEnabled = CurrentDirectory != LocalBrowserPath.Root;
         SearchProgressRing.IsActive = false;
         ApplyEntryView();
     }
@@ -338,7 +382,6 @@ public sealed partial class LocalMediaBrowserView : UserControl
             FavoriteRequested?.Invoke(this, new LocalMediaBrowserEntryEventArgs(entry.Path, entry.IsDirectory));
     }
 
-    private sealed record BrowserBreadcrumbEntry(string Label, string Path);
     private enum EntrySortMode { Name, Newest, Oldest }
 
     private static string Format(string key, params object[] arguments) =>
@@ -350,6 +393,8 @@ public sealed partial class LocalMediaBrowserView : UserControl
         public string DisplayName => SearchRelativePath ?? Name;
         public string IconGlyph => IsDirectory ? "\uE8B7" : MediaFileClassifier.GetFileIconGlyph(Path);
         public string Details => IsDirectory || Length is null ? string.Empty : FormatBytes(Length.Value);
+
+        public static BrowserEntry FromDrive(string path) => new(path, true, null, DateTime.MinValue, path);
 
         public static BrowserEntry FromDirectory(string path, string? searchRelativePath = null)
         {
