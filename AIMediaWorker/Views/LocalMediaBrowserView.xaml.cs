@@ -1,5 +1,6 @@
 using AIMediaWorker.Localization;
 using AIMediaWorker.Media;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -19,10 +20,13 @@ public sealed partial class LocalMediaBrowserView : UserControl
     private int _navigationVersion;
     private IReadOnlyList<LocalBrowserBreadcrumb> _breadcrumbs = [];
     private readonly List<Button> _breadcrumbButtons = [];
+    private readonly LocalBrowserNavigationHistory _navigationHistory = new();
+    private bool _historyNavigationInProgress;
 
     public LocalMediaBrowserView()
     {
         InitializeComponent();
+        AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnBrowserPointerPressed), handledEventsToo: true);
         var regexSearchTooltip = LocalizationService.Get("RegexSearchTooltip");
         ToolTipService.SetToolTip(RegexSearchToggle, regexSearchTooltip);
         AutomationProperties.SetName(RegexSearchToggle, regexSearchTooltip);
@@ -40,7 +44,9 @@ public sealed partial class LocalMediaBrowserView : UserControl
 
     public Task InitializeAsync() => NavigateAsync(ResolveDefaultDirectory(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos)));
 
-    public async Task NavigateAsync(string directory, string? selectedPath = null)
+    public Task NavigateAsync(string directory, string? selectedPath = null) => NavigateCoreAsync(directory, selectedPath);
+
+    private async Task NavigateCoreAsync(string directory, string? selectedPath = null, LocalBrowserHistoryTarget? historyTarget = null)
     {
         ClearSearch();
         var navigationVersion = Interlocked.Increment(ref _navigationVersion);
@@ -48,14 +54,17 @@ public sealed partial class LocalMediaBrowserView : UserControl
         {
             if (directory != LocalBrowserPath.Root && (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)))
             {
+                if (historyTarget is not null) throw new DirectoryNotFoundException(directory);
                 directory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 if (!Directory.Exists(directory)) return;
             }
 
             var entries = await Task.Run(() => EnumerateEntries(directory, selectedPath));
             if (navigationVersion != Volatile.Read(ref _navigationVersion)) return;
+            if (historyTarget is not null && !_navigationHistory.TryCommit(historyTarget)) return;
             if (!AreSameDirectory(directory, CurrentDirectory)) FilterBox.Text = string.Empty;
             CurrentDirectory = directory == LocalBrowserPath.Root ? directory : Path.GetFullPath(directory);
+            if (historyTarget is null) _navigationHistory.Record(CurrentDirectory);
             LoadedDirectory = directory == LocalBrowserPath.Root ? null : CurrentDirectory;
             _entries = entries;
             UpdateBreadcrumbs();
@@ -79,6 +88,7 @@ public sealed partial class LocalMediaBrowserView : UserControl
         }
 
         CurrentDirectory = Path.GetFullPath(directory);
+        _navigationHistory.Record(CurrentDirectory);
         LoadedDirectory = null;
         ClearSearch();
         FilterBox.Text = string.Empty;
@@ -164,6 +174,27 @@ public sealed partial class LocalMediaBrowserView : UserControl
         if (e.ClickedItem is not BrowserEntry entry) return;
         if (entry.IsDirectory) await NavigateAsync(entry.Path);
         else MediaRequested?.Invoke(this, new LocalMediaBrowserEntryEventArgs(entry.Path, false));
+    }
+
+    private async void OnBrowserPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var updateKind = e.GetCurrentPoint(this).Properties.PointerUpdateKind;
+        if (updateKind is not (PointerUpdateKind.XButton1Pressed or PointerUpdateKind.XButton2Pressed)) return;
+        e.Handled = true;
+        if (_historyNavigationInProgress) return;
+
+        var target = _navigationHistory.GetTarget(forward: updateKind == PointerUpdateKind.XButton2Pressed);
+        if (target is null) return;
+
+        _historyNavigationInProgress = true;
+        try
+        {
+            await NavigateCoreAsync(target.Directory, historyTarget: target);
+        }
+        finally
+        {
+            _historyNavigationInProgress = false;
+        }
     }
 
     private void UpdateBreadcrumbs()
