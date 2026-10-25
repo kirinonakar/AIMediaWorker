@@ -34,17 +34,19 @@ public static class AsrSubtitleSegmenter
                 result.AddRange(SegmentText(segment, normalized));
         }
 
-        return MergeDanglingSegments(result);
+        return MergeDanglingSegments(result, normalized);
     }
 
-    private static IReadOnlyList<AsrSegment> MergeDanglingSegments(IReadOnlyList<AsrSegment> segments)
+    private static IReadOnlyList<AsrSegment> MergeDanglingSegments(
+        IReadOnlyList<AsrSegment> segments, NormalizedOptions options)
     {
         if (segments.Count < 2) return segments;
 
         var result = new List<AsrSegment>(segments.Count);
         foreach (var segment in segments)
         {
-            if (result.Count == 0 || !IsDanglingSegmentText(segment.Text))
+            if (result.Count == 0 ||
+                (!IsDanglingSegmentText(segment.Text) && !IsJapaneseContinuationFragment(result[^1], segment, options)))
             {
                 result.Add(segment);
                 continue;
@@ -62,6 +64,34 @@ public static class AsrSubtitleSegmenter
         }
 
         return result;
+    }
+
+    internal static bool HasUnfinishedJapaneseText(string text) =>
+        LiveCaptionDisplaySegmenter.IsJapaneseText(null, text) && !IsSentenceBoundary(text);
+
+    private static bool IsJapaneseContinuationFragment(
+        AsrSegment previous, AsrSegment next, NormalizedOptions options)
+    {
+        // Native ASR segments can end inside an inflection, e.g. 悪くな / って / る。
+        // Only repair short kana tails of an unfinished, nearby Japanese cue.
+        if (!HasUnfinishedJapaneseText(previous.Text)) return false;
+        var previousText = previous.Text.TrimEnd();
+        if (previousText.Length == 0 || !IsNoSpaceCjk(previousText[^1])) return false;
+
+        var kanaCount = 0;
+        foreach (var character in next.Text)
+        {
+            if (char.IsWhiteSpace(character) || char.IsPunctuation(character)) continue;
+            if (!IsHiragana(character) && !JapaneseNonStarters.Contains(character)) return false;
+            if (++kanaCount > 3) return false;
+        }
+        if (kanaCount == 0) return false;
+
+        var maximumGap = Math.Max(options.SilenceSplitMicroseconds, options.MinimumCueMicroseconds);
+        return next.StartMicroseconds >= previous.StartMicroseconds &&
+               next.StartMicroseconds - previous.EndMicroseconds <= maximumGap &&
+               Math.Max(previous.EndMicroseconds, next.EndMicroseconds) - previous.StartMicroseconds <= options.MaximumCueMicroseconds &&
+               CountCharacters(AppendText(previous.Text, next.Text)) <= options.MaximumCharacters;
     }
 
     private static bool IsDanglingSegmentText(string text)
@@ -159,6 +189,11 @@ public static class AsrSubtitleSegmenter
         if (duration > options.MaximumCueMicroseconds) return true;
         if (CountCharacters(candidateText) > options.MaximumCharacters) return true;
 
+        // Aligner "words" may be individual kana rather than linguistic words.
+        // A speed threshold or a noisy alignment gap must not split an inflection
+        // while the complete cue still fits the duration and character limits.
+        if (IsJapaneseContinuationBoundary(previous.Text, next.Text)) return false;
+
         var hasSilenceGap = next.StartMicroseconds - previous.EndMicroseconds >= options.SilenceSplitMicroseconds;
         if (hasSilenceGap && currentDuration >= options.MinimumCueMicroseconds) return true;
 
@@ -171,6 +206,13 @@ public static class AsrSubtitleSegmenter
 
         return false;
     }
+
+    private static bool IsJapaneseContinuationBoundary(string previous, string next) =>
+        previous.Length > 0 && next.Length > 0 &&
+        IsNoSpaceCjk(previous[^1]) &&
+        (IsHiragana(next[0]) || JapaneseNonStarters.Contains(next[0]));
+
+    private static bool IsHiragana(char character) => character is >= '\u3041' and <= '\u3096';
 
     private static void AddCue(List<AsrSegment> result, AsrSegment source, IReadOnlyList<WordToken> tokens)
     {

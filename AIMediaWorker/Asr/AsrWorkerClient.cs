@@ -217,21 +217,20 @@ public sealed class AsrWorkerClient : IAsrEngine
         {
             yield return new AsrEvent { Id = requestId, Event = "progress", Stage = "decode", Progress = 0, Message = "Decoding audio to 16 kHz mono PCM." };
             var chunkSamples = (int)Math.Round(Math.Clamp(chunkDurationSeconds, 5, 30) * SampleRate);
+            var segmenter = new AsrSubtitleStreamSegmenter(segmentation);
             long processedSamples = 0;
             var ffmpeg = AsrRuntimePaths.TryGetFfmpegPath(_runtimeDirectory) ?? "ffmpeg";
             await foreach (var chunk in AsrAudioDecoder.DecodeAsync(ffmpeg, input, startMicroseconds,
                 chunkSamples, audioStreamIndex, token).ConfigureAwait(false))
             {
                 token.ThrowIfCancellationRequested();
-                if (!useVad || HasSpeech(chunk))
+                var segments = !useVad || HasSpeech(chunk)
+                    ? await TranscribeChunkAsync(chunk, processedSamples, startMicroseconds, language, token).ConfigureAwait(false)
+                    : [];
+                foreach (var segment in segmenter.Append(segments))
                 {
-                    var segments = await TranscribeChunkAsync(chunk, processedSamples, startMicroseconds, language, token).ConfigureAwait(false);
-                    var subtitleSegments = AsrSubtitleSegmenter.Segment(segments, segmentation);
-                    foreach (var segment in subtitleSegments)
-                    {
-                        token.ThrowIfCancellationRequested();
-                        yield return new AsrEvent { Id = requestId, Event = "segment", Segment = segment };
-                    }
+                    token.ThrowIfCancellationRequested();
+                    yield return new AsrEvent { Id = requestId, Event = "segment", Segment = segment };
                 }
 
                 processedSamples += chunk.Length;
@@ -248,6 +247,11 @@ public sealed class AsrWorkerClient : IAsrEngine
             }
 
             if (processedSamples == 0) throw new AsrWorkerException("AUDIO_EMPTY", "The media file contains no decodable audio samples.");
+            foreach (var segment in segmenter.Flush())
+            {
+                token.ThrowIfCancellationRequested();
+                yield return new AsrEvent { Id = requestId, Event = "segment", Segment = segment };
+            }
             yield return new AsrEvent { Id = requestId, Event = "completed", Progress = 1 };
         }
         finally
