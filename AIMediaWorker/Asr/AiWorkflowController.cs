@@ -338,6 +338,9 @@ internal sealed class AiWorkflowController : IAsyncDisposable
 
     private async Task<bool> GenerateSubtitlesAsync(string source, long startMicroseconds, CancellationToken token, bool preserveExisting)
     {
+        // Snapshot the selected track for this run before model loading can yield.
+        var selectedAudio = _playback.GetSelectedAudioTrack();
+        var audio = AsrAudioTrackSelection.Resolve(source, selectedAudio is null ? [] : [selectedAudio]);
         var document = preserveExisting ? _host.Document : new SubtitleDocument();
         var track = document.EnsureTrack("srt");
         if (string.IsNullOrWhiteSpace(track.Name)) track.Name = "Qwen3-ASR";
@@ -399,8 +402,9 @@ internal sealed class AiWorkflowController : IAsyncDisposable
         var generationCompleted = false;
         try
         {
-            await foreach (var result in _asrEngine.TranscribeFileAsync(source, settings.Asr.Language,
-                settings.Asr.ChunkDurationSeconds, settings.Asr.UseVad, options, generationStart, token).ConfigureAwait(false))
+            await foreach (var result in _asrEngine.TranscribeFileAsync(audio.Input, settings.Asr.Language,
+                settings.Asr.ChunkDurationSeconds, settings.Asr.UseVad, options, generationStart, token,
+                audio.StreamIndex, durationMicroseconds).ConfigureAwait(false))
             {
                 if (!ReferenceEquals(_host.Document, document)) throw new OperationCanceledException(token);
                 if (result.Event == "progress" && result.Progress is { } progress)

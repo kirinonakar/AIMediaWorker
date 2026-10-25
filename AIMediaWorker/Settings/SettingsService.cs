@@ -101,6 +101,11 @@ public sealed class SettingsService
         settings.Subtitle.FontFamily = string.IsNullOrWhiteSpace(settings.Subtitle.FontFamily) ? SubtitleSettings.DefaultFontFamily : settings.Subtitle.FontFamily.Trim();
         settings.Subtitle.Segmentation ??= new SegmentationSettings();
         settings.Asr ??= new AsrSettings();
+        // The session ABI supports CPU or GPU-when-available; precision comes from GGUF.
+        if (settings.Asr.Device != AsrDevice.Cpu) settings.Asr.Device = AsrDevice.Auto;
+        settings.Asr.Precision = AsrPrecision.Auto;
+        settings.Asr.ChunkDurationSeconds = double.IsFinite(settings.Asr.ChunkDurationSeconds)
+            ? Math.Clamp(settings.Asr.ChunkDurationSeconds, 5, 30) : 30;
         settings.Asr.ModelPath = AsrSettings.DefaultModelId;
         settings.Asr.AlignerPath = AsrSettings.DefaultAlignerId;
         settings.Asr.WorkerDirectory = string.IsNullOrWhiteSpace(settings.Asr.WorkerDirectory) ? null : settings.Asr.WorkerDirectory.Trim();

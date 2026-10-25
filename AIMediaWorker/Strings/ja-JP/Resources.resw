@@ -202,4 +202,5 @@
 <data name="DictationReady"><value>準備完了：別のアプリの入力欄をクリックしてから話してください。</value></data>
 <data name="DictationStopped"><value>音声入力を停止しました。</value></data>
 <data name="DictationInputFailed"><value>対象アプリに認識したテキストを入力できませんでした。</value></data>
+  <data name="AsrRuntimeSelectionDescription.Text"><value>Auto は利用可能な GPU を使用し、Cpu は音声認識を CPU で実行します。精度は GGUF モデルで決まります。強制アラインメントのデバイスは自動選択されます。</value></data>
 </root>

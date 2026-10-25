@@ -202,4 +202,5 @@
 <data name="DictationReady"><value>Ready. Click an input field in another app, then start speaking.</value></data>
 <data name="DictationStopped"><value>Voice typing stopped.</value></data>
 <data name="DictationInputFailed"><value>Text could not be inserted into the target app.</value></data>
+  <data name="AsrRuntimeSelectionDescription.Text"><value>Auto uses a GPU when available; CPU forces recognition on the CPU. Precision is determined by the GGUF model. Forced alignment selects its device automatically.</value></data>
 </root>

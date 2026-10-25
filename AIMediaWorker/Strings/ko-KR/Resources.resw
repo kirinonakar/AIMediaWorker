@@ -202,4 +202,5 @@
 <data name="DictationReady"><value>준비됨: 다른 앱의 입력창을 클릭한 뒤 말씀하세요.</value></data>
 <data name="DictationStopped"><value>음성 입력을 중지했습니다.</value></data>
 <data name="DictationInputFailed"><value>대상 앱에 인식된 글자를 입력할 수 없습니다.</value></data>
+  <data name="AsrRuntimeSelectionDescription.Text"><value>Auto는 사용 가능한 GPU를 사용하며, Cpu는 음성 인식을 CPU에서 실행합니다. 정밀도는 GGUF 모델로 결정됩니다. 강제 정렬 장치는 자동 선택됩니다.</value></data>
 </root>

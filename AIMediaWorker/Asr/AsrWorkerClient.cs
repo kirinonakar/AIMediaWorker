@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace AIMediaWorker.Asr;
 
@@ -15,11 +14,6 @@ public sealed class AsrWorkerClient : IAsrEngine
     private const int SampleRate = 16_000;
     private const int LiveDecodeIntervalSamples = SampleRate;
     private const long CentisecondMicroseconds = 10_000;
-    private static readonly TimeSpan[] EmptyDecodeRetryDelays =
-    [
-        TimeSpan.FromMilliseconds(100),
-        TimeSpan.FromMilliseconds(300)
-    ];
     private readonly object _lifecycleLock = new();
     private readonly SemaphoreSlim _inferenceLock = new(1, 1);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
@@ -28,6 +22,7 @@ public sealed class AsrWorkerClient : IAsrEngine
     private string? _runtimeDirectory;
     private string? _modelPath;
     private string? _alignerPath;
+    private string _device = "auto";
     private bool _disposed;
 
     public AsrWorkerState State { get; private set; } = AsrWorkerState.NotStarted;
@@ -74,19 +69,19 @@ public sealed class AsrWorkerClient : IAsrEngine
         var runtimeDirectory = _runtimeDirectory ?? throw new InvalidOperationException("The CrispASR runtime has not been configured.");
         var modelPath = _modelPath;
         var alignerPath = _alignerPath;
+        var device = _device;
 
         await ShutdownAsync(cancellationToken).ConfigureAwait(false);
         await StartAsync(runtimeDirectory, cancellationToken).ConfigureAwait(false);
         if (modelPath is not null)
-            await LoadModelAsync(modelPath, alignerPath, "auto", "auto", cancellationToken: cancellationToken).ConfigureAwait(false);
+            await LoadModelAsync(modelPath, alignerPath, device, "auto", cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     public async Task LoadModelAsync(string modelPath, string? alignerPath, string device, string precision,
                                      IProgress<AsrEvent>? progress = null,
                                      CancellationToken cancellationToken = default)
     {
-        _ = device;
-        _ = precision;
+        var useGpu = CrispAsrNative.ResolveUseGpu(device, precision);
         ObjectDisposedException.ThrowIf(_disposed, this);
         var runtimeDirectory = _runtimeDirectory ?? throw new InvalidOperationException("StartAsync must be called before loading an ASR model.");
         var resolvedModelPath = ResolveModelPath(modelPath, runtimeDirectory);
@@ -147,7 +142,7 @@ public sealed class AsrWorkerClient : IAsrEngine
             try
             {
                 newSession = await Task.Run(() =>
-                    CrispAsrNative.OpenSession(resolvedModelPath, threadCount), cancellationToken).ConfigureAwait(false);
+                    CrispAsrNative.OpenSession(resolvedModelPath, threadCount, useGpu), cancellationToken).ConfigureAwait(false);
 
                 nint previousSession;
                 lock (_lifecycleLock)
@@ -156,6 +151,7 @@ public sealed class AsrWorkerClient : IAsrEngine
                     _session = newSession;
                     _modelPath = resolvedModelPath;
                     _alignerPath = resolvedAlignerPath;
+                    _device = device;
                     newSession = 0;
                 }
                 CrispAsrNative.CloseSession(previousSession);
@@ -203,9 +199,12 @@ public sealed class AsrWorkerClient : IAsrEngine
         bool useVad = true,
         AsrSegmentationOptions? segmentation = null,
         long startMicroseconds = 0,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default,
+        int? audioStreamIndex = null,
+        long? durationMicroseconds = null)
     {
-        _ = segmentation;
+        if (!double.IsFinite(chunkDurationSeconds)) throw new ArgumentOutOfRangeException(nameof(chunkDurationSeconds));
+        if (audioStreamIndex < 0) throw new ArgumentOutOfRangeException(nameof(audioStreamIndex));
         if (startMicroseconds < 0) throw new ArgumentOutOfRangeException(nameof(startMicroseconds));
         var input = ResolveInput(path);
         var requestId = $"job-{Guid.NewGuid():N}";
@@ -217,17 +216,13 @@ public sealed class AsrWorkerClient : IAsrEngine
         try
         {
             yield return new AsrEvent { Id = requestId, Event = "progress", Stage = "decode", Progress = 0, Message = "Decoding audio to 16 kHz mono PCM." };
-            var samples = await DecodeMediaAsync(input, startMicroseconds, token).ConfigureAwait(false);
-            if (samples.Length == 0) throw new AsrWorkerException("AUDIO_EMPTY", "The media file contains no decodable audio samples.");
-
-            var chunkSamples = Math.Clamp((int)Math.Round(Math.Clamp(chunkDurationSeconds, 5, 180) * SampleRate), SampleRate, SampleRate * 180);
-            var processedSamples = 0;
-            while (processedSamples < samples.Length)
+            var chunkSamples = (int)Math.Round(Math.Clamp(chunkDurationSeconds, 5, 30) * SampleRate);
+            long processedSamples = 0;
+            var ffmpeg = AsrRuntimePaths.TryGetFfmpegPath(_runtimeDirectory) ?? "ffmpeg";
+            await foreach (var chunk in AsrAudioDecoder.DecodeAsync(ffmpeg, input, startMicroseconds,
+                chunkSamples, audioStreamIndex, token).ConfigureAwait(false))
             {
                 token.ThrowIfCancellationRequested();
-                var count = Math.Min(chunkSamples, samples.Length - processedSamples);
-                var chunk = samples.AsSpan(processedSamples, count).ToArray();
-                var progressValue = Math.Clamp((double)(processedSamples + count) / samples.Length, 0, 1);
                 if (!useVad || HasSpeech(chunk))
                 {
                     var segments = await TranscribeChunkAsync(chunk, processedSamples, startMicroseconds, language, token).ConfigureAwait(false);
@@ -239,17 +234,20 @@ public sealed class AsrWorkerClient : IAsrEngine
                     }
                 }
 
-                processedSamples += count;
+                processedSamples += chunk.Length;
                 yield return new AsrEvent
                 {
                     Id = requestId,
                     Event = "progress",
                     Stage = "transcribe",
-                    Progress = progressValue,
+                    Progress = durationMicroseconds is { } duration && duration > startMicroseconds
+                        ? Math.Clamp((double)SamplesToMicroseconds(processedSamples) / (duration - startMicroseconds), 0, 0.999)
+                        : null,
                     Message = "Transcribing with CrispASR."
                 };
             }
 
+            if (processedSamples == 0) throw new AsrWorkerException("AUDIO_EMPTY", "The media file contains no decodable audio samples.");
             yield return new AsrEvent { Id = requestId, Event = "completed", Progress = 1 };
         }
         finally
@@ -359,7 +357,7 @@ public sealed class AsrWorkerClient : IAsrEngine
 
     private async Task<IReadOnlyList<AsrSegment>> TranscribeChunkAsync(
         float[] samples,
-        int absoluteSampleOffset,
+        long absoluteSampleOffset,
         long startMicroseconds,
         string language,
         CancellationToken cancellationToken)
@@ -378,6 +376,7 @@ public sealed class AsrWorkerClient : IAsrEngine
                     exception => WorkerLog?.Invoke(this, $"CrispASR forced alignment fallback: {exception.Message}"));
             }, cancellationToken).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) { throw; }
         catch (AsrWorkerException)
         {
             throw;
@@ -412,7 +411,7 @@ public sealed class AsrWorkerClient : IAsrEngine
     private static IReadOnlyList<AsrSegment> MapSegments(
         CrispAsrNative.NativeSegment[] nativeSegments,
         float[] chunkSamples,
-        int absoluteSampleOffset,
+        long absoluteSampleOffset,
         long startMicroseconds,
         string? alignerPath,
         int threadCount,
@@ -510,110 +509,6 @@ public sealed class AsrWorkerClient : IAsrEngine
         }).ToArray();
     }
 
-    private async Task<float[]> DecodeMediaAsync(string input, long startMicroseconds, CancellationToken cancellationToken)
-    {
-        for (var attempt = 0; ; attempt++)
-        {
-            var samples = await DecodeMediaOnceAsync(input, startMicroseconds, probeMore: attempt > 0, cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (samples.Length > 0) return samples;
-            if (attempt >= EmptyDecodeRetryDelays.Length) break;
-            await Task.Delay(EmptyDecodeRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
-        }
-
-        if (startMicroseconds > 0)
-        {
-            // WebM/Opus can occasionally produce no packets when an output seek is
-            // requested immediately after the player opens the file. Decode from the
-            // beginning as a last resort, then trim in memory so cue timestamps still
-            // refer to the requested media position.
-            var completeSamples = await DecodeMediaOnceAsync(input, 0, probeMore: true, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return TrimSamplesFromStart(completeSamples, startMicroseconds);
-        }
-
-        return [];
-    }
-
-    private async Task<float[]> DecodeMediaOnceAsync(
-        string input,
-        long startMicroseconds,
-        bool probeMore,
-        CancellationToken cancellationToken)
-    {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = AsrRuntimePaths.TryGetFfmpegPath(_runtimeDirectory) ?? "ffmpeg",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            }
-        };
-        foreach (var argument in BuildDecodeArguments(input, startMicroseconds, probeMore)) process.StartInfo.ArgumentList.Add(argument);
-
-        try
-        {
-            if (!process.Start()) throw new InvalidOperationException("FFmpeg did not start.");
-        }
-        catch (System.ComponentModel.Win32Exception exception)
-        {
-            throw new AsrWorkerException("AUDIO_DECODE_ERROR", $"FFmpeg is required to decode ASR input: {exception.Message}");
-        }
-
-        using var output = new MemoryStream();
-        try
-        {
-            var copyTask = process.StandardOutput.BaseStream.CopyToAsync(output, cancellationToken);
-            var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-            await Task.WhenAll(copyTask, errorTask, process.WaitForExitAsync(cancellationToken)).ConfigureAwait(false);
-            var error = await errorTask.ConfigureAwait(false);
-            if (process.ExitCode != 0)
-                throw new AsrWorkerException("AUDIO_DECODE_ERROR", string.IsNullOrWhiteSpace(error) ? "FFmpeg could not decode the media." : error.Trim());
-        }
-        catch
-        {
-            TryTerminate(process);
-            throw;
-        }
-
-        var bytes = output.ToArray();
-        if (bytes.Length == 0) return [];
-        if (bytes.Length % sizeof(float) != 0) throw new AsrWorkerException("AUDIO_DECODE_ERROR", "FFmpeg returned an incomplete float PCM frame.");
-        return MemoryMarshal.Cast<byte, float>(bytes).ToArray();
-    }
-
-    private static IReadOnlyList<string> BuildDecodeArguments(string input, long startMicroseconds, bool probeMore = false)
-    {
-        var arguments = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
-        if (probeMore)
-        {
-            // Some WebM files put the first audio packets far enough after the video
-            // header that FFmpeg's default probe can finish without exposing audio.
-            arguments.AddRange(["-probesize", "100000000", "-analyzeduration", "10000000"]);
-        }
-        arguments.AddRange(["-i", input]);
-        if (startMicroseconds > 0)
-        {
-            // Seek after opening the input so the timestamps are accurate. The decoded
-            // PCM starts at the requested media position, while TranscribeChunkAsync
-            // restores that same position to every emitted subtitle cue.
-            arguments.Add("-ss");
-            arguments.Add((startMicroseconds / 1_000_000d).ToString("0.######", System.Globalization.CultureInfo.InvariantCulture));
-        }
-        arguments.AddRange(["-map", "0:a:0?", "-vn", "-ac", "1", "-ar", SampleRate.ToString(), "-f", "f32le", "pipe:1"]);
-        return arguments;
-    }
-
-    private static float[] TrimSamplesFromStart(float[] samples, long startMicroseconds)
-    {
-        if (samples.Length == 0 || startMicroseconds <= 0) return samples;
-        var offset = (long)Math.Floor(startMicroseconds * (double)SampleRate / 1_000_000d);
-        if (offset <= 0) return samples;
-        if (offset >= samples.LongLength) return [];
-        return samples[(int)offset..];
-    }
-
     private static string ResolveInput(string path)
     {
         if (File.Exists(path)) return Path.GetFullPath(path);
@@ -669,12 +564,6 @@ public sealed class AsrWorkerClient : IAsrEngine
     // CrispASR creates native worker threads, so the limit must leave headroom for
     // playback (including AV1 decoding and NVIDIA VSR).
     private static int NativeThreadCount => Math.Clamp(Environment.ProcessorCount / 4, 1, 2);
-
-    private static void TryTerminate(Process process)
-    {
-        try { if (!process.HasExited) process.Kill(true); }
-        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception) { }
-    }
 
     private void SetState(AsrWorkerState state)
     {

@@ -11,7 +11,6 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using System.Threading.Channels;
 using Windows.Graphics;
 using Windows.UI;
 using WinRT.Interop;
@@ -29,12 +28,7 @@ public sealed partial class WindowsCaptionWindow : Window
     private readonly AudioCaptureService _audio = new();
     private readonly LiveAsrController _liveAsr;
     private readonly LiveCaptionStabilizer _captionStabilizer = new();
-    private readonly Channel<TranslationRequest> _translationQueue = Channel.CreateUnbounded<TranslationRequest>(new UnboundedChannelOptions
-    {
-        SingleReader = true,
-        SingleWriter = true,
-        AllowSynchronousContinuations = false
-    });
+    private readonly LiveTranslationQueue _translationQueue = new();
     private readonly SemaphoreSlim _settingsSaveGate = new(1, 1);
     private readonly DispatcherQueueTimer _pendingFlushTimer;
     private const int MaximumDisplayedTranslationHistoryItems = 2;
@@ -61,14 +55,6 @@ public sealed partial class WindowsCaptionWindow : Window
     private int _previousSentenceCount = 1;
     private bool _initializingControls;
     private bool _allowClose;
-
-    private sealed record TranslationRequest(
-        string Text,
-        string SourceContext,
-        long Generation,
-        long Sequence,
-        long DisplayRevision,
-        bool CompletesSentence);
 
     private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
     {
@@ -297,6 +283,7 @@ public sealed partial class WindowsCaptionWindow : Window
             }
             _translating = true;
             _translationGeneration++;
+            _translationQueue.Clear();
             _translationDisplayRevision = 0;
             _pendingCommittedSource = string.Empty;
             _translationSourceContext = string.Empty;
@@ -316,6 +303,7 @@ public sealed partial class WindowsCaptionWindow : Window
         {
             _translating = false;
             _translationGeneration++;
+            _translationQueue.Clear();
             _translationDisplayRevision = 0;
             _pendingCommittedSource = string.Empty;
             _translationSourceContext = string.Empty;
@@ -336,8 +324,9 @@ public sealed partial class WindowsCaptionWindow : Window
         var replaceDisplayedTranslation = false;
         try
         {
-            await foreach (var firstItem in _translationQueue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            while (!cancellationToken.IsCancellationRequested)
             {
+                var firstItem = await _translationQueue.ReadAsync(cancellationToken).ConfigureAwait(false);
                 if (!_translating || firstItem.Generation != _translationGeneration ||
                     string.IsNullOrWhiteSpace(firstItem.Text)) continue;
                 if (firstItem.Generation != activeGeneration)
@@ -378,7 +367,7 @@ public sealed partial class WindowsCaptionWindow : Window
     }
 
     private async Task<string> TranslateAsync(
-        TranslationRequest request,
+        LiveTranslationRequest request,
         string prefix,
         bool replaceDisplayedTranslation,
         CancellationToken cancellationToken)
@@ -484,14 +473,14 @@ public sealed partial class WindowsCaptionWindow : Window
     {
         var normalized = NormalizeHistoryText(text);
         if (normalized.Length == 0) return;
-        var request = new TranslationRequest(
+        var request = new LiveTranslationRequest(
             normalized,
             _translationSourceContext,
             _translationGeneration,
             ++_translationRequestSequence,
             _translationDisplayRevision,
             completesSentence);
-        _translationQueue.Writer.TryWrite(request);
+        _translationQueue.Enqueue(request);
         _translationSourceContext = AppendSource(_translationSourceContext, normalized);
         if (_translationSourceContext.Length > 480) _translationSourceContext = _translationSourceContext[^480..].TrimStart();
     }

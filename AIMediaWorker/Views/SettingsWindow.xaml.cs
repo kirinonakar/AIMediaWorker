@@ -41,8 +41,8 @@ public sealed partial class SettingsWindow : Window
     public Array HdrOutputModes { get; } = Enum.GetValues<HdrOutputMode>();
     public Array RtxModes { get; } = Enum.GetValues<RtxVideoSuperResolutionMode>();
     public IReadOnlyList<string> ToolbarIconSizeOptions { get; } = [L("ToolbarIconSizeDefault"), L("ToolbarIconSizeLarge")];
-    public Array AsrDevices { get; } = Enum.GetValues<AsrDevice>();
-    public Array Precisions { get; } = Enum.GetValues<AsrPrecision>();
+    public Array AsrDevices { get; } = new[] { AsrDevice.Auto, AsrDevice.Cpu };
+    public Array Precisions { get; } = new[] { AsrPrecision.Auto };
     public Array ThinkingLevels { get; } = Enum.GetValues<ThinkingLevel>();
     public IReadOnlyList<FileAssociationOption> AssociationOptions { get; } = WindowsFileAssociationService.SupportedExtensions.Select(extension => new FileAssociationOption(extension)).ToArray();
     public string[] Providers { get; } = ["Unsloth Desktop", "Ollama", "LM Studio", "Google", "OllamaCloud", "OpenCodeGo", "OpenCodeZen"];

@@ -19,9 +19,20 @@ internal static class CrispAsrNative
     private static extern bool SetDllDirectory(string? pathName);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern nint crispasr_session_open(
+    private static extern nint crispasr_session_open_with_params(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string modelPath,
-        int nThreads);
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? backendName,
+        in OpenParams parameters);
+
+    // CrispASR's versioned v1 ABI includes eight reserved int fields (48 bytes).
+    [StructLayout(LayoutKind.Sequential, Size = 48)]
+    internal struct OpenParams
+    {
+        public int AbiVersion;
+        public int Threads;
+        public int UseGpu;
+        public int Verbosity;
+    }
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void crispasr_session_close(nint session);
@@ -120,12 +131,25 @@ internal static class CrispAsrNative
         }
     }
 
-    public static nint OpenSession(string modelPath, int nThreads)
+    internal static bool ResolveUseGpu(string device, string precision)
+    {
+        if (!string.Equals(precision, "auto", StringComparison.OrdinalIgnoreCase))
+            throw new AsrWorkerException("UNSUPPORTED_PRECISION", "CrispASR precision is determined by the GGUF model. Select Auto.");
+        return device.ToLowerInvariant() switch
+        {
+            "auto" => true,
+            "cpu" => false,
+            _ => throw new AsrWorkerException("UNSUPPORTED_DEVICE", "Select Auto (GPU when available) or CPU for CrispASR.")
+        };
+    }
+
+    public static nint OpenSession(string modelPath, int nThreads, bool useGpu)
     {
         // Let CrispASR inspect general.architecture. This is the same path as
         // its supported C# binding and avoids passing a CLI-only alias such as
         // qwen3-1.7b to the native dispatcher.
-        var session = crispasr_session_open(modelPath, nThreads);
+        var parameters = new OpenParams { AbiVersion = 1, Threads = nThreads, UseGpu = useGpu ? 1 : 0 };
+        var session = crispasr_session_open_with_params(modelPath, null, in parameters);
         if (session == 0) throw new InvalidOperationException($"CrispASR could not open the Qwen3 session for '{modelPath}'.");
         return session;
     }

@@ -417,6 +417,22 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         SetProperty("ab-loop-b", end is null ? "no" : end.Value.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture));
     }
 
+    internal MediaTrack? GetSelectedAudioTrack()
+    {
+        // Query mpv directly so a selection made just before ASR starts does not
+        // depend on the delayed track-list refresh used by the UI.
+        const string prefix = "current-tracks/audio/";
+        if (GetInt(prefix + "id") is not { } id) return null;
+        return new MediaTrack(id, MediaTrackType.Audio, GetString(prefix + "lang"),
+            GetString(prefix + "title"), GetString(prefix + "codec"),
+            GetBool(prefix + "default"), GetBool(prefix + "forced"), true)
+        {
+            FfmpegStreamIndex = GetInt(prefix + "ff-index"),
+            IsExternal = GetBool(prefix + "external"),
+            ExternalFilename = GetString(prefix + "external-filename")
+        };
+    }
+
     public void SelectTrack(MediaTrackType type, int? id)
     {
         SetProperty(type switch
@@ -834,7 +850,12 @@ public sealed class MpvPlaybackEngine : IPlaybackEngine
         {
             var prefix = $"track-list/{i}/";
             var type = GetString(prefix + "type") switch { "video" => MediaTrackType.Video, "audio" => MediaTrackType.Audio, "sub" => MediaTrackType.Subtitle, _ => MediaTrackType.Unknown };
-            result.Add(new MediaTrack(GetInt(prefix + "id") ?? -1, type, GetString(prefix + "lang"), GetString(prefix + "title"), GetString(prefix + "codec"), GetBool(prefix + "default"), GetBool(prefix + "forced"), GetBool(prefix + "selected")));
+            result.Add(new MediaTrack(GetInt(prefix + "id") ?? -1, type, GetString(prefix + "lang"), GetString(prefix + "title"), GetString(prefix + "codec"), GetBool(prefix + "default"), GetBool(prefix + "forced"), GetBool(prefix + "selected"))
+            {
+                FfmpegStreamIndex = GetInt(prefix + "ff-index"),
+                IsExternal = GetBool(prefix + "external"),
+                ExternalFilename = GetString(prefix + "external-filename")
+            });
         }
         lock (_sync) { _tracks.Clear(); _tracks.AddRange(result); }
         RestoreSubtitleVisibility();

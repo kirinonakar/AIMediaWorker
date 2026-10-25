@@ -14,6 +14,9 @@ public sealed record MediaTrack(
     bool IsForced,
     bool IsSelected)
 {
+    public int? FfmpegStreamIndex { get; init; }
+    public bool IsExternal { get; init; }
+    public string? ExternalFilename { get; init; }
     public string DisplayName => $"{Id}: {Title ?? Language ?? Codec ?? Type.ToString()}";
 }
 

@@ -410,7 +410,7 @@ public sealed class AsrTests
         await client.StartAsync(runtime, cancellation.Token);
         var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), AsrRuntimePaths.AsrModelFileName);
         var progress = new RecordingProgress();
-        var error = await Assert.ThrowsAsync<AsrWorkerException>(() => client.LoadModelAsync(missing, null, "cpu", "float32", progress, cancellation.Token));
+        var error = await Assert.ThrowsAsync<AsrWorkerException>(() => client.LoadModelAsync(missing, null, "cpu", "auto", progress, cancellation.Token));
         Assert.Equal("MODEL_NOT_FOUND", error.Code);
         Assert.Contains(progress.Events, update => update.Event == "progress" && update.Stage == "loading");
         Assert.Equal(AsrWorkerState.Ready, client.State);

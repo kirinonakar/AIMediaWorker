@@ -6,6 +6,23 @@ namespace AIMediaWorker.Tests;
 
 public sealed class SettingsServiceTests
 {
+    [Theory]
+    [InlineData("Cuda", "Float16", 180, AsrDevice.Auto, 30)]
+    [InlineData("Cpu", "Int8", 1, AsrDevice.Cpu, 5)]
+    public async Task LoadNormalizesLegacyAsrOptions(string device, string precision, int seconds, AsrDevice expected, int expectedSeconds)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"aimedia-settings-{Guid.NewGuid():N}.json");
+        try
+        {
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { Asr = new { Device = device, Precision = precision, ChunkDurationSeconds = seconds } }));
+            var settings = await new SettingsService(path).LoadAsync();
+            Assert.Equal(expected, settings.Asr.Device);
+            Assert.Equal(AsrPrecision.Auto, settings.Asr.Precision);
+            Assert.Equal(expectedSeconds, settings.Asr.ChunkDurationSeconds);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Fact]
     public async Task LoadKeepsCrispAsrRuntimeDirectoryInSyncWithWorkerFolder()
     {
