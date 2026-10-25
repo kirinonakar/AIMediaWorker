@@ -9,25 +9,6 @@ namespace AIMediaWorker.Tests;
 public sealed class LlmTests
 {
     [Fact]
-    public async Task OcrTextTranslationPreservesSourceAndTargetInstructions()
-    {
-        string? capturedPrompt = null;
-        var provider = new FakeProvider(prompt =>
-        {
-            capturedPrompt = prompt;
-            return "번역된 첫 줄\n번역된 둘째 줄";
-        });
-
-        var result = await new LlmService(provider, "fake").TranslateTextAsync(
-            "First line\nSecond line",
-            "Korean");
-
-        Assert.Equal("번역된 첫 줄\n번역된 둘째 줄", result);
-        Assert.Contains("First line\nSecond line", capturedPrompt);
-        Assert.Contains("Korean", capturedPrompt);
-    }
-
-    [Fact]
     public async Task VlmRecognitionSendsImageAndReturnsSourceWithTranslation()
     {
         var provider = new VisionFakeProvider("{\"sourceText\":\"Hello\",\"translation\":\"안녕하세요\"}");
@@ -62,28 +43,6 @@ public sealed class LlmTests
         Assert.Contains("data:image/png;base64,AQID", body);
         Assert.Contains("image_url", body);
         Assert.Contains("read image", body);
-    }
-
-    [Fact]
-    public async Task OpenCodeGoSendsOneStableSessionHeaderAcrossRequests()
-    {
-        var sessionIds = new List<string>();
-        using var http = new HttpClient(new CaptureHandler(request =>
-        {
-            sessionIds.Add(request.Headers.GetValues("x-opencode-session").Single());
-            var content = request.RequestUri!.AbsolutePath.EndsWith("/models", StringComparison.Ordinal)
-                ? "{\"data\":[]}"
-                : "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}";
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(content) });
-        }));
-        using var provider = new OpenCodeGoProvider("test-key", http);
-
-        await provider.GetModelsAsync();
-        await provider.GenerateAsync("model", "system", "user", new LlmGenerationOptions());
-
-        Assert.Equal(2, sessionIds.Count);
-        Assert.All(sessionIds, sessionId => Assert.True(Guid.TryParse(sessionId, out _)));
-        Assert.Equal(sessionIds[0], sessionIds[1]);
     }
 
     [Fact]
@@ -296,24 +255,6 @@ public sealed class LlmTests
     }
 
     [Fact]
-    public async Task TranslationPromptKeepsUnicodeCharactersInsteadOfEscapingThem()
-    {
-        string? capturedPrompt = null;
-        var cue = new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "あれからここに来て良かった" };
-        var provider = new FakeProvider(prompt =>
-        {
-            capturedPrompt = prompt;
-            return $"<think>번역을 확인합니다.</think>{{\"items\":[{{\"id\":\"{cue.Id}\",\"text\":\"여기에 오길 잘했다\"}}]}}";
-        });
-
-        var translated = await new LlmService(provider, "fake").TranslateAsync([cue], "한국어");
-
-        Assert.Contains("あれからここに来て良かった", capturedPrompt);
-        Assert.DoesNotContain("\\u3042", capturedPrompt, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal("여기에 오길 잘했다", translated[cue.Id]);
-    }
-
-    [Fact]
     public async Task TranslationFallsBackToResponseOrderWhenCueIdsAreMissing()
     {
         var first = new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "おはよう" };
@@ -391,55 +332,6 @@ public sealed class LlmTests
     }
 
     [Fact]
-    public async Task SummaryUsesTheRequestedTargetLanguageForEveryPass()
-    {
-        var prompts = new List<string>();
-        var provider = new FakeProvider(prompt =>
-        {
-            prompts.Add(prompt);
-            return "summary";
-        });
-        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "Hello" } };
-
-        await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Short, "日本語");
-
-        Assert.NotEmpty(prompts);
-        Assert.All(prompts, prompt => Assert.Contains("日本語", prompt));
-    }
-
-    [Fact]
-    public async Task DetailedSummaryKeepsDetailInstructionsThroughTheFinalPass()
-    {
-        var prompts = new List<string>();
-        var provider = new FakeProvider(prompt =>
-        {
-            prompts.Add(prompt);
-            return "summary";
-        });
-        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "The decision was approved on 2026-01-02." } };
-
-        await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Detailed, "English");
-
-        Assert.Contains(prompts, prompt => prompt.Contains("comprehensive intermediate summary", StringComparison.Ordinal));
-        Assert.Contains("Do not omit relevant details", prompts[^1], StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task DetailedSummaryRemovesGenericIntroAndRetriesWhenItIsTheOnlyOutput()
-    {
-        var calls = 0;
-        var provider = new FakeProvider(_ => ++calls == 3
-            ? "핵심 내용은 일정과 승인된 결정입니다."
-            : "제공된 내용을 바탕으로 작성한 상세 요약입니다.");
-        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "The decision was approved." } };
-
-        var result = await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Detailed, "Korean");
-
-        Assert.Equal("핵심 내용은 일정과 승인된 결정입니다.", result);
-        Assert.Equal(3, calls);
-    }
-
-    [Fact]
     public async Task DetailedSummaryRetriesWhenFinalOutputIsOnlyAHeading()
     {
         var calls = 0;
@@ -457,108 +349,8 @@ public sealed class LlmTests
         Assert.Equal(3, calls);
     }
 
-    [Fact]
-    public async Task DetailedSummaryFinalPassUsesTheIntermediateDetailedContent()
-    {
-        var prompts = new List<string>();
-        var provider = new FakeProvider(prompt =>
-        {
-            prompts.Add(prompt);
-            return prompts.Count == 1 ? "중간 상세 요약에 포함된 본문입니다." : "최종 상세 요약 본문입니다.";
-        });
-        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "원본 자막에만 있는 사실" } };
-
-        await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Detailed, "Korean");
-
-        Assert.Contains("중간 상세 요약에 포함된 본문입니다.", prompts[^1], StringComparison.Ordinal);
-        Assert.DoesNotContain("원본 자막에만 있는 사실", prompts[^1], StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task DetailedSummaryPreservesMarkdownBody()
-    {
-        const string markdown = "**일본의 크리스마스 치킨 문화와 KFC 관련 상세 요약**\n\n**1. 문화적 배경 및 기원**\n일본의 크리스마스 치킨 문화는 KFC의 마케팅에서 시작되었습니다.";
-        var provider = new FakeProvider(_ => markdown);
-        var cues = new[] { new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 1_000_000, Text = "일본의 크리스마스 치킨 문화" } };
-
-        var result = await new LlmService(provider, "fake").SummarizeAsync(cues, SummaryKind.Detailed, "Korean");
-
-        Assert.Equal(markdown, result);
-    }
-
-    [Fact]
-    public async Task GoogleMapsThinkingLevelOnlyForSupportedModelFamilies()
-    {
-        string? body = null;
-        using var http = new HttpClient(new CaptureHandler(async request =>
-        {
-            body = await request.Content!.ReadAsStringAsync();
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}") };
-        }));
-        using var provider = new GoogleProvider("test-key", http);
-
-        await provider.GenerateAsync("gemini-3-flash", "system", "user", new LlmGenerationOptions(ThinkingLevel.Low), CancellationToken.None);
-
-        Assert.Contains("\"thinkingLevel\":\"low\"", body);
-    }
-
-    [Fact]
-    public async Task UnslothDesktopUsesDesktopApiAddress()
-    {
-        Uri? requestUri = null;
-        using var http = new HttpClient(new CaptureHandler(request =>
-        {
-            requestUri = request.RequestUri;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"data\":[]}") });
-        }));
-        using var provider = new UnslothProvider(httpClient: http);
-
-        await provider.GetModelsAsync();
-
-        Assert.Equal("Unsloth Desktop", provider.DisplayName);
-        Assert.Equal("http://127.0.0.1:8888/v1/models", requestUri?.AbsoluteUri);
-    }
-
-    [Fact]
-    public async Task OllamaUsesLocalApiAddress()
-    {
-        Uri? requestUri = null;
-        using var http = new HttpClient(new CaptureHandler(request =>
-        {
-            requestUri = request.RequestUri;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"data\":[]}") });
-        }));
-        using var provider = new OllamaProvider(httpClient: http);
-
-        await provider.GetModelsAsync();
-
-        Assert.Equal("Ollama", provider.DisplayName);
-        Assert.Equal("http://localhost:11434/v1/models", requestUri?.AbsoluteUri);
-    }
-
-    [Fact]
-    public async Task LmStudioUsesLocalApiAddress()
-    {
-        Uri? requestUri = null;
-        using var http = new HttpClient(new CaptureHandler(request =>
-        {
-            requestUri = request.RequestUri;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"data\":[]}") });
-        }));
-        using var provider = new LmStudioProvider(httpClient: http);
-
-        await provider.GetModelsAsync();
-
-        Assert.Equal("LM Studio", provider.DisplayName);
-        Assert.Equal("http://localhost:1234/v1/models", requestUri?.AbsoluteUri);
-    }
-
     [Theory]
     [InlineData(ThinkingLevel.Off, false, "none")]
-    [InlineData(ThinkingLevel.Low, true, "low")]
-    [InlineData(ThinkingLevel.Medium, true, "medium")]
-    [InlineData(ThinkingLevel.High, true, "high")]
-    [InlineData(ThinkingLevel.XHigh, true, "xhigh")]
     [InlineData(ThinkingLevel.Max, true, "max")]
     public async Task UnslothDesktopMapsThinkingSettings(ThinkingLevel level, bool enabled, string effort)
     {

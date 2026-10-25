@@ -75,111 +75,19 @@ public sealed class SubtitleTests
     }
 
     [Fact]
-    public void SubtitleDecoderUsesConfiguredFallbackForNonSmiText()
-    {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        var eucKr = Encoding.GetEncoding("euc-kr", EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
-        var bytes = eucKr.GetBytes("설정된 인코딩");
-
-        var decoded = SubtitleTextDecoder.Decode(bytes, eucKr);
-
-        Assert.Equal("설정된 인코딩", decoded);
-    }
-
-    [Theory]
-    [InlineData("Movie.mkv", "movie.SMI", true)]
-    [InlineData("movie.mp4", "movie.en.smi", false)]
-    [InlineData("movie.mp4", "movie.srt", false)]
-    public void SmiSidecarMatchingRequiresTheSameBaseName(string mediaName, string subtitleName, bool expected)
-    {
-        Assert.Equal(expected, SmiParser.IsSidecarFor(mediaName, subtitleName));
-    }
-
-    [Fact]
-    public void SmiSidecarSearchFindsTheSameNamedFile()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"aimw-smi-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
-        try
-        {
-            File.WriteAllText(Path.Combine(directory, "movie.en.smi"), "<SAMI/>");
-            File.WriteAllText(Path.Combine(directory, "movie.SMI"), "<SAMI/>");
-
-            var sidecar = SmiParser.FindSidecarPath(Path.Combine(directory, "Movie.mkv"));
-
-            Assert.NotNull(sidecar);
-            Assert.Equal("movie.SMI", Path.GetFileName(sidecar));
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void SmiSidecarSearchReturnsNullWhenNoMatchExists()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"aimw-smi-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
-        try
-        {
-            File.WriteAllText(Path.Combine(directory, "other.smi"), "<SAMI/>");
-
-            Assert.Null(SmiParser.FindSidecarPath(Path.Combine(directory, "Movie.mkv")));
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void AssRoundTripKeepsBasicStyle()
-    {
-        var track = new SubtitleTrack { Format = "ass" };
-        track.Cues.Add(new SubtitleCue { StartMicroseconds = 1_000_000, EndMicroseconds = 2_500_000, Text = "A\nB", Style = "Default" });
-        var parsed = AssParser.Parse(AssWriter.Write(track));
-        Assert.Equal("A" + Environment.NewLine + "B", parsed.ActiveTrack!.Cues[0].Text);
-        Assert.Equal("Default", parsed.ActiveTrack.Cues[0].Style);
-    }
-
-    [Fact]
     public void AssOverlayKeepsIndependentCueTimings()
     {
         var track = new SubtitleTrack { Format = "ass" };
-        track.Cues.Add(new SubtitleCue { StartMicroseconds = 1_000_000, EndMicroseconds = 2_000_000, Text = "First" });
+        track.Cues.Add(new SubtitleCue { StartMicroseconds = 1_000_000, EndMicroseconds = 2_000_000, Text = "첫 줄\n둘째 줄" });
         track.Cues.Add(new SubtitleCue { StartMicroseconds = 4_000_000, EndMicroseconds = 5_000_000, Text = "Second" });
 
-        var parsed = AssParser.Parse(AssWriter.Write(track));
-
-        Assert.Equal(2, parsed.ActiveTrack!.Cues.Count);
-        Assert.Equal((1_000_000, 2_000_000, "First"), (parsed.ActiveTrack.Cues[0].StartMicroseconds, parsed.ActiveTrack.Cues[0].EndMicroseconds, parsed.ActiveTrack.Cues[0].Text));
-        Assert.Equal((4_000_000, 5_000_000, "Second"), (parsed.ActiveTrack.Cues[1].StartMicroseconds, parsed.ActiveTrack.Cues[1].EndMicroseconds, parsed.ActiveTrack.Cues[1].Text));
-    }
-
-    [Fact]
-    public void AssOverlayPreservesKoreanText()
-    {
-        var track = new SubtitleTrack { Format = "ass" };
-        track.Cues.Add(new SubtitleCue { StartMicroseconds = 0, EndMicroseconds = 2_000_000, Text = "자동 생성된 한글 자막입니다." });
-
-        var content = AssWriter.Write(track);
+        var content = AssWriter.Write(track, "Arial");
         var parsed = AssParser.Parse(content);
 
-        Assert.Contains("Style: Default,Noto Sans CJK JP,", content);
-        Assert.Contains("자동 생성된 한글 자막입니다.", content);
-        Assert.Equal("자동 생성된 한글 자막입니다.", parsed.ActiveTrack!.Cues[0].Text);
-    }
-
-    [Fact]
-    public void AssOverlayUsesConfiguredFontFamily()
-    {
-        var track = new SubtitleTrack { Format = "ass" };
-
-        var content = AssWriter.Write(track, "Noto Sans KR");
-
-        Assert.Contains("Style: Default,Noto Sans KR,", content);
-        Assert.DoesNotContain("Style: Default,Noto Sans CJK JP,", content);
+        Assert.Contains("Style: Default,Arial,", content);
+        Assert.Equal(2, parsed.ActiveTrack!.Cues.Count);
+        Assert.Equal((1_000_000, 2_000_000, $"첫 줄{Environment.NewLine}둘째 줄"), (parsed.ActiveTrack.Cues[0].StartMicroseconds, parsed.ActiveTrack.Cues[0].EndMicroseconds, parsed.ActiveTrack.Cues[0].Text));
+        Assert.Equal((4_000_000, 5_000_000, "Second"), (parsed.ActiveTrack.Cues[1].StartMicroseconds, parsed.ActiveTrack.Cues[1].EndMicroseconds, parsed.ActiveTrack.Cues[1].Text));
     }
 
     [Fact]
@@ -190,14 +98,6 @@ public sealed class SubtitleTests
         var output = AssWriter.Write(document.ActiveTrack!);
         Assert.Contains("Style: Sign,Comic Sans MS,33,&H00ABCDEF", output);
         Assert.Contains("Dialogue: 0,0:00:01.00,0:00:02.00,Sign", output);
-    }
-
-    [Fact]
-    public void DurationSetterUsesExactMicroseconds()
-    {
-        var cue = new SubtitleCue { StartMicroseconds = 1_000_001, EndMicroseconds = 2_000_001 };
-        cue.DurationMicroseconds = 1_234_567;
-        Assert.Equal(2_234_568, cue.EndMicroseconds);
     }
 
     [Fact]

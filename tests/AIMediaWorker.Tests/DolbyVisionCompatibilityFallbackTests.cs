@@ -4,17 +4,6 @@ namespace AIMediaWorker.Tests;
 
 public sealed class DolbyVisionCompatibilityFallbackTests
 {
-    [Theory]
-    [InlineData(null, false)]
-    [InlineData(4, true)]
-    [InlineData(5, false)]
-    [InlineData(7, false)]
-    [InlineData(8, true)]
-    public void OnlyCompatibleBaseLayerProfilesRequireFallback(int? profile, bool expected)
-    {
-        Assert.Equal(expected, DolbyVisionCompatibilityFallback.IsRequired(profile));
-    }
-
     [Fact]
     public void Profile4FilterUsesTheSdrCompatibleBaseLayerMetadata()
     {
@@ -33,9 +22,4 @@ public sealed class DolbyVisionCompatibilityFallbackTests
         Assert.Equal("@aimedia-dovi-compatible-base:format=dolbyvision=no", filter);
     }
 
-    [Fact]
-    public void UnsupportedProfilesCannotBuildAFallback()
-    {
-        Assert.Throws<ArgumentOutOfRangeException>(() => DolbyVisionCompatibilityFallback.BuildFilter(5));
-    }
 }

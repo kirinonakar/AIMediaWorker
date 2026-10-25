@@ -10,13 +10,15 @@ public sealed class MediaSearchTests : IDisposable
     public async Task LocalSearchFindsPlayableMediaInSubfolders()
     {
         var nested = Directory.CreateDirectory(Path.Combine(_folder, "Shows", "Season 01"));
-        await File.WriteAllTextAsync(Path.Combine(nested.FullName, "Episode 01.mkv"), "test");
+        await File.WriteAllTextAsync(Path.Combine(nested.FullName, "Episode 01.MKV"), "test");
+        await File.WriteAllTextAsync(Path.Combine(nested.FullName, "Episode 01.OPUS"), "test");
         await File.WriteAllTextAsync(Path.Combine(nested.FullName, "Episode 01.txt"), "ignored");
 
         var results = await LocalMediaSearchService.SearchAsync(_folder, "episode", useRegex: false);
 
-        var result = Assert.Single(results, item => !item.IsDirectory);
-        Assert.Equal(Path.Combine("Shows", "Season 01", "Episode 01.mkv"), result.RelativePath);
+        Assert.Equal(
+            new[] { "Episode 01.MKV", "Episode 01.OPUS" }.Select(name => Path.Combine("Shows", "Season 01", name)),
+            results.Where(item => !item.IsDirectory).Select(item => item.RelativePath).Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -35,17 +37,6 @@ public sealed class MediaSearchTests : IDisposable
     public void SearchPatternRejectsInvalidRegularExpression()
     {
         Assert.ThrowsAny<ArgumentException>(() => SearchPatternMatcher.Create("[", useRegex: true));
-    }
-
-    [Theory]
-    [InlineData("movie.mkv", MediaFileClassifier.VideoIconGlyph)]
-    [InlineData("recording.MP4", MediaFileClassifier.VideoIconGlyph)]
-    [InlineData("song.flac", MediaFileClassifier.AudioIconGlyph)]
-    [InlineData("podcast.OPUS", MediaFileClassifier.AudioIconGlyph)]
-    [InlineData("notes.txt", MediaFileClassifier.FileIconGlyph)]
-    public void FileIconMatchesMediaType(string path, string expectedGlyph)
-    {
-        Assert.Equal(expectedGlyph, MediaFileClassifier.GetFileIconGlyph(path));
     }
 
     public void Dispose()

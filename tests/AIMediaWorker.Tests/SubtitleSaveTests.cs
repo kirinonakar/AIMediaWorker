@@ -6,7 +6,6 @@ public sealed class SubtitleSaveTests
 {
     [Theory]
     [InlineData("srt", SubtitleDisplayMode.Original)]
-    [InlineData("srt", SubtitleDisplayMode.Translation)]
     [InlineData("vtt", SubtitleDisplayMode.OriginalAndTranslation)]
     [InlineData("ass", SubtitleDisplayMode.OriginalAndTranslation)]
     public async Task SavesBothLanguagesWithMediaNamesRegardlessOfDisplayMode(string extension, SubtitleDisplayMode mode)

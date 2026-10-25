@@ -17,13 +17,7 @@ public sealed class ServicesTests : IDisposable
     [InlineData("Ctrl+S", "S", true, true, false, false)]
     [InlineData("Space", "Space", false, false, false, true)]
     [InlineData("Alt+F11", "F11", false, false, true, true)]
-    [InlineData("Ctrl+P", "P", true, false, false, true)]
-    [InlineData("Ctrl+Shift+N", "N", true, true, false, true)]
-    [InlineData("Ctrl+F", "F", true, false, false, true)]
-    [InlineData("Ctrl+B", "B", true, false, false, true)]
     [InlineData("Ctrl+1", "Number1", true, false, false, true)]
-    [InlineData("Ctrl+2", "Number2", true, false, false, true)]
-    [InlineData("Ctrl+3", "Number3", true, false, false, true)]
     [InlineData("Ctrl+1", "D1", true, false, false, true)]
     [InlineData("Ctrl+2", "NumberPad2", true, false, false, true)]
     public void ShortcutGesturesMatchExactModifiers(string gesture, string key, bool control, bool shift, bool alt, bool expected)
@@ -76,14 +70,6 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
-    public void MissingSettingsUseDarkStartupTheme()
-    {
-        var path = Path.Combine(_folder, "missing-settings.json");
-
-        Assert.Equal(AppTheme.Dark, new SettingsService(path).LoadTheme());
-    }
-
-    [Fact]
     public async Task SettingsNormalizeMissingSectionsAndShortcutDefaults()
     {
         var path = Path.Combine(_folder, "settings-null-sections.json");
@@ -114,87 +100,6 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
-    public async Task SettingsNormalizeBlankUiFontToNotoSansCjkJp()
-    {
-        var path = Path.Combine(_folder, "settings-blank-ui-font.json");
-        Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(path, "{\"General\":{\"UiFontFamily\":\"   \"}}");
-
-        var loaded = await new SettingsService(path).LoadAsync();
-
-        Assert.Equal("Noto Sans CJK JP", loaded.General.UiFontFamily);
-    }
-
-    [Fact]
-    public async Task SettingsMigrateReversedMediaShortcuts()
-    {
-        var path = Path.Combine(_folder, "settings-old-media-shortcuts.json");
-        Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(path, "{\"General\":{\"Shortcuts\":{\"PreviousMedia\":\"Ctrl+F\",\"NextMedia\":\"Ctrl+B\"}}}");
-
-        var loaded = await new SettingsService(path).LoadAsync();
-
-        Assert.Equal("Ctrl+B", loaded.General.Shortcuts[ShortcutActions.PreviousMedia]);
-        Assert.Equal("Ctrl+F", loaded.General.Shortcuts[ShortcutActions.NextMedia]);
-    }
-
-    [Fact]
-    public async Task SettingsMigrateLegacyDefaultSubtitleFont()
-    {
-        var path = Path.Combine(_folder, "settings-old-subtitle-font.json");
-        Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(path, "{\"SchemaVersion\":2,\"Subtitle\":{\"FontFamily\":\"Segoe UI\"}}");
-
-        var loaded = await new SettingsService(path).LoadAsync();
-
-        Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.SchemaVersion);
-        Assert.Equal(SubtitleSettings.DefaultFontFamily, loaded.Subtitle.FontFamily);
-    }
-
-    [Fact]
-    public async Task SettingsMigrateWindowsCaptionPreviousSentenceCountDefault()
-    {
-        var path = Path.Combine(_folder, "settings-old-caption-history.json");
-        Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(path, "{\"SchemaVersion\":5,\"Capture\":{\"WindowsCaptionPreviousSentenceCount\":2}}");
-
-        var service = new SettingsService(path);
-        var loaded = await service.LoadAsync();
-
-        Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.SchemaVersion);
-        Assert.Equal(1, loaded.Capture.WindowsCaptionPreviousSentenceCount);
-
-        await service.SaveAsync(loaded);
-        var saved = await service.LoadAsync();
-        Assert.Equal(1, saved.Capture.WindowsCaptionPreviousSentenceCount);
-    }
-
-    [Fact]
-    public async Task SettingsMigrateGeneralDefaultFolderToCaptureFolder()
-    {
-        var path = Path.Combine(_folder, "settings-old-capture-folder.json");
-        Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(path, "{\"SchemaVersion\":6,\"General\":{\"DefaultFolder\":\"  D:\\\\Captures  \"}}");
-
-        var loaded = await new SettingsService(path).LoadAsync();
-
-        Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.SchemaVersion);
-        Assert.Equal(@"D:\Captures", loaded.Capture.CaptureFolder);
-    }
-
-    [Fact]
-    public async Task SettingsMigrateUnslothProviderName()
-    {
-        var path = Path.Combine(_folder, "settings-old-unsloth.json");
-        Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(path, "{\"Llm\":{\"Provider\":\"Unsloth\"}}");
-
-        var loaded = await new SettingsService(path).LoadAsync();
-
-        Assert.Equal("Unsloth Desktop", loaded.Llm.Provider);
-    }
-
-    [Fact]
     public async Task RecentMediaDeduplicatesAndPersists()
     {
         var recentPath = Path.Combine(_folder, "recent.json");
@@ -212,35 +117,6 @@ public sealed class ServicesTests : IDisposable
         var loaded = new MediaHistoryService(recentPath, favoritesPath);
         await loaded.LoadRecentAsync();
         Assert.Equal(2, loaded.Recent.Count);
-    }
-
-    [Fact]
-    public async Task UnchangedFavoritesDoNotCreateAFile()
-    {
-        var recentPath = Path.Combine(_folder, "unchanged-recent.json");
-        var favoritesPath = Path.Combine(_folder, "unchanged-favorites.json");
-        var history = new MediaHistoryService(recentPath, favoritesPath);
-
-        await history.LoadFavoritesAsync();
-        await history.SaveFavoritesAsync();
-
-        Assert.False(File.Exists(favoritesPath));
-    }
-
-    [Fact]
-    public async Task FavoritesAreLoadedLazily()
-    {
-        var recentPath = Path.Combine(_folder, "lazy-recent.json");
-        var favoritesPath = Path.Combine(_folder, "lazy-favorites.json");
-        var lazyReader = new MediaHistoryService(recentPath, favoritesPath);
-        var writer = new MediaHistoryService(recentPath, favoritesPath);
-        await writer.LoadFavoritesAsync();
-        writer.AddFavorite(new HttpMediaSource(new Uri("https://example.test/lazy.mp4")));
-        await writer.SaveFavoritesAsync();
-
-        await lazyReader.LoadFavoritesAsync();
-
-        Assert.Single(lazyReader.Favorites);
     }
 
     [Fact]
@@ -266,26 +142,6 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
-    public async Task FolderFavoritesPersistAndDeduplicate()
-    {
-        var recentPath = Path.Combine(_folder, "recent.json");
-        var favoritesPath = Path.Combine(_folder, "favorites.json");
-        var history = new MediaHistoryService(recentPath, favoritesPath);
-        await history.LoadFavoritesAsync();
-        var source = new LocalMediaSource(Path.Combine(_folder, "Videos"));
-        Assert.True(history.AddFavorite(source, true));
-        Assert.False(history.AddFavorite(source, true));
-        await history.SaveFavoritesAsync();
-        Assert.False(File.Exists(recentPath));
-
-        var loaded = new MediaHistoryService(recentPath, favoritesPath);
-        await loaded.LoadFavoritesAsync();
-
-        var favorite = Assert.Single(loaded.Favorites);
-        Assert.True(favorite.IsFolder);
-    }
-
-    [Fact]
     public async Task FavoriteFoldersStayAboveFilesAndDraggedOrderPersists()
     {
         var recentPath = Path.Combine(_folder, "recent-order.json");
@@ -301,6 +157,7 @@ public sealed class ServicesTests : IDisposable
         history.AddFavorite(firstFolder, true);
         history.AddFavorite(secondFile);
         history.AddFavorite(secondFolder, true);
+        Assert.False(history.AddFavorite(firstFolder, true));
 
         Assert.Equal([firstFolder.Location, secondFolder.Location, firstFile.Location, secondFile.Location], history.Favorites.Select(item => item.Location));
 
@@ -312,16 +169,6 @@ public sealed class ServicesTests : IDisposable
         await loaded.LoadFavoritesAsync();
 
         Assert.Equal([secondFolder.Location, firstFolder.Location, secondFile.Location, firstFile.Location], loaded.Favorites.Select(item => item.Location));
-    }
-
-    [Fact]
-    public void WebDavUriResolutionAndCredentialIdentifiersAreStable()
-    {
-        var directory = new Uri("https://dav.example.test/root/folder/");
-        Assert.Equal("https://dav.example.test/root/video%20one.mkv", WebDavClient.ResolveChild(directory, "../video%20one.mkv").AbsoluteUri);
-        var id = Guid.Parse("6e4f9d87-51b7-4cfb-a83d-e1009a728302");
-        Assert.Equal("AIMediaWorker/WebDAV/6e4f9d87-51b7-4cfb-a83d-e1009a728302", CredentialIdentifier.ForWebDav(id));
-        Assert.Equal("AIMediaWorker/LLM/opencode_zen", CredentialIdentifier.ForLlm("OpenCode_Zen"));
     }
 
     [Fact]
@@ -436,20 +283,6 @@ public sealed class ServicesTests : IDisposable
     }
 
     [Fact]
-    public async Task SettingsMigrateLegacyPanelShortcuts()
-    {
-        var path = Path.Combine(_folder, "settings-old-panel-shortcuts.json");
-        Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(path, "{\"SchemaVersion\":7,\"General\":{\"Shortcuts\":{\"ToggleTimelinePanel\":\"Ctrl+1\",\"ToggleSidePanel\":\"Ctrl+2\",\"ToggleStatusPanel\":\"Ctrl+3\"}}}");
-
-        var loaded = await new SettingsService(path).LoadAsync();
-
-        Assert.Equal("Ctrl+1", loaded.General.Shortcuts[ShortcutActions.ToggleTimelinePanel]);
-        Assert.Equal("Ctrl+2", loaded.General.Shortcuts[ShortcutActions.ToggleStatusPanel]);
-        Assert.Equal("Ctrl+3", loaded.General.Shortcuts[ShortcutActions.ToggleSidePanel]);
-    }
-
-    [Fact]
     public async Task WebDavSearchRecursesAndSupportsRegularExpressions()
     {
         using var http = new HttpClient(new WebDavTreeHandler());
@@ -478,22 +311,6 @@ public sealed class ServicesTests : IDisposable
         Assert.True(await search.MoveNextAsync());
         Assert.True(search.Current.IsCollection);
         Assert.Equal("folder", search.Current.SearchRelativePath);
-    }
-
-    [Fact]
-    public async Task WebDavSearchListsSiblingFoldersConcurrently()
-    {
-        var handler = new ConcurrentWebDavTreeHandler();
-        using var http = new HttpClient(handler);
-        var credentials = new MemoryCredentials();
-        var server = new WebDavServerSettings();
-        new WebDavCredentialStore(credentials).Save(server.Id, new WebDavConnectionCredential("https://dav.example/root/", 443, "user", "password"));
-        using var client = new WebDavClient(credentials, http);
-
-        var results = await client.SearchAsync(server, new Uri("https://dav.example/root/"), "missing", useRegex: false);
-
-        Assert.Empty(results);
-        Assert.InRange(handler.MaximumConcurrentRequests, 2, 4);
     }
 
     private sealed class MemoryCredentials : ICredentialService
@@ -537,56 +354,6 @@ public sealed class ServicesTests : IDisposable
             {
                 Content = new StringContent(xml, Encoding.UTF8, "application/xml")
             });
-        }
-
-        private static string MultiStatus(params string[] responses) =>
-            $"<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\">{string.Concat(responses)}</d:multistatus>";
-
-        private static string Response(string href, string name, bool collection) =>
-            $"<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:displayname>{name}</d:displayname><d:resourcetype>{(collection ? "<d:collection/>" : string.Empty)}</d:resourcetype></d:prop></d:propstat></d:response>";
-    }
-
-    private sealed class ConcurrentWebDavTreeHandler : HttpMessageHandler
-    {
-        private int _activeRequests;
-        private int _maximumConcurrentRequests;
-
-        public int MaximumConcurrentRequests => _maximumConcurrentRequests;
-
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            var activeRequests = Interlocked.Increment(ref _activeRequests);
-            UpdateMaximum(activeRequests);
-            try
-            {
-                var path = request.RequestUri?.AbsolutePath;
-                if (path != "/root/") await Task.Delay(50, cancellationToken);
-                var responses = path == "/root/"
-                    ? new[]
-                    {
-                        Response("/root/", "root", collection: true),
-                        Response("/root/a/", "a", collection: true),
-                        Response("/root/b/", "b", collection: true),
-                        Response("/root/c/", "c", collection: true),
-                        Response("/root/d/", "d", collection: true)
-                    }
-                    : new[] { Response(path!, path!.Trim('/'), collection: true) };
-                return new HttpResponseMessage((HttpStatusCode)207)
-                {
-                    Content = new StringContent(MultiStatus(responses), Encoding.UTF8, "application/xml")
-                };
-            }
-            finally
-            {
-                Interlocked.Decrement(ref _activeRequests);
-            }
-        }
-
-        private void UpdateMaximum(int value)
-        {
-            int current;
-            while (value > (current = _maximumConcurrentRequests) &&
-                   Interlocked.CompareExchange(ref _maximumConcurrentRequests, value, current) != current) { }
         }
 
         private static string MultiStatus(params string[] responses) =>

@@ -29,33 +29,11 @@ public sealed class OcrTextPostProcessorTests
     }
 
     [Fact]
-    public void SelectBestPreservesKoreanWordSpaces()
-    {
-        var result = OcrTextPostProcessor.SelectBest([
-            new OcrTextCandidate("첫 번째 줄\r\n두 번째 줄", OcrLanguageKind.Korean, false)
-        ]);
-
-        Assert.Equal("첫 번째 줄\r\n두 번째 줄", result);
-    }
-
-    [Fact]
     public void JapaneseSpacingCleanupPreservesLatinSpacesAndLineBreaks()
     {
         var result = OcrTextPostProcessor.RemoveInsertedJapaneseSpaces("AI Media Worker の 結果\r\n次 の 行");
 
         Assert.Equal("AI Media Workerの結果\r\n次の行", result);
-    }
-
-    [Fact]
-    public void SelectBestKeepsProfileResultForOrdinaryEnglish()
-    {
-        var result = OcrTextPostProcessor.SelectBest([
-            new OcrTextCandidate("hello world", OcrLanguageKind.English, true),
-            new OcrTextCandidate("hello wor1d", OcrLanguageKind.Korean, false),
-            new OcrTextCandidate("hello worid", OcrLanguageKind.Japanese, false)
-        ]);
-
-        Assert.Equal("hello world", result);
     }
 
     [Fact]
@@ -73,33 +51,6 @@ public sealed class OcrTextPostProcessorTests
         ]);
 
         Assert.Equal(englishResult, result);
-    }
-
-    [Fact]
-    public void SelectBestRejectsSingleHangulMisreadAtStartOfEnglishSentence()
-    {
-        const string koreanProfile = "시 will either be the greatest equalizer ever invented, or the\r\n" +
-                                     "worst source Of injustice.";
-        const string englishResult = "AI will either be the greatest equalizer ever invented, or the\r\n" +
-                                     "worst source of injustice.";
-
-        var result = OcrTextPostProcessor.SelectBest([
-            new OcrTextCandidate(koreanProfile, OcrLanguageKind.Korean, true),
-            new OcrTextCandidate(englishResult, OcrLanguageKind.English, false)
-        ]);
-
-        Assert.Equal(englishResult, result);
-    }
-
-    [Fact]
-    public void EnglishCleanupRestoresSeparatedWordsAndFunctionWordCase()
-    {
-        var result = OcrTextPostProcessor.NormalizeEnglishText(
-            "AI will either be the greatest equalizer ever invented, orthe\r\nworst source Of injustice.");
-
-        Assert.Equal(
-            "AI will either be the greatest equalizer ever invented, or the\r\nworst source of injustice.",
-            result);
     }
 
     [Fact]

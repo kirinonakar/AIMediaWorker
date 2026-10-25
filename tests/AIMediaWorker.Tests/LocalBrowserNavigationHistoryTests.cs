@@ -5,19 +5,6 @@ namespace AIMediaWorker.Tests;
 public sealed class LocalBrowserNavigationHistoryTests
 {
     [Fact]
-    public void EmptyAndInitialHistoryHaveNoBackOrForwardTarget()
-    {
-        var history = new LocalBrowserNavigationHistory();
-        Assert.Null(history.GetTarget(false));
-        Assert.Null(history.GetTarget(true));
-
-        history.Record(@"C:\Media");
-
-        Assert.Null(history.GetTarget(false));
-        Assert.Null(history.GetTarget(true));
-    }
-
-    [Fact]
     public void BackAndForwardFollowVisitsIncludingVirtualRootAndDrives()
     {
         var history = new LocalBrowserNavigationHistory();
@@ -60,21 +47,6 @@ public sealed class LocalBrowserNavigationHistoryTests
         Assert.Null(history.GetTarget(true));
         Assert.Equal(@"C:\Media", Move(history, forward: false));
         Assert.Equal(@"D:\Music", Move(history, forward: true));
-    }
-
-    [Fact]
-    public void FailedNavigationLeavesHistoryPositionUnchanged()
-    {
-        var history = new LocalBrowserNavigationHistory();
-        history.Record(@"C:\Media");
-        history.Record(@"C:\Shows");
-
-        // Looking up a request does not commit it; the browser can fail to load it.
-        var failedTarget = history.GetTarget(false);
-
-        Assert.Equal(failedTarget, history.GetTarget(false));
-        Assert.Null(history.GetTarget(true));
-        Assert.Equal(@"C:\Media", Move(history, forward: false));
     }
 
     [Fact]

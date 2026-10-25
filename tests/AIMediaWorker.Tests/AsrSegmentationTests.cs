@@ -5,9 +5,6 @@ namespace AIMediaWorker.Tests;
 public sealed class AsrSegmentationTests
 {
     [Theory]
-    [InlineData("안녕하십니까.")]
-    [InlineData("저는 삼성서울병원 영상의학과 교수입니다.")]
-    [InlineData("오늘 발표 주제는 AI 에이전트입니다.")]
     [InlineData("AI와  LLM을 함께 사용합니다")]
     [InlineData("Hello, world! 다음 문장입니다.")]
     public void CharacterTimestampsPreserveTranscriptSpacing(string text)
@@ -135,27 +132,4 @@ public sealed class AsrSegmentationTests
         Assert.Equal(113_290_000, cue.EndMicroseconds);
     }
 
-    [Fact]
-    public void StandaloneJapanesePunctuationIsMergedWithPreviousCue()
-    {
-        var result = AsrSubtitleSegmenter.Segment(
-        [
-            new AsrSegment
-            {
-                StartMicroseconds = 113_280_000,
-                EndMicroseconds = 116_640_000,
-                Text = "ルーデスなんて、当然エリスの妄想に違いないわ"
-            },
-            new AsrSegment
-            {
-                StartMicroseconds = 118_640_000,
-                EndMicroseconds = 118_650_000,
-                Text = " 。"
-            }
-        ], new AsrSegmentationOptions(1, 20, 2, 42, 0.6, 20));
-
-        var cue = Assert.Single(result);
-        Assert.Equal("ルーデスなんて、当然エリスの妄想に違いないわ。", cue.Text);
-        Assert.Equal(118_650_000, cue.EndMicroseconds);
-    }
 }

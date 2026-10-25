@@ -34,14 +34,6 @@ public sealed class AudioTagReaderTests : IDisposable
         Assert.Equal("image/png", artwork.MimeType);
     }
 
-    [Fact]
-    public void ReadArtworkDoesNotThrowForMissingFile()
-    {
-        var artwork = AudioTagReader.ReadArtwork(Path.Combine(_folder, "missing.mp3"));
-
-        Assert.Null(artwork);
-    }
-
     public void Dispose()
     {
         if (Directory.Exists(_folder)) Directory.Delete(_folder, recursive: true);

@@ -5,30 +5,14 @@ namespace AIMediaWorker.Tests;
 
 public sealed class SubtitleSidecarTests
 {
-    [Theory]
-    [InlineData("movie.SRT")]
-    [InlineData("movie.smi")]
-    [InlineData("movie.ass")]
-    [InlineData("movie.ssa")]
-    [InlineData("movie.vtt")]
-    [InlineData("movie.ko.srt")]
-    public void RecognizesSupportedCompanionFiles(string subtitle)
-        => Assert.True(SubtitleSidecar.IsSidecarFor("Movie.mkv", subtitle));
-
-    [Theory]
-    [InlineData("movie2.srt")]
-    [InlineData("movie.txt")]
-    [InlineData("another.smi")]
-    public void RejectsUnrelatedFiles(string subtitle)
-        => Assert.False(SubtitleSidecar.IsSidecarFor("movie.mkv", subtitle));
-
     [Fact]
     public void PrefersExactNameThenFormatRegardlessOfDirectoryOrder()
     {
-        string[] candidates = ["movie.ko.srt", "movie.smi", "movie.srt"];
+        string[] candidates = ["movie.ko.srt", "movie.smi", "movie.srt", "movie2.srt", "movie.txt", "unrelated.ass"];
         Assert.Equal("movie.srt", SubtitleSidecar.FindMatch("movie.mp4", candidates));
         Assert.Equal("movie.srt", SubtitleSidecar.FindMatch("movie.mp4", candidates.Reverse()));
         Assert.Equal("movie.smi", SubtitleSidecar.FindMatch("movie.mp4", candidates.Take(2)));
+        Assert.Null(SubtitleSidecar.FindMatch("movie.mp4", candidates.Skip(3)));
     }
 
     [Theory]
