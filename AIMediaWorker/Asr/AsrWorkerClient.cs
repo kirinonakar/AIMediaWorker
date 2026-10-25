@@ -13,7 +13,6 @@ public sealed class AsrWorkerClient : IAsrEngine
 {
     private const int SampleRate = 16_000;
     private const int LiveDecodeIntervalSamples = SampleRate;
-    private const long CentisecondMicroseconds = 10_000;
     private readonly object _lifecycleLock = new();
     private readonly SemaphoreSlim _inferenceLock = new(1, 1);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
@@ -412,27 +411,31 @@ public sealed class AsrWorkerClient : IAsrEngine
         LiveResultReceived?.Invoke(this, result);
     }
 
-    private static IReadOnlyList<AsrSegment> MapSegments(
+    internal static IReadOnlyList<AsrSegment> MapSegments(
         CrispAsrNative.NativeSegment[] nativeSegments,
         float[] chunkSamples,
         long absoluteSampleOffset,
         long startMicroseconds,
         string? alignerPath,
         int threadCount,
-        Action<Exception>? alignmentLog)
+        Action<Exception>? alignmentLog,
+        Func<string, float[], int, CrispAsrNative.NativeWord[]>? wordAligner = null)
     {
+        if (chunkSamples.Length == 0) return [];
+        if (wordAligner is null && alignerPath is not null && File.Exists(alignerPath))
+            wordAligner = (text, samples, threads) => CrispAsrNative.AlignWords(alignerPath, text, samples, threads);
         var result = new List<AsrSegment>(nativeSegments.Length);
+        var absoluteChunkStart = startMicroseconds + SamplesToMicroseconds(absoluteSampleOffset);
         foreach (var nativeSegment in nativeSegments)
         {
             var text = nativeSegment.Text.Trim();
             if (text.Length == 0) continue;
 
-            var segmentStartCentiseconds = Math.Max(0, nativeSegment.StartCentiseconds);
-            var segmentEndCentiseconds = Math.Max(segmentStartCentiseconds + 1, nativeSegment.EndCentiseconds);
-            var absoluteChunkStart = startMicroseconds + SamplesToMicroseconds(absoluteSampleOffset);
-            var segmentStart = absoluteChunkStart + segmentStartCentiseconds * CentisecondMicroseconds;
-            var segmentEnd = absoluteChunkStart + segmentEndCentiseconds * CentisecondMicroseconds;
-            var words = CreateWords(nativeSegment, text, chunkSamples, segmentStart, segmentEnd, alignerPath, threadCount, alignmentLog);
+            var range = AsrTimestampMapper.SampleRange(nativeSegment.StartCentiseconds, nativeSegment.EndCentiseconds, chunkSamples.Length);
+            var segmentStart = absoluteChunkStart + SamplesToMicroseconds(range.Start);
+            var segmentEnd = absoluteChunkStart + SamplesToMicroseconds(range.End);
+            var words = CreateWords(nativeSegment, text, chunkSamples, range, absoluteChunkStart,
+                segmentStart, segmentEnd, wordAligner, threadCount, alignmentLog);
             var confidenceValues = nativeSegment.Words.Where(word => word.Probability is > 0).Select(word => (double)word.Probability!.Value).ToArray();
 
             result.Add(new AsrSegment
@@ -451,35 +454,23 @@ public sealed class AsrWorkerClient : IAsrEngine
         CrispAsrNative.NativeSegment nativeSegment,
         string text,
         float[] chunkSamples,
+        (int Start, int End) range,
+        long absoluteChunkStart,
         long segmentStart,
         long segmentEnd,
-        string? alignerPath,
+        Func<string, float[], int, CrispAsrNative.NativeWord[]>? wordAligner,
         int threadCount,
         Action<Exception>? alignmentLog)
     {
-        if (alignerPath is not null && File.Exists(alignerPath))
+        if (wordAligner is not null)
         {
-            var localStart = (int)Math.Clamp(nativeSegment.StartCentiseconds * SampleRate / 100, 0, chunkSamples.Length);
-            var localEnd = (int)Math.Clamp(nativeSegment.EndCentiseconds * SampleRate / 100, localStart, chunkSamples.Length);
-            if (localEnd <= localStart)
-            {
-                localStart = 0;
-                localEnd = chunkSamples.Length;
-            }
-
             try
             {
-                var aligned = CrispAsrNative.AlignWords(alignerPath, text, chunkSamples[localStart..localEnd], threadCount);
-                var words = aligned
-                    .Where(word => !string.IsNullOrWhiteSpace(word.Text))
-                    .Select(word => new AsrWord
-                    {
-                        Text = word.Text.Trim(),
-                        StartMicroseconds = segmentStart + Math.Max(0, word.StartCentiseconds) * CentisecondMicroseconds,
-                        EndMicroseconds = segmentStart + Math.Max(Math.Max(0, word.StartCentiseconds) + 1, word.EndCentiseconds) * CentisecondMicroseconds
-                    })
-                    .ToArray();
-                if (words.Length > 0) return words;
+                var aligned = wordAligner(text, chunkSamples[range.Start..range.End], threadCount);
+                // Aligner output is relative to this cropped PCM buffer.
+                var words = AsrTimestampMapper.MapWords(aligned, segmentStart, segmentStart, segmentEnd);
+                if (words is not null) return words;
+                alignmentLog?.Invoke(new InvalidDataException("Forced alignment returned invalid or collapsed timestamps; using fallback timing."));
             }
             catch (Exception exception)
             {
@@ -489,18 +480,10 @@ public sealed class AsrWorkerClient : IAsrEngine
             }
         }
 
-        if (nativeSegment.Words.Length > 0)
-        {
-            return nativeSegment.Words
-                .Where(word => !string.IsNullOrWhiteSpace(word.Text))
-                .Select(word => new AsrWord
-                {
-                    Text = word.Text.Trim(),
-                    StartMicroseconds = segmentStart + Math.Max(0, word.StartCentiseconds) * CentisecondMicroseconds,
-                    EndMicroseconds = segmentStart + Math.Max(Math.Max(0, word.StartCentiseconds) + 1, word.EndCentiseconds) * CentisecondMicroseconds
-                })
-                .ToArray();
-        }
+        // Session word timestamps already share the input chunk's origin.
+        // Adding segmentStart here would count the segment offset twice.
+        var nativeWords = AsrTimestampMapper.MapWords(nativeSegment.Words, absoluteChunkStart, segmentStart, segmentEnd);
+        if (nativeWords is not null) return nativeWords;
 
         var fallbackWords = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (fallbackWords.Length == 0) return null;

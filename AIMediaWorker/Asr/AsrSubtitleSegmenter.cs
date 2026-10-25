@@ -11,6 +11,9 @@ public static class AsrSubtitleSegmenter
 {
     private const string OpeningPunctuation = "([{<「『【《（〔〈［｛";
     private const string JapaneseNonStarters = "ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶーゝゞヽヾ々〻\u3099\u309a";
+    private const int MaximumShortJapaneseWordCharacters = 8;
+    // Native transcription/forced alignment runs in audio windows of at most 30 seconds.
+    private const long MaximumPrefixAlignmentGapMicroseconds = 30_000_000;
 
     public static IReadOnlyList<AsrSegment> Segment(
         IReadOnlyList<AsrSegment> segments,
@@ -43,8 +46,14 @@ public static class AsrSubtitleSegmenter
         if (segments.Count < 2) return segments;
 
         var result = new List<AsrSegment>(segments.Count);
-        foreach (var segment in segments)
+        for (var index = 0; index < segments.Count; index++)
         {
+            var segment = segments[index];
+            // A single kana can be the start of the following word (こ / の先),
+            // so resolve that direction before considering a backward tail join.
+            if (index + 1 < segments.Count && IsJapanesePrefixFragment(segment, segments[index + 1], options))
+                segment = JoinPrefixSegments(segment, segments[++index], options);
+
             if (result.Count == 0 ||
                 (!IsDanglingSegmentText(segment.Text) && !IsJapaneseContinuationFragment(result[^1], segment, options)))
             {
@@ -52,15 +61,7 @@ public static class AsrSubtitleSegmenter
                 continue;
             }
 
-            var previous = result[^1];
-            result[^1] = new AsrSegment
-            {
-                StartMicroseconds = previous.StartMicroseconds,
-                EndMicroseconds = Math.Max(previous.EndMicroseconds, segment.EndMicroseconds),
-                Text = AppendText(previous.Text, segment.Text),
-                Confidence = CombineConfidence(previous, segment),
-                Words = CombineWords(previous.Words, segment.Words)
-            };
+            result[^1] = JoinSegments(result[^1], segment);
         }
 
         return result;
@@ -68,6 +69,73 @@ public static class AsrSubtitleSegmenter
 
     internal static bool HasUnfinishedJapaneseText(string text) =>
         LiveCaptionDisplaySegmenter.IsJapaneseText(null, text) && !IsSentenceBoundary(text);
+
+    internal static bool IsJapanesePrefixFragmentText(string text)
+    {
+        var trimmed = text.Trim();
+        return trimmed.Length == 1 && IsHiragana(trimmed[0]) && !JapaneseNonStarters.Contains(trimmed[0]);
+    }
+
+    private static bool IsJapanesePrefixFragment(AsrSegment previous, AsrSegment next, NormalizedOptions options)
+    {
+        if (!IsJapanesePrefixFragmentText(previous.Text)) return false;
+        var nextText = next.Text.TrimStart();
+        if (nextText.Length == 0 || !IsHiragana(nextText[0])) return false;
+        if (CanJoinJapaneseFragments(previous, next, options, isTeFormTail: false)) return true;
+
+        // A brief こ before の… is a broken この, even when the aligner places
+        // the first kana several seconds early. Judge the following speech's
+        // duration separately from that gap. JoinPrefixSegments repairs the
+        // displaced prefix time instead of displaying the sentence across it.
+        return IsJapaneseDemonstrativePrefix(previous.Text.Trim()[0], nextText) &&
+               previous.EndMicroseconds - previous.StartMicroseconds <= options.MinimumCueMicroseconds &&
+               next.StartMicroseconds >= previous.StartMicroseconds &&
+               next.StartMicroseconds - previous.EndMicroseconds <= MaximumPrefixAlignmentGapMicroseconds &&
+               next.EndMicroseconds - next.StartMicroseconds <= SentenceCompletionMicroseconds(options) &&
+               CountCharacters(AppendText(previous.Text, next.Text)) <= options.MaximumCharacters;
+    }
+
+    private static bool IsJapaneseDemonstrativePrefix(char prefix, string next) =>
+        (prefix is 'こ' or 'そ' or 'あ' or 'ど') &&
+        (next[0] is 'の' or 'れ' ||
+         ((prefix is 'こ' or 'そ' or 'ど') && next[0] == 'こ') ||
+         next.StartsWith("ちら", StringComparison.Ordinal) ||
+         next.StartsWith("んな", StringComparison.Ordinal) ||
+         next.StartsWith("っち", StringComparison.Ordinal));
+
+    private static AsrSegment JoinPrefixSegments(AsrSegment previous, AsrSegment next, NormalizedOptions options)
+    {
+        var gap = next.StartMicroseconds - previous.EndMicroseconds;
+        if (gap > Math.Max(options.SilenceSplitMicroseconds, options.MinimumCueMicroseconds))
+        {
+            // Only the long-gap demonstrative repair reaches this branch. Its
+            // isolated kana is a timing outlier, not evidence of an early cue.
+            // Estimate its position immediately before the following speech.
+            var duration = Math.Clamp(previous.EndMicroseconds - previous.StartMicroseconds, 1, options.MinimumCueMicroseconds);
+            var end = next.StartMicroseconds;
+            var start = Math.Max(0, end - duration);
+            previous = previous with
+            {
+                StartMicroseconds = start,
+                EndMicroseconds = end,
+                Words = previous.Words?.Select(word => word with
+                {
+                    StartMicroseconds = Math.Clamp(start + (word.StartMicroseconds - previous.StartMicroseconds), start, end - 1),
+                    EndMicroseconds = Math.Clamp(start + (word.EndMicroseconds - previous.StartMicroseconds), start + 1, end)
+                }).ToArray()
+            };
+        }
+        return JoinSegments(previous, next);
+    }
+
+    private static AsrSegment JoinSegments(AsrSegment previous, AsrSegment next) => new()
+    {
+        StartMicroseconds = previous.StartMicroseconds,
+        EndMicroseconds = Math.Max(previous.EndMicroseconds, next.EndMicroseconds),
+        Text = AppendText(previous.Text, next.Text),
+        Confidence = CombineConfidence(previous, next),
+        Words = CombineWords(previous, next)
+    };
 
     private static bool IsJapaneseContinuationFragment(
         AsrSegment previous, AsrSegment next, NormalizedOptions options)
@@ -87,12 +155,42 @@ public static class AsrSubtitleSegmenter
         }
         if (kanaCount == 0) return false;
 
+        var tail = string.Concat(next.Text.Where(character => !char.IsWhiteSpace(character) && !char.IsPunctuation(character)));
+        var isTeFormTail = (previousText[^1] is 'て' or 'で') &&
+            (tail is "る" or "いる" or "た" or "いた" or "ます" or "います" or "ない" or "いない");
+        // A brief sentence-final kana tail can be any inflection or adjective
+        // ending, not just a te-form (e.g. い / い。 or わから / ない。).
+        var isShortFinalTail = IsSentenceBoundary(next.Text) &&
+            next.EndMicroseconds - next.StartMicroseconds <= options.MinimumCueMicroseconds;
+        return CanJoinJapaneseFragments(previous, next, options, isTeFormTail, isShortFinalTail);
+    }
+
+    private static bool CanJoinJapaneseFragments(
+        AsrSegment previous, AsrSegment next, NormalizedOptions options, bool isTeFormTail, bool isShortFinalTail = false)
+    {
+        var text = AppendText(previous.Text, next.Text);
+        var characterCount = CountCharacters(text);
         var maximumGap = Math.Max(options.SilenceSplitMicroseconds, options.MinimumCueMicroseconds);
+        var maximumDuration = options.MaximumCueMicroseconds;
+        if (isTeFormTail || isShortFinalTail)
+        {
+            // Tolerate alignment gaps within one cue. A short final kana tail
+            // may overrun the time budget by at most the minimum cue duration;
+            // text length still has to fit the configured character limit.
+            maximumGap = Math.Max(maximumGap, options.MaximumCueMicroseconds);
+            if (isShortFinalTail || (characterCount <= MaximumShortJapaneseWordCharacters &&
+                !text.Any(character => char.IsWhiteSpace(character) || SubtitlePunctuation.IsComma(character))))
+                maximumDuration = SentenceCompletionMicroseconds(options);
+        }
         return next.StartMicroseconds >= previous.StartMicroseconds &&
                next.StartMicroseconds - previous.EndMicroseconds <= maximumGap &&
-               Math.Max(previous.EndMicroseconds, next.EndMicroseconds) - previous.StartMicroseconds <= options.MaximumCueMicroseconds &&
-               CountCharacters(AppendText(previous.Text, next.Text)) <= options.MaximumCharacters;
+               Math.Max(previous.EndMicroseconds, next.EndMicroseconds) - previous.StartMicroseconds <= maximumDuration &&
+               characterCount <= options.MaximumCharacters;
     }
+
+    private static long SentenceCompletionMicroseconds(NormalizedOptions options) =>
+        options.MaximumCueMicroseconds > long.MaxValue - options.MinimumCueMicroseconds
+            ? long.MaxValue : options.MaximumCueMicroseconds + options.MinimumCueMicroseconds;
 
     private static bool IsDanglingSegmentText(string text)
     {
@@ -122,11 +220,18 @@ public static class AsrSubtitleSegmenter
                (firstDuration + secondDuration);
     }
 
-    private static IReadOnlyList<AsrWord>? CombineWords(IReadOnlyList<AsrWord>? first, IReadOnlyList<AsrWord>? second)
+    private static IReadOnlyList<AsrWord>? CombineWords(AsrSegment first, AsrSegment second)
     {
-        if (first is null && second is null) return null;
-        return (first ?? []).Concat(second ?? []).ToArray();
+        if (first.Words is null && second.Words is null) return null;
+        // Keep alignment coverage for both sides when only one was aligned;
+        // otherwise re-segmentation would assign the missing text the next
+        // word's timestamp and could undo a prefix timing correction.
+        return WordsOrSegment(first).Concat(WordsOrSegment(second)).ToArray();
     }
+
+    private static IReadOnlyList<AsrWord> WordsOrSegment(AsrSegment segment) =>
+        segment.Words is { Count: > 0 } words ? words :
+        [new AsrWord { Text = segment.Text, StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds }];
 
     private static IReadOnlyList<AsrSegment> SegmentWords(
         AsrSegment source,
@@ -268,6 +373,12 @@ public static class AsrSubtitleSegmenter
         NormalizedOptions options)
     {
         var duration = Math.Max(1L, endMicroseconds - startMicroseconds);
+        // Without alignment, splitting a sentence just over the time limit is
+        // arbitrary. Use the same bounded completion allowance as kana repair.
+        if (LiveCaptionDisplaySegmenter.IsJapaneseText(null, text) && IsSentenceBoundary(text) &&
+            CountCharacters(text) <= options.MaximumCharacters && duration <= SentenceCompletionMicroseconds(options))
+            return [CreateTextSegment(source, text, startMicroseconds, endMicroseconds)];
+
         var durationSeconds = duration / 1_000_000d;
         var partCount = Math.Max(
             1,
