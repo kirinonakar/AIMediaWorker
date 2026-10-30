@@ -203,4 +203,29 @@
 <data name="DictationStopped"><value>Voice typing stopped.</value></data>
 <data name="DictationInputFailed"><value>Text could not be inserted into the target app.</value></data>
   <data name="AsrRuntimeSelectionDescription.Text"><value>Auto uses a GPU when available; CPU forces recognition on the CPU. Precision is determined by the GGUF model. Forced alignment selects its device automatically.</value></data>
+  <data name="BatchSubtitles.Text" xml:space="preserve"><value>Batch subtitles…</value></data>
+  <data name="BatchWindowTitle" xml:space="preserve"><value>Batch subtitles</value></data>
+  <data name="BatchHeading.Text" xml:space="preserve"><value>Batch subtitles</value></data>
+  <data name="BatchDescription.Text" xml:space="preserve"><value>Add video or audio files, or drop them here. SRT files are saved beside each media file. Existing files are kept with numbered names.</value></data>
+  <data name="BatchAdd.Content" xml:space="preserve"><value>Add files…</value></data>
+  <data name="BatchClear.Content" xml:space="preserve"><value>Clear list</value></data>
+  <data name="BatchRemove.Content" xml:space="preserve"><value>Remove</value></data>
+  <data name="BatchTranslate.Content" xml:space="preserve"><value>Also save translated subtitles</value></data>
+  <data name="BatchOutputHint.Text" xml:space="preserve"><value>Original: filename.srt · Translation: filename.translated.srt</value></data>
+  <data name="BatchStart.Content" xml:space="preserve"><value>Start / Retry unfinished</value></data>
+  <data name="BatchCancel.Content" xml:space="preserve"><value>Cancel</value></data>
+  <data name="BatchTranslationSettings" xml:space="preserve"><value>Translation settings: {0} / {1} → {2}</value></data>
+  <data name="BatchPending" xml:space="preserve"><value>Waiting</value></data>
+  <data name="BatchReady" xml:space="preserve"><value>Add files and start the batch.</value></data>
+  <data name="BatchSkippedFiles" xml:space="preserve"><value>Skipped {0} unsupported or missing files.</value></data>
+  <data name="BatchLoading" xml:space="preserve"><value>Loading the speech recognition model…</value></data>
+  <data name="BatchGenerating" xml:space="preserve"><value>Generating subtitles</value></data>
+  <data name="BatchTranslating" xml:space="preserve"><value>Translating</value></data>
+  <data name="BatchCompleted" xml:space="preserve"><value>Saved</value></data>
+  <data name="BatchFailed" xml:space="preserve"><value>Failed</value></data>
+  <data name="BatchCancelled" xml:space="preserve"><value>Cancelled</value></data>
+  <data name="BatchRunning" xml:space="preserve"><value>{0} / {1} processed · {2}</value></data>
+  <data name="BatchFinished" xml:space="preserve"><value>Finished: {0} saved, {1} failed.</value></data>
+  <data name="BatchCancelling" xml:space="preserve"><value>Cancelling…</value></data>
+  <data name="BatchFileCount" xml:space="preserve"><value>{0} files</value></data>
 </root>

@@ -157,6 +157,7 @@ Offline processing extracts bounded chunks, applies a native amplitude gate when
 3. Edit text and microsecond timestamps, split/merge/duplicate/shift cues, or drag/resize cues on the timeline.
 4. Use **AI → Generate subtitles**, **Translate**, or **Summarize** as needed.
 5. Save as SRT, VTT, or ASS. Converting a styled format to a simpler format shows a style-loss notice while preserving text and timing.
+6. Or run **AI → Batch subtitles…** to apply this workflow to a queue of local files, saving `filename.srt` and optional `filename.translated.srt` beside each media file.
 
 The subtitle encoding setting supports UTF-8 and installed Windows code pages. Editor changes are mirrored to mpv through a debounced temporary ASS overlay and are protected by save/discard prompts.
 

@@ -808,6 +808,9 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
         await ShowDialogAsync(new ContentDialog { XamlRoot = RootGrid.XamlRoot, RequestedTheme = RootGrid.ActualTheme, Title = L("DiagnosticsTitle"), Content = output, CloseButtonText = L("CloseButton") });
         StatusText.Text = L("ReadyText");
     }
+    private async void OnBatchSubtitlesClick(object sender, RoutedEventArgs e)
+        => await _auxiliaryWindows.ShowBatchSubtitlesAsync(_settings);
+
     private void OnGenerateSubtitleClick(object sender, RoutedEventArgs e)
         => _aiWorkflow.RequestSubtitleGeneration(GenerateSubtitlesMenuItem.IsChecked);
 

@@ -203,4 +203,29 @@
 <data name="DictationStopped"><value>음성 입력을 중지했습니다.</value></data>
 <data name="DictationInputFailed"><value>대상 앱에 인식된 글자를 입력할 수 없습니다.</value></data>
   <data name="AsrRuntimeSelectionDescription.Text"><value>Auto는 사용 가능한 GPU를 사용하며, Cpu는 음성 인식을 CPU에서 실행합니다. 정밀도는 GGUF 모델로 결정됩니다. 강제 정렬 장치는 자동 선택됩니다.</value></data>
+  <data name="BatchSubtitles.Text" xml:space="preserve"><value>배치 작업…</value></data>
+  <data name="BatchWindowTitle" xml:space="preserve"><value>자막 배치 작업</value></data>
+  <data name="BatchHeading.Text" xml:space="preserve"><value>자막 배치 작업</value></data>
+  <data name="BatchDescription.Text" xml:space="preserve"><value>동영상이나 오디오 파일을 추가하거나 여기에 끌어다 놓으세요. SRT는 각 원본 파일과 같은 폴더에 저장되며, 기존 파일이 있으면 번호를 붙여 보존합니다.</value></data>
+  <data name="BatchAdd.Content" xml:space="preserve"><value>파일 추가…</value></data>
+  <data name="BatchClear.Content" xml:space="preserve"><value>비우기</value></data>
+  <data name="BatchRemove.Content" xml:space="preserve"><value>삭제</value></data>
+  <data name="BatchTranslate.Content" xml:space="preserve"><value>번역 자막도 함께 저장</value></data>
+  <data name="BatchOutputHint.Text" xml:space="preserve"><value>원본: 파일명.srt · 번역: 파일명.translated.srt</value></data>
+  <data name="BatchStart.Content" xml:space="preserve"><value>시작 / 미완료 재시도</value></data>
+  <data name="BatchCancel.Content" xml:space="preserve"><value>취소</value></data>
+  <data name="BatchTranslationSettings" xml:space="preserve"><value>번역 설정: {0} / {1} → {2}</value></data>
+  <data name="BatchPending" xml:space="preserve"><value>대기 중</value></data>
+  <data name="BatchReady" xml:space="preserve"><value>파일을 추가한 뒤 배치 작업을 시작하세요.</value></data>
+  <data name="BatchSkippedFiles" xml:space="preserve"><value>지원하지 않거나 찾을 수 없는 파일 {0}개를 건너뛰었습니다.</value></data>
+  <data name="BatchLoading" xml:space="preserve"><value>음성 인식 모델을 불러오는 중…</value></data>
+  <data name="BatchGenerating" xml:space="preserve"><value>자막 생성 중</value></data>
+  <data name="BatchTranslating" xml:space="preserve"><value>번역 중</value></data>
+  <data name="BatchCompleted" xml:space="preserve"><value>저장 완료</value></data>
+  <data name="BatchFailed" xml:space="preserve"><value>실패</value></data>
+  <data name="BatchCancelled" xml:space="preserve"><value>취소됨</value></data>
+  <data name="BatchRunning" xml:space="preserve"><value>{0} / {1}개 처리 · {2}</value></data>
+  <data name="BatchFinished" xml:space="preserve"><value>완료: 저장 {0}개, 실패 {1}개.</value></data>
+  <data name="BatchCancelling" xml:space="preserve"><value>취소하는 중…</value></data>
+  <data name="BatchFileCount" xml:space="preserve"><value>파일 {0}개</value></data>
 </root>

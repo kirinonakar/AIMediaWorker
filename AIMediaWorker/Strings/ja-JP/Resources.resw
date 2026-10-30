@@ -203,4 +203,29 @@
 <data name="DictationStopped"><value>音声入力を停止しました。</value></data>
 <data name="DictationInputFailed"><value>対象アプリに認識したテキストを入力できませんでした。</value></data>
   <data name="AsrRuntimeSelectionDescription.Text"><value>Auto は利用可能な GPU を使用し、Cpu は音声認識を CPU で実行します。精度は GGUF モデルで決まります。強制アラインメントのデバイスは自動選択されます。</value></data>
+  <data name="BatchSubtitles.Text" xml:space="preserve"><value>バッチ処理…</value></data>
+  <data name="BatchWindowTitle" xml:space="preserve"><value>字幕のバッチ処理</value></data>
+  <data name="BatchHeading.Text" xml:space="preserve"><value>字幕のバッチ処理</value></data>
+  <data name="BatchDescription.Text" xml:space="preserve"><value>動画・音声ファイルを追加するか、ここにドロップしてください。SRTは元のファイルと同じフォルダーに保存されます。既存のファイルがある場合は番号を付けて保存します。</value></data>
+  <data name="BatchAdd.Content" xml:space="preserve"><value>ファイルを追加…</value></data>
+  <data name="BatchClear.Content" xml:space="preserve"><value>一覧を空にする</value></data>
+  <data name="BatchRemove.Content" xml:space="preserve"><value>削除</value></data>
+  <data name="BatchTranslate.Content" xml:space="preserve"><value>翻訳字幕も保存</value></data>
+  <data name="BatchOutputHint.Text" xml:space="preserve"><value>原文: ファイル名.srt · 翻訳: ファイル名.translated.srt</value></data>
+  <data name="BatchStart.Content" xml:space="preserve"><value>開始 / 未完了を再試行</value></data>
+  <data name="BatchCancel.Content" xml:space="preserve"><value>キャンセル</value></data>
+  <data name="BatchTranslationSettings" xml:space="preserve"><value>翻訳設定: {0} / {1} → {2}</value></data>
+  <data name="BatchPending" xml:space="preserve"><value>待機中</value></data>
+  <data name="BatchReady" xml:space="preserve"><value>ファイルを追加してバッチ処理を開始してください。</value></data>
+  <data name="BatchSkippedFiles" xml:space="preserve"><value>未対応または見つからないファイル{0}件をスキップしました。</value></data>
+  <data name="BatchLoading" xml:space="preserve"><value>音声認識モデルを読み込み中…</value></data>
+  <data name="BatchGenerating" xml:space="preserve"><value>字幕を生成中</value></data>
+  <data name="BatchTranslating" xml:space="preserve"><value>翻訳中</value></data>
+  <data name="BatchCompleted" xml:space="preserve"><value>保存済み</value></data>
+  <data name="BatchFailed" xml:space="preserve"><value>失敗</value></data>
+  <data name="BatchCancelled" xml:space="preserve"><value>キャンセル済み</value></data>
+  <data name="BatchRunning" xml:space="preserve"><value>{0} / {1}件処理 · {2}</value></data>
+  <data name="BatchFinished" xml:space="preserve"><value>完了: 保存{0}件、失敗{1}件。</value></data>
+  <data name="BatchCancelling" xml:space="preserve"><value>キャンセル中…</value></data>
+  <data name="BatchFileCount" xml:space="preserve"><value>{0}ファイル</value></data>
 </root>

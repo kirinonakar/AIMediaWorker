@@ -19,6 +19,7 @@ internal sealed class AuxiliaryWindowController
     private WindowsCaptionWindow? _captionWindow;
     private SettingsWindow? _settingsWindow;
     private CaptureRecorderOverlayWindow? _captureRecorderWindow;
+    private BatchSubtitleWindow? _batchSubtitleWindow;
 
     public AuxiliaryWindowController(
         Window owner,
@@ -37,6 +38,29 @@ internal sealed class AuxiliaryWindowController
     }
 
     public bool RestartRequested { get; private set; }
+
+    public async Task ShowBatchSubtitlesAsync(AppSettings settings)
+    {
+        try
+        {
+            if (_batchSubtitleWindow is not null) { _batchSubtitleWindow.Activate(); return; }
+            _batchSubtitleWindow = new BatchSubtitleWindow(_owner, settings);
+            _batchSubtitleWindow.Closed += OnBatchSubtitlesClosed;
+            _batchSubtitleWindow.Activate();
+        }
+        catch (Exception exception)
+        {
+            _batchSubtitleWindow = null;
+            await AppLog.WriteAsync("error", "batch-subtitles", "BATCH_WINDOW_ERROR", exception.Message, exception);
+            await _dialogs.ShowMessageAsync(L("BatchWindowTitle"), exception.Message);
+        }
+    }
+
+    private void OnBatchSubtitlesClosed(object sender, WindowEventArgs args)
+    {
+        if (_batchSubtitleWindow is not null) _batchSubtitleWindow.Closed -= OnBatchSubtitlesClosed;
+        _batchSubtitleWindow = null;
+    }
 
     public async Task ShowCameraAsync()
     {
@@ -131,6 +155,7 @@ internal sealed class AuxiliaryWindowController
 
     public async Task CloseAsync()
     {
+        if (_batchSubtitleWindow is { } batchWindow) await batchWindow.CloseAsync();
         _settingsWindow?.Close();
         if (_cameraWindow is { } cameraWindow) await cameraWindow.CloseAsync();
         if (_captionWindow is { } captionWindow) await captionWindow.CloseAsync();
