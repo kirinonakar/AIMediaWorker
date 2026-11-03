@@ -536,6 +536,15 @@ public sealed partial class WindowsCaptionWindow : Window
         UpdateCaptionFontSize();
     }
 
+    private void OnCaptionLayoutUpdated(object? sender, object e)
+    {
+        // Wait for layout so wrapping, font changes and visibility changes are
+        // reflected in the extent. Keep the newest (bottom) lines in view.
+        var bottom = CaptionScrollViewer.ScrollableHeight;
+        if (CaptionScrollViewer.VerticalOffset != bottom)
+            CaptionScrollViewer.ChangeView(null, bottom, null, disableAnimation: true);
+    }
+
     private void UpdateCaptionFontSize()
     {
         var fontSize = Math.Clamp(_settings.Capture.WindowsCaptionFontSize, 16, 72);
