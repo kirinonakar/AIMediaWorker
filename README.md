@@ -271,7 +271,7 @@ AIMediaWorker uses, links to, or can download third-party software, native runti
 
 | Component | Use | License / notice |
 |---|---|---|
-| [Microsoft Windows App SDK](https://github.com/microsoft/WindowsAppSDK) 2.4.0 and related Microsoft SDK packages | WinUI runtime and Windows integration | Microsoft Software License Terms plus the package `license.txt` and `NOTICE.txt` files. |
+| [Microsoft.WindowsAppSDK.WinUI](https://github.com/microsoft/WindowsAppSDK) 2.3.9 and its required Microsoft SDK packages | WinUI 3 runtime and Windows integration | Microsoft Software License Terms plus the package `license.txt` and `NOTICE.txt` files. |
 | [Microsoft Windows SDK Build Tools](https://aka.ms/WinSDKProjectURL) 10.0.28000.2526 | Build and packaging | Microsoft Windows SDK license terms. |
 | [System.Security.Cryptography.ProtectedData](https://github.com/dotnet/dotnet) 10.0.0 | Windows Credential Manager protection | MIT. |
 | [NAudio](https://github.com/naudio/NAudio) 2.2.1 | WASAPI microphone and system-audio loopback capture | MIT; see the package `license.txt`. |
