@@ -228,4 +228,15 @@
   <data name="BatchFinished" xml:space="preserve"><value>Finished: {0} saved, {1} failed.</value></data>
   <data name="BatchCancelling" xml:space="preserve"><value>Cancelling…</value></data>
   <data name="BatchFileCount" xml:space="preserve"><value>{0} files</value></data>
+  <data name="WebDavCertificateWarningTitle"><value>WebDAV HTTPS certificate error</value></data>
+  <data name="WebDavCertificateWarningMessage"><value>The HTTPS certificate for {0} could not be verified.
+
+Subject: {1}
+Issuer: {2}
+SHA-256: {3}
+Errors: {4}
+
+Trust this certificate and connect?</value></data>
+  <data name="WebDavConnectButton"><value>Connect</value></data>
+  <data name="WebDavConnectionCancelled"><value>The WebDAV connection was cancelled.</value></data>
 </root>

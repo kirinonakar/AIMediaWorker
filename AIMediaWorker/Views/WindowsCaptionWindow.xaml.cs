@@ -197,13 +197,13 @@ public sealed partial class WindowsCaptionWindow : Window
             var loadProgress = new Progress<AsrEvent>(update => { if (acceptingLoadProgress) UpdateAsrModelProgress(update); });
             try { await _asr.LoadModelAsync(_settings.Asr.ModelPath ?? AsrSettings.DefaultModelId, _settings.Asr.AlignerPath, _settings.Asr.Device.ToString(), _settings.Asr.Precision.ToString(), loadProgress); }
             finally { acceptingLoadProgress = false; }
+            StatusBar.IsOpen = false;
             ClearCaptionHistory();
             await _liveAsr.StartLoopbackAsync(null, _settings.Asr.Language);
             CaptionButton.Content = L("WindowsCaptionStop.Content");
             CaptionButton.IsEnabled = true;
             TranslateButton.IsEnabled = true;
             TranslationOnlyButton.IsEnabled = true;
-            SetStatus(L("WindowsCaptionListening.Title"), L("WindowsCaptionListening.Message"), InfoBarSeverity.Success);
         }
         catch (Exception exception)
         {

@@ -23,6 +23,7 @@ internal interface IAiWorkflowHost
     bool IsSubtitleDiscoveryPending { get; }
     SubtitleDisplayMode? CurrentSubtitleDisplayMode { get; }
     IReadOnlyDictionary<string, string>? CurrentHttpHeaders { get; }
+    HttpClientHandler? CreateRemoteMediaHttpHandler();
     long CurrentPlaybackPositionMicroseconds { get; }
     double ViewWidth { get; }
     double ViewHeight { get; }
@@ -297,7 +298,8 @@ internal sealed class AiWorkflowController : IAsyncDisposable
                 {
                     _host.SetStatus(L("StatusPreparingRemoteAsr"));
                     temporaryInput = await _remoteMediaDownloader.DownloadAsync(
-                        source, headers, _host.Settings.Network.Proxy, _host.Settings.Network.TimeoutSeconds, token);
+                        source, headers, _host.Settings.Network.Proxy, _host.Settings.Network.TimeoutSeconds, token,
+                        _host.CreateRemoteMediaHttpHandler());
                     source = temporaryInput;
                 }
                 _translationCompleted = await GenerateSubtitlesAsync(source, startMicroseconds, token, preserveExisting);

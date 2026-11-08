@@ -36,7 +36,8 @@ internal sealed class MediaNavigationController : IDisposable
         _webDavCredentials = new WebDavCredentialStore(_windowsCredentials);
         _webDavClient = new WebDavClient(
             _windowsCredentials,
-            timeout: TimeSpan.FromSeconds(_host.GetSettings().Network.TimeoutSeconds));
+            timeout: TimeSpan.FromSeconds(_host.GetSettings().Network.TimeoutSeconds),
+            confirmCertificateAsync: ConfirmWebDavCertificateAsync);
         _playlist = new PlaylistController(
             _view.PlaylistList,
             _view.PreviousButton,
@@ -71,6 +72,36 @@ internal sealed class MediaNavigationController : IDisposable
     }
 
     public bool IsSubtitleDiscoveryPending { get; private set; }
+    public HttpClientHandler CreateWebDavHttpHandler() => _webDavClient.CreateHttpHandler();
+
+    private Task<bool> ConfirmWebDavCertificateAsync(WebDavCertificateWarning warning)
+    {
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_view.Owner.DispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                if (_disposed) { completion.TrySetResult(false); return; }
+                var dialog = new ContentDialog
+                {
+                    Title = L("WebDavCertificateWarningTitle"),
+                    Content = new TextBlock
+                    {
+                        Text = F("WebDavCertificateWarningMessage", warning.ServerUri.GetLeftPart(UriPartial.Authority),
+                            warning.Subject, warning.Issuer, warning.Fingerprint, warning.Errors),
+                        TextWrapping = TextWrapping.Wrap,
+                        IsTextSelectionEnabled = true
+                    },
+                    PrimaryButtonText = L("WebDavConnectButton"),
+                    CloseButtonText = L("CancelButtonText"),
+                    DefaultButton = ContentDialogButton.Close
+                };
+                completion.TrySetResult(await _host.ShowDialogAsync(dialog) == ContentDialogResult.Primary);
+            }
+            catch (Exception exception) { completion.TrySetException(exception); }
+        })) completion.TrySetResult(false);
+        return completion.Task;
+    }
     public event EventHandler? SubtitleDiscoveryCompleted;
 
     public Task InitializeBrowserAsync() => _view.MediaBrowser.InitializeAsync();
@@ -162,6 +193,18 @@ internal sealed class MediaNavigationController : IDisposable
 
     private async Task OpenPlaylistEntryAsync(PlaylistEntry entry)
     {
+        if (entry.MediaSource is WebDavMediaSource source)
+        {
+            var server = _host.GetSettings().Network.WebDavServers.FirstOrDefault(candidate => candidate.Id == source.ServerId);
+            if (server is null) return;
+            _webDavClient.ResetRejectedCertificates();
+            try { await _webDavClient.CheckConnectionAsync(server, source.Uri); }
+            catch (WebDavException exception)
+            {
+                _host.SetStatus(exception.Code == "CERTIFICATE_REJECTED" ? L("WebDavConnectionCancelled") : exception.Message);
+                return;
+            }
+        }
         await _host.OpenMediaAsync(new MediaOpenRequest(entry.Path, entry.HttpHeaders, entry.MediaSource, PreservePlaylist: true));
     }
 
@@ -425,6 +468,7 @@ internal sealed class MediaNavigationController : IDisposable
 
     private async Task OpenWebDavMediaAsync(WebDavServerSettings server, WebDavEntry entry, IReadOnlyList<WebDavEntry>? siblings = null)
     {
+        _webDavClient.ResetRejectedCertificates();
         using var request = _webDavClient.CreateMediaRequest(server, entry.Uri);
         IReadOnlyDictionary<string, string>? headers = request.Headers.Authorization is { } authorization
             ? new Dictionary<string, string> { ["Authorization"] = authorization.ToString() }
@@ -435,6 +479,11 @@ internal sealed class MediaNavigationController : IDisposable
             {
                 siblings = await _webDavClient.ListAsync(server, new Uri(entry.Uri, "."));
                 _view.WebDavBrowser.Synchronize(server, entry.Uri, siblings);
+            }
+            catch (WebDavException exception) when (exception.Code == "CERTIFICATE_REJECTED")
+            {
+                _view.WebDavBrowser.SetStatus(L("WebDavConnectionCancelled"));
+                return;
             }
             catch (Exception exception)
             {

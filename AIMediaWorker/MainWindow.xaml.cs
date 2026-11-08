@@ -1058,6 +1058,8 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
     SubtitleDocument IAiWorkflowHost.Document => _subtitleSession.Document;
     SubtitleDisplayMode? IAiWorkflowHost.CurrentSubtitleDisplayMode => _subtitleTracks.DisplayMode;
     IReadOnlyDictionary<string, string>? IAiWorkflowHost.CurrentHttpHeaders => _mediaSession.CurrentHttpHeaders;
+    HttpClientHandler? IAiWorkflowHost.CreateRemoteMediaHttpHandler() =>
+        _mediaSession.CurrentSource is WebDavMediaSource ? _mediaNavigation.CreateWebDavHttpHandler() : null;
     long IAiWorkflowHost.CurrentPlaybackPositionMicroseconds => CurrentPlaybackPositionMicroseconds;
     double IAiWorkflowHost.ViewWidth => RootGrid.ActualWidth;
     double IAiWorkflowHost.ViewHeight => RootGrid.ActualHeight;

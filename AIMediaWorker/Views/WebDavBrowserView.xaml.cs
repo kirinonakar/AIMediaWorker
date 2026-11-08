@@ -91,6 +91,7 @@ public sealed partial class WebDavBrowserView : UserControl
         if (server is null) return;
 
         CancelListing();
+        _client!.ResetRejectedCertificates();
         using var operation = new CancellationTokenSource();
         _listingCancellation = operation;
         SetBusy(true);
@@ -106,6 +107,12 @@ public sealed partial class WebDavBrowserView : UserControl
         }
         catch (OperationCanceledException) { }
         catch (Exception) when (operation.IsCancellationRequested) { }
+        catch (WebDavException exception) when (exception.Code == "CERTIFICATE_REJECTED")
+        {
+            _entries = [];
+            ApplyEntryView();
+            ConnectionStatusText.Text = LocalizationService.Get("WebDavConnectionCancelled");
+        }
         catch (Exception exception)
         {
             await AppLog.WriteAsync("error", "webdav", exception is WebDavException webDavException ? webDavException.Code : "WEBDAV_LIST_ERROR", exception.Message, exception);

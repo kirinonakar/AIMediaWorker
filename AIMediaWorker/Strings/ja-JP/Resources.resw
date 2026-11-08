@@ -228,4 +228,15 @@
   <data name="BatchFinished" xml:space="preserve"><value>完了: 保存{0}件、失敗{1}件。</value></data>
   <data name="BatchCancelling" xml:space="preserve"><value>キャンセル中…</value></data>
   <data name="BatchFileCount" xml:space="preserve"><value>{0}ファイル</value></data>
+  <data name="WebDavCertificateWarningTitle"><value>WebDAV HTTPS証明書エラー</value></data>
+  <data name="WebDavCertificateWarningMessage"><value>{0}のHTTPS証明書を確認できません。
+
+サブジェクト: {1}
+発行者: {2}
+SHA-256: {3}
+エラー: {4}
+
+この証明書を信頼して接続しますか？</value></data>
+  <data name="WebDavConnectButton"><value>接続</value></data>
+  <data name="WebDavConnectionCancelled"><value>WebDAV接続をキャンセルしました。</value></data>
 </root>

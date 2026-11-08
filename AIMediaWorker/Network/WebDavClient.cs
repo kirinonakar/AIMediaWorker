@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Security;
+using System.Security.Cryptography;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Xml.Linq;
@@ -30,22 +33,60 @@ public sealed class WebDavException(string code, string message, HttpStatusCode?
     public HttpStatusCode? StatusCode { get; } = statusCode;
 }
 
+public sealed record WebDavCertificateWarning(Uri ServerUri, SslPolicyErrors Errors, string Subject, string Issuer, string Fingerprint);
+
 public sealed class WebDavClient : IDisposable
 {
     public const int MaximumSearchResults = 5000;
     private const int MaximumSearchEntries = 25000;
     private const int MaximumConcurrentSearchRequests = 4;
+    private static readonly HttpRequestOptionsKey<bool> CertificateRejectedKey = new("WebDavCertificateRejected");
     private readonly HttpClient _httpClient;
     private readonly bool _ownsClient;
     private readonly WebDavCredentialStore _credentials;
+    private readonly ConcurrentDictionary<string, Lazy<Task<bool>>> _certificateDecisions = new();
+    private readonly Func<WebDavCertificateWarning, Task<bool>>? _confirmCertificateAsync;
 
-    public WebDavClient(ICredentialService credentials, HttpClient? httpClient = null, TimeSpan? timeout = null)
+    public WebDavClient(ICredentialService credentials, HttpClient? httpClient = null, TimeSpan? timeout = null,
+        Func<WebDavCertificateWarning, Task<bool>>? confirmCertificateAsync = null)
     {
         _credentials = new WebDavCredentialStore(credentials);
-        _httpClient = httpClient ?? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, AutomaticDecompression = DecompressionMethods.All });
+        _confirmCertificateAsync = confirmCertificateAsync;
+        _httpClient = httpClient ?? new HttpClient(CreateHttpHandler());
         _ownsClient = httpClient is null;
         _httpClient.Timeout = timeout ?? TimeSpan.FromSeconds(30);
     }
+
+    public void ResetRejectedCertificates()
+    {
+        foreach (var decision in _certificateDecisions)
+            if (decision.Value.IsValueCreated && decision.Value.Value.IsCompleted &&
+                (!decision.Value.Value.IsCompletedSuccessfully || !decision.Value.Value.Result))
+                _certificateDecisions.TryRemove(decision);
+    }
+
+    // Also used for authenticated WebDAV media downloads for ASR.
+    public HttpClientHandler CreateHttpHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        AutomaticDecompression = DecompressionMethods.All,
+        ServerCertificateCustomValidationCallback = (request, certificate, _, errors) =>
+        {
+            if (errors == SslPolicyErrors.None) return true;
+            if (_confirmCertificateAsync is null || request.RequestUri is not { } uri) return false;
+            var fingerprint = certificate?.GetCertHashString(HashAlgorithmName.SHA256) ?? string.Empty;
+            var authority = uri.GetLeftPart(UriPartial.Authority);
+            var warning = new WebDavCertificateWarning(new Uri(authority), errors,
+                certificate?.Subject ?? string.Empty, certificate?.Issuer ?? string.Empty, fingerprint);
+            var key = $"{authority}|{fingerprint}|{(int)errors}";
+            // TLS invokes this on a worker thread. Concurrent requests share one UI decision;
+            // approvals apply only to this authority and certificate for this client session.
+            var accepted = _certificateDecisions.GetOrAdd(key, _ => new Lazy<Task<bool>>(
+                () => _confirmCertificateAsync(warning))).Value.GetAwaiter().GetResult();
+            if (!accepted) request.Options.Set(CertificateRejectedKey, true);
+            return accepted;
+        }
+    };
 
     public async Task<IReadOnlyList<WebDavEntry>> ListAsync(WebDavServerSettings server, Uri directory, CancellationToken cancellationToken = default)
     {
@@ -156,6 +197,13 @@ public sealed class WebDavClient : IDisposable
         return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task CheckConnectionAsync(WebDavServerSettings server, Uri uri, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateMediaRequest(server, uri, HttpMethod.Head);
+        // Only the TLS decision matters here; a server may not implement HEAD.
+        using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
     public static Uri ResolveChild(Uri directory, string href)
     {
         if (!directory.IsAbsoluteUri) throw new ArgumentException("The directory URI must be absolute.", nameof(directory));
@@ -168,6 +216,8 @@ public sealed class WebDavClient : IDisposable
     {
         try { return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false); }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { throw new WebDavException("NETWORK_ERROR", "The WebDAV request timed out."); }
+        catch (HttpRequestException exception) when (request.Options.TryGetValue(CertificateRejectedKey, out var rejected) && rejected)
+        { throw new WebDavException("CERTIFICATE_REJECTED", "The WebDAV connection was cancelled because the HTTPS certificate was not accepted.", innerException: exception); }
         catch (HttpRequestException exception) { throw new WebDavException("NETWORK_ERROR", "The WebDAV server could not be reached.", exception.StatusCode, exception); }
     }
 

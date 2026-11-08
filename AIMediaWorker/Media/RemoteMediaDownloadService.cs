@@ -10,9 +10,10 @@ public sealed class RemoteMediaDownloadService
         IReadOnlyDictionary<string, string> headers,
         string? proxy,
         int timeoutSeconds,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        HttpClientHandler? httpHandler = null)
     {
-        var handler = new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.All };
+        var handler = httpHandler ?? new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All };
         if (Uri.TryCreate(proxy, UriKind.Absolute, out var proxyUri))
         {
             handler.Proxy = new WebProxy(proxyUri);
