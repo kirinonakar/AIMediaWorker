@@ -98,7 +98,7 @@ internal sealed class AboutDialogService
     private const string ThirdPartyLicensesText =
         "NAudio 2.2.1 — MIT License\nhttps://github.com/naudio/NAudio\n\n" +
         "Microsoft.WindowsAppSDK.WinUI 2.3.9 — Microsoft Software License Terms\nhttps://github.com/microsoft/WindowsAppSDK\n\n" +
-        "System.Security.Cryptography.ProtectedData 10.0.0 — MIT License\nhttps://www.nuget.org/packages/System.Security.Cryptography.ProtectedData\n\n" +
+        "System.Security.Cryptography.ProtectedData 11.0.0 — MIT License\nhttps://www.nuget.org/packages/System.Security.Cryptography.ProtectedData\n\n" +
         "libmpv / mpv — GPLv2+ (build-dependent)\nhttps://github.com/mpv-player/mpv\n\n" +
         "FFmpeg — LGPLv2.1+ (build-dependent)\nhttps://ffmpeg.org\n\n" +
         "Silero VAD — MIT License\nhttps://github.com/snakers4/silero-vad\n\n" +

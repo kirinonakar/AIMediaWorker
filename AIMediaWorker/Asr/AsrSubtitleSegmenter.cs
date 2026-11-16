@@ -231,7 +231,7 @@ public static class AsrSubtitleSegmenter
 
     private static IReadOnlyList<AsrWord> WordsOrSegment(AsrSegment segment) =>
         segment.Words is { Count: > 0 } words ? words :
-        [new AsrWord { Text = segment.Text, StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds }];
+        new[] { new AsrWord { Text = segment.Text, StartMicroseconds = segment.StartMicroseconds, EndMicroseconds = segment.EndMicroseconds } };
 
     private static IReadOnlyList<AsrSegment> SegmentWords(
         AsrSegment source,
@@ -377,7 +377,7 @@ public static class AsrSubtitleSegmenter
         // arbitrary. Use the same bounded completion allowance as kana repair.
         if (LiveCaptionDisplaySegmenter.IsJapaneseText(null, text) && IsSentenceBoundary(text) &&
             CountCharacters(text) <= options.MaximumCharacters && duration <= SentenceCompletionMicroseconds(options))
-            return [CreateTextSegment(source, text, startMicroseconds, endMicroseconds)];
+            return new[] { CreateTextSegment(source, text, startMicroseconds, endMicroseconds) };
 
         var durationSeconds = duration / 1_000_000d;
         var partCount = Math.Max(
@@ -386,7 +386,7 @@ public static class AsrSubtitleSegmenter
                 (int)Math.Ceiling((double)CountCharacters(text) / options.MaximumCharacters),
                 (int)Math.Ceiling(durationSeconds / options.MaximumCueSeconds)));
         if (partCount == 1)
-            return [CreateTextSegment(source, text, startMicroseconds, endMicroseconds)];
+            return new[] { CreateTextSegment(source, text, startMicroseconds, endMicroseconds) };
 
         var parts = new List<(string Text, int Start, int End)>();
         var cursor = 0;

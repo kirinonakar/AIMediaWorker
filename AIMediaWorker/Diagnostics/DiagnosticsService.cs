@@ -28,7 +28,7 @@ public sealed class DiagnosticsService
             ["Windows App SDK"] = typeof(Microsoft.UI.Xaml.Application).Assembly.GetName().Version?.ToString() ?? "unknown",
             ["libmpv"] = playback.IsAvailable ? playback.LibraryVersion ?? "loaded" : "not loaded",
             ["Decoder"] = playback.DecoderDescription ?? "not playing",
-            ["FFmpeg"] = await GetFirstLineAsync(ffmpegPath, ["-version"], cancellationToken).ConfigureAwait(false),
+            ["FFmpeg"] = await GetFirstLineAsync(ffmpegPath, new[] { "-version" }, cancellationToken).ConfigureAwait(false),
             ["CrispASR runtime"] = File.Exists(crispAsrLibrary) ? crispAsrLibrary : "not found",
             ["ASR engine"] = "WinUI3 C# P/Invoke -> CrispASR C ABI",
             ["ASR worker"] = workerState.ToString(),

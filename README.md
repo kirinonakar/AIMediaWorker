@@ -2,7 +2,7 @@
 
 ![screenshot](screenshot.png)
 
-AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 10, libmpv, FFmpeg, and the prebuilt CrispASR native runtime loaded directly from C#.
+AIMediaWorker is a Windows 10/11 desktop media player and subtitle workstation built with WinUI 3, .NET 11, libmpv, FFmpeg, and the prebuilt CrispASR native runtime loaded directly from C#.
 
 It plays local files, HTTP/HTTPS streams, HLS/DASH sources, and WebDAV media; imports SRT/WebVTT/ASS/SAMI subtitles and edits them on a timeline; captures screenshots and records the desktop with system audio (optional capture only launch); creates offline or live captions with Qwen3-ASR; and translates or summarizes transcripts through local and cloud LLM providers.
 
@@ -37,7 +37,8 @@ instructions for each component follow below.
 ## Requirements
 
 - Windows 10 version 1809 or newer; Windows 11 is recommended.
-- x64 [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
+- x64 [.NET 11 SDK (11.0.100 or later)](https://dotnet.microsoft.com/download/dotnet/11.0).
+- An x86-64-v2 compatible CPU, as required by [.NET 11](https://learn.microsoft.com/dotnet/core/compatibility/jit/11/minimum-hardware-requirements).
 - Visual Studio with the Windows App SDK workload, or the `dotnet` CLI.
 - x64 libmpv with its dependent DLLs.
 - FFmpeg and FFprobe 6 or newer on `PATH`.
@@ -48,6 +49,8 @@ The application does not bundle libmpv, FFmpeg, model weights, credentials, or A
 The Windows App SDK runtime is deployed self-contained with the application, so the unpackaged executable does not require a separately registered Windows App Runtime.
 
 ## Build and run
+
+The solution opts into .NET 11's preview Runtime Async compiler feature. Release publishing uses ReadyToRun, and the Release app explicitly enables dynamic PGO.
 
 ```powershell
 dotnet restore AIMediaWorker.slnx

@@ -110,12 +110,12 @@ internal static class AsrAudioDecoder
     {
         if (audioStreamIndex < 0) throw new ArgumentOutOfRangeException(nameof(audioStreamIndex));
         var arguments = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
-        if (probeMore) arguments.AddRange(["-probesize", "100000000", "-analyzeduration", "10000000"]);
-        arguments.AddRange(["-i", input]);
+        if (probeMore) CollectionExtensions.AddRange(arguments, ["-probesize", "100000000", "-analyzeduration", "10000000"]);
+        CollectionExtensions.AddRange(arguments, ["-i", input]);
         if (startMicroseconds > 0)
-            arguments.AddRange(["-ss", (startMicroseconds / 1_000_000d).ToString("0.######", CultureInfo.InvariantCulture)]);
+            CollectionExtensions.AddRange(arguments, ["-ss", (startMicroseconds / 1_000_000d).ToString("0.######", CultureInfo.InvariantCulture)]);
         // ff-index is an absolute stream index, not the mpv track ID or audio ordinal.
-        arguments.AddRange(["-map", audioStreamIndex is { } index ? $"0:{index}" : "0:a:0?",
+        CollectionExtensions.AddRange(arguments, ["-map", audioStreamIndex is { } index ? $"0:{index}" : "0:a:0?",
             "-vn", "-ac", "1", "-ar", SampleRate.ToString(CultureInfo.InvariantCulture), "-f", "f32le", "pipe:1"]);
         return arguments;
     }

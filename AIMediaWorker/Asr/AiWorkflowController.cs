@@ -342,7 +342,8 @@ internal sealed class AiWorkflowController : IAsyncDisposable
     {
         // Snapshot the selected track for this run before model loading can yield.
         var selectedAudio = _playback.GetSelectedAudioTrack();
-        var audio = AsrAudioTrackSelection.Resolve(source, selectedAudio is null ? [] : [selectedAudio]);
+        var audioTracks = selectedAudio is null ? Array.Empty<MediaTrack>() : new[] { selectedAudio };
+        var audio = AsrAudioTrackSelection.Resolve(source, audioTracks);
         var document = preserveExisting ? _host.Document : new SubtitleDocument();
         var track = document.EnsureTrack("srt");
         if (string.IsNullOrWhiteSpace(track.Name)) track.Name = "Qwen3-ASR";

@@ -25,7 +25,7 @@ public sealed partial class SettingsWindow : Window
     private const int PreferredWidth = 1510;
     private const int PreferredHeight = 1080;
 
-    public IReadOnlyList<string> CaptionPositions { get; } = ["Top", "Center", "Bottom"];
+    public IReadOnlyList<string> CaptionPositions { get; } = Array.AsReadOnly<string>(["Top", "Center", "Bottom"]);
     private readonly SettingsService _service = SettingsService.CreateDefault();
     private readonly WindowsCredentialService _credentials = new();
     private readonly WindowsFileAssociationService _fileAssociations = new();
@@ -40,7 +40,7 @@ public sealed partial class SettingsWindow : Window
     public Array HardwareDecoders { get; } = Enum.GetValues<HardwareDecoder>();
     public Array HdrOutputModes { get; } = Enum.GetValues<HdrOutputMode>();
     public Array RtxModes { get; } = Enum.GetValues<RtxVideoSuperResolutionMode>();
-    public IReadOnlyList<string> ToolbarIconSizeOptions { get; } = [L("ToolbarIconSizeDefault"), L("ToolbarIconSizeLarge")];
+    public IReadOnlyList<string> ToolbarIconSizeOptions { get; } = Array.AsReadOnly<string>([L("ToolbarIconSizeDefault"), L("ToolbarIconSizeLarge")]);
     public Array AsrDevices { get; } = new[] { AsrDevice.Auto, AsrDevice.Cpu };
     public Array Precisions { get; } = new[] { AsrPrecision.Auto };
     public Array ThinkingLevels { get; } = Enum.GetValues<ThinkingLevel>();

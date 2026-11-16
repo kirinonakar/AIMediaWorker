@@ -12,11 +12,11 @@ public sealed class WindowsFileAssociationService
 {
     public const string ApplicationName = "AIMediaWorker";
 
-    public static IReadOnlyList<string> SupportedExtensions { get; } =
+    public static IReadOnlyList<string> SupportedExtensions { get; } = Array.AsReadOnly<string>(
     [
         ".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts",
         ".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".opus"
-    ];
+    ]);
 
     public bool IsPackaged
     {

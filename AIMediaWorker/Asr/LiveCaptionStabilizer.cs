@@ -49,7 +49,7 @@ public sealed class LiveCaptionStabilizer
     {
         ArgumentNullException.ThrowIfNull(result);
         var previouslyConfirmed = ConfirmedText;
-        var segments = result.Segments ?? (result.Segment is null ? [] : [result.Segment]);
+        var segments = result.Segments ?? (result.Segment is { } segment ? new[] { segment } : Array.Empty<AsrSegment>());
         var units = CreateTimedUnits(segments);
         var isFinal = string.Equals(result.Event, "final", StringComparison.OrdinalIgnoreCase);
 
@@ -216,7 +216,7 @@ public sealed class LiveCaptionStabilizer
         if (provisional.Length == 0) return confirmed;
         var overlap = FindBestSuffixPrefixOverlap(confirmed, provisional);
         var tail = overlap.NewLength > 0 ? provisional[overlap.NewLength..].Trim() : provisional;
-        return tail.Length == 0 ? confirmed : Join([confirmed, tail]);
+        return tail.Length == 0 ? confirmed : Join(new[] { confirmed, tail });
     }
 
     private string Normalize(string text) => Join(text.Split([' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));

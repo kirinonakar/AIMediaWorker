@@ -265,7 +265,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
                 PlaybackControls, PositionSlider, AbMarkerCanvas, AbStartMarker, AbEndMarker,
                 PositionText, VolumeSlider, RateCombo,
                 AudioTrackCombo, ResolutionText, DecoderText, AudioCodecText, RepeatButton,
-                [BeginningButton, PreviousButton, SeekBackButton, PlayPauseButton, StopButton,
+                (ButtonBase[])[BeginningButton, PreviousButton, SeekBackButton, PlayPauseButton, StopButton,
                     SeekForwardButton, NextButton, ScreenshotButton, MuteButton, RepeatButton,
                     FullscreenButton, CloseButton],
                 BeginningIcon, PreviousIcon, SeekBackIcon, PlayPauseIcon, StopIcon, SeekForwardIcon,
@@ -483,7 +483,7 @@ public sealed partial class MainWindow : Window, IAiWorkflowHost
             if (e.DataView.Contains(StandardDataFormats.Text))
             {
                 var value = (await e.DataView.GetTextAsync()).Trim();
-                if (Path.IsPathFullyQualified(value)) await _mediaSession.OpenDroppedFilesAsync([value]);
+                if (Path.IsPathFullyQualified(value)) await _mediaSession.OpenDroppedFilesAsync(new[] { value });
                 else if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") await _mediaSession.OpenAsync(uri.AbsoluteUri);
             }
         }
